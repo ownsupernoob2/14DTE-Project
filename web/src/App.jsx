@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -6,8 +7,11 @@ import Dashboard from './pages/Dashboard'
 import Preferences from './pages/Preferences'
 
 function App() {
-  // TODO: Replace with actual auth check
-  const isAuthenticated = true
+  const { isAuthenticated, isLoading } = useAuth0()
+
+  if (isLoading) {
+    return <div>Loading...</div>
+  }
 
   return (
     <Router>

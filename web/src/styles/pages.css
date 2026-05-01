@@ -19,29 +19,22 @@
 }
 
 .auth-container h1 {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
   text-align: center;
   color: #333;
 }
 
-.auth-container form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.auth-container p {
+  text-align: center;
+  color: #666;
+  font-size: 14px;
   margin-bottom: 20px;
 }
 
-.auth-container input {
-  padding: 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
+.auth0-btn {
   width: 100%;
-}
-
-.auth-container button {
   padding: 12px;
-  background: #667eea;
+  background: #eb5424;
   color: white;
   border: none;
   border-radius: 4px;
@@ -49,24 +42,20 @@
   font-weight: 600;
   cursor: pointer;
   transition: background 0.3s ease;
+  margin-bottom: 20px;
 }
 
-.auth-container button:hover {
-  background: #5568d3;
+.auth0-btn:hover {
+  background: #d34b20;
 }
 
-.auth-container p {
-  text-align: center;
-  color: #666;
-  font-size: 14px;
-}
-
-.auth-container a {
+.auth-container a, .link-like {
   color: #667eea;
   text-decoration: none;
+  cursor: pointer;
 }
 
-.auth-container a:hover {
+.auth-container a:hover, .link-like:hover {
   text-decoration: underline;
 }
 
@@ -77,7 +66,7 @@
   align-items: flex-start;
   min-height: 100vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 40px 20px;
+  padding: 80px 20px 40px;
 }
 
 .preferences-container {
@@ -92,6 +81,30 @@
 .preferences-container h1 {
   margin-bottom: 30px;
   color: #333;
+}
+
+.profile-section {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.profile-section img {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profile-section h3 {
+  margin: 0 0 5px 0;
+  color: #333;
+}
+
+.profile-section p {
+  margin: 0;
+  color: #666;
+  font-size: 14px;
 }
 
 .preference-section {
