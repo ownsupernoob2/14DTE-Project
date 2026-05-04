@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
-import '../styles/navbar.css'
 import { Link } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 
 export default function Navbar() {
   const [isVisible, setIsVisible] = useState(false)
@@ -35,22 +35,39 @@ export default function Navbar() {
 
   return (
     <>
-      <div onMouseMove={handleMouseMove} style={{ position: 'fixed', top: 0, left: 0, right: 0, height: '50px', zIndex: 998 }} />
-      
-      <nav
-        ref={navRef}
-        className={`navbar ${isVisible ? 'visible' : 'hidden'}`}
-        onMouseEnter={handleMouseEnterNav}
-        onMouseLeave={handleMouseLeaveNav}
-      >
-        <div className="navbar-content">
-          <Link to="/" className="navbar-brand">Smart Mirror</Link>
-          <div className="navbar-links">
-            <Link to="/dashboard">Dashboard</Link>
-            <Link to="/preferences">Preferences</Link>
-          </div>
-        </div>
-      </nav>
+      <div
+        onMouseMove={handleMouseMove}
+        className="fixed left-0 right-0 top-0 z-40 h-12"
+      />
+
+      <AnimatePresence>
+        {isVisible && (
+          <motion.nav
+            ref={navRef}
+            initial={{ y: -80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -80, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-black/90 backdrop-blur"
+            onMouseEnter={handleMouseEnterNav}
+            onMouseLeave={handleMouseLeaveNav}
+          >
+            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+              <Link to="/" className="text-sm font-semibold uppercase tracking-[0.3em] text-white">
+                Smart Mirror
+              </Link>
+              <div className="flex items-center gap-6 text-xs uppercase tracking-[0.3em] text-white/70">
+                <Link to="/dashboard" className="transition hover:text-white">
+                  Dashboard
+                </Link>
+                <Link to="/preferences" className="transition hover:text-white">
+                  Preferences
+                </Link>
+              </div>
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
     </>
   )
 }

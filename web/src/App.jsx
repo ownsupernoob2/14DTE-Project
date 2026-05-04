@@ -10,7 +10,11 @@ function App() {
   const { isAuthenticated, isLoading } = useAuth0()
 
   if (isLoading) {
-    return <div>Loading...</div>
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-black text-xs uppercase tracking-[0.35em] text-white/70">
+        Loading
+      </div>
+    )
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import '../styles/widget.css'
+import { motion } from 'framer-motion'
 
 export default function WidgetContainer({ widget, onRemove, onMove }) {
   const [isDragging, setIsDragging] = useState(false)
@@ -39,34 +39,44 @@ export default function WidgetContainer({ widget, onRemove, onMove }) {
   }
 
   return (
-    <div
+    <motion.div
       ref={widgetRef}
-      className={`widget ${widget.type} ${isDragging ? 'dragging' : ''}`}
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2 }}
+      className={`absolute rounded-2xl border border-white/10 bg-mirror-gray/90 p-4 text-white shadow-soft backdrop-blur ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       style={{
-        position: 'absolute',
         left: `${widget.x}px`,
         top: `${widget.y}px`,
+        width: '220px',
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
-      <div className="widget-header">
-        <span className="widget-title">{widget.type.charAt(0).toUpperCase() + widget.type.slice(1)}</span>
+      <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2">
+        <span className="text-xs uppercase tracking-[0.3em] text-white/70">
+          {widget.type}
+        </span>
         <button
-          className="widget-close"
+          className="text-lg text-white/60 transition hover:text-white"
           onClick={() => onRemove(widget.id)}
         >
           ×
         </button>
       </div>
-      <div className="widget-content">
-        {widget.type === 'clock' && <div>🕐 12:34 PM</div>}
-        {widget.type === 'weather' && <div>☀️ 72°F, Sunny</div>}
-        {widget.type === 'calendar' && <div>📅 Tuesday, April 24</div>}
-        {widget.type === 'note' && <textarea placeholder="Type your note..."></textarea>}
+      <div className="text-sm text-white/80">
+        {widget.type === 'clock' && <div>12:34 PM</div>}
+        {widget.type === 'weather' && <div>72°F · Sunny</div>}
+        {widget.type === 'calendar' && <div>Tuesday · April 24</div>}
+        {widget.type === 'note' && (
+          <textarea
+            className="h-20 w-full resize-none rounded-lg border border-white/10 bg-black/40 p-2 text-sm text-white outline-none"
+            placeholder="Type your note..."
+          />
+        )}
       </div>
-    </div>
+    </motion.div>
   )
 }

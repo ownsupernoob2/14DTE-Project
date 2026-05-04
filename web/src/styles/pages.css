@@ -1,175 +1,77 @@
-/* Pages Styles */
-
-/* Auth Pages */
-.auth-page {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+.auth-page,
+.preferences-page {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+	background: #000;
 }
 
-.auth-container {
-  background: white;
-  padding: 40px;
-  border-radius: 8px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-  width: 100%;
-  max-width: 400px;
+.auth-container,
+.preferences-container {
+	background: #111;
+	border: 1px solid #333;
+	padding: 40px;
+	border-radius: 8px;
+	width: 100%;
+	max-width: 400px;
+	color: #fff;
 }
 
-.auth-container h1 {
-  margin-bottom: 20px;
-  text-align: center;
-  color: #333;
+.auth-container h1,
+.preferences-container h1 {
+	text-align: center;
+	margin-bottom: 20px;
 }
 
-.auth-container p {
-  text-align: center;
-  color: #666;
-  font-size: 14px;
-  margin-bottom: 20px;
+.auth-container p,
+.preferences-container p {
+	text-align: center;
+	margin-bottom: 16px;
 }
 
 .auth0-btn {
-  width: 100%;
-  padding: 12px;
-  background: #eb5424;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.3s ease;
-  margin-bottom: 20px;
+	width: 100%;
+	padding: 12px;
+	background: #fff;
+	color: #000;
+	border: 1px solid #fff;
+	border-radius: 4px;
+	font-size: 16px;
+	font-weight: 700;
+	cursor: pointer;
+	margin-bottom: 12px;
 }
 
-.auth0-btn:hover {
-  background: #d34b20;
+.auth0-btn--outline {
+	background: #000;
+	color: #fff;
 }
 
-.auth-container a, .link-like {
-  color: #667eea;
-  text-decoration: none;
-  cursor: pointer;
+.link-like {
+	text-decoration: underline;
+	cursor: pointer;
 }
 
-.auth-container a:hover, .link-like:hover {
-  text-decoration: underline;
-}
-
-/* Preferences Page */
-.preferences-page {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 80px 20px 40px;
-}
-
-.preferences-container {
-  background: white;
-  padding: 40px;
-  border-radius: 8px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-  width: 100%;
-  max-width: 500px;
-}
-
-.preferences-container h1 {
-  margin-bottom: 30px;
-  color: #333;
-}
-
-.profile-section {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.profile-section img {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-
-.profile-section h3 {
-  margin: 0 0 5px 0;
-  color: #333;
-}
-
+.preference-section label,
+.profile-section h3,
 .profile-section p {
-  margin: 0;
-  color: #666;
-  font-size: 14px;
-}
-
-.preference-section {
-  margin-bottom: 30px;
-  padding-bottom: 30px;
-  border-bottom: 1px solid #eee;
-}
-
-.preference-section:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-
-.preference-section h2 {
-  font-size: 16px;
-  margin-bottom: 16px;
-  color: #333;
-}
-
-.preference-section label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: #666;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.preference-section input[type="radio"],
-.preference-section input[type="checkbox"] {
-  cursor: pointer;
-}
-
-.preference-section select {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
+	color: #fff;
 }
 
 .preference-section button {
-  display: block;
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 10px;
-  background: #667eea;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.3s ease;
-}
-
-.preference-section button:hover {
-  background: #5568d3;
+	width: 100%;
+	padding: 10px;
+	background: #fff;
+	color: #000;
+	border: 1px solid #fff;
+	font-weight: 700;
+	margin-bottom: 10px;
+	cursor: pointer;
 }
 
 .preference-section .danger-btn {
-  background: #ff4444;
-}
-
-.preference-section .danger-btn:hover {
-  background: #cc0000;
+	background: #000;
+	color: #fff;
+	border: 1px solid #fff;
 }

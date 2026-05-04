@@ -5,9 +5,8 @@ import './index.css'
 import './styles/global.css'
 import App from './App.jsx'
 
-const domain = import.meta.env.VITE_AUTH0_DOMAIN || "your-tenant.auth0.com"
-const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID || "your-client-id"
-const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "smart-mirror-api"
+const domain = import.meta.env.VITE_AUTH0_DOMAIN || "dev-pgz1qjberxzo8hkl.us.auth0.com"
+const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID || "TWViWK6pUo2YmjO4CCqUNCdJYRy8eTqZ"
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -15,8 +14,7 @@ createRoot(document.getElementById('root')).render(
       domain={domain}
       clientId={clientId}
       authorizationParams={{
-        redirect_uri: window.location.origin,
-        audience: audience
+        redirect_uri: window.location.origin
       }}
     >
       <App />
