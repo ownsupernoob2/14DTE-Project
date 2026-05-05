@@ -1,8 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -29,10 +36,16 @@ type Dashboard struct {
 	Widgets []Widget `json:"widgets"`
 }
 
+type FaceRequest struct {
+	Image string `json:"image"`
+}
+
 func init() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+	os.MkdirAll("faces", 0755)
+	os.MkdirAll("temp", 0755)
 }
 
 func main() {
@@ -47,18 +60,19 @@ func main() {
 	e.POST("/auth/login", login)
 	e.POST("/auth/register", register)
 	e.POST("/auth/refresh", refreshToken)
+	
+	// Mirror endpoint (no auth needed for the mirror to verify, but typically would use an API key)
+	e.POST("/api/verify-face", verifyFace)
 
 	// Protected routes (JWT middleware)
 	protected := e.Group("/api")
-	protected.Use(middleware.JWTWithConfig(middleware.JWTConfig{
-		SigningMethod: "RS256",
-		SigningKey:    getAuth0PublicKey(),
-	}))
+	protected.Use(EnsureValidToken())
 
 	// User routes
 	protected.GET("/users/me", getCurrentUser)
 	protected.PUT("/users/:id", updateUser)
 	protected.GET("/users/:id", getUser)
+	protected.POST("/users/me/face", uploadFace)
 
 	// Dashboard/Widget routes
 	protected.GET("/dashboard", getDashboard)
@@ -85,22 +99,18 @@ func health(c echo.Context) error {
 }
 
 func login(c echo.Context) error {
-	// TODO: Implement Auth0 login
 	return c.JSON(200, map[string]string{"message": "Login endpoint"})
 }
 
 func register(c echo.Context) error {
-	// TODO: Implement Auth0 registration
 	return c.JSON(200, map[string]string{"message": "Register endpoint"})
 }
 
 func refreshToken(c echo.Context) error {
-	// TODO: Implement token refresh
 	return c.JSON(200, map[string]string{"message": "Token refresh endpoint"})
 }
 
 func getCurrentUser(c echo.Context) error {
-	// TODO: Get user from JWT claims
 	return c.JSON(200, User{
 		ID:    "user-123",
 		Email: "user@example.com",
@@ -110,7 +120,6 @@ func getCurrentUser(c echo.Context) error {
 
 func getUser(c echo.Context) error {
 	id := c.Param("id")
-	// TODO: Fetch user from database
 	return c.JSON(200, User{
 		ID:    id,
 		Email: "user@example.com",
@@ -121,62 +130,150 @@ func getUser(c echo.Context) error {
 func updateUser(c echo.Context) error {
 	id := c.Param("id")
 	var user User
-	if err := c.BindJSON(&user); err != nil {
+	if err := c.Bind(&user); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 	user.ID = id
-	// TODO: Update user in database
 	return c.JSON(200, user)
 }
 
+func uploadFace(c echo.Context) error {
+	// In a real app, extract user ID from JWT claims
+	// For now, assume a single user or extract from some context
+	userID := "user-123"
+
+	var req FaceRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request"})
+	}
+
+	// Remove data URI prefix if present
+	b64data := req.Image
+	if idx := strings.Index(b64data, ","); idx != -1 {
+		b64data = b64data[idx+1:]
+	}
+
+	imgBytes, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid base64 image"})
+	}
+
+	filepath := fmt.Sprintf("faces/%s.jpg", userID)
+	if err := ioutil.WriteFile(filepath, imgBytes, 0644); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to save image"})
+	}
+
+	return c.JSON(200, map[string]string{"message": "Face registered successfully"})
+}
+
+func verifyFace(c echo.Context) error {
+	var req FaceRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request"})
+	}
+
+	b64data := req.Image
+	if idx := strings.Index(b64data, ","); idx != -1 {
+		b64data = b64data[idx+1:]
+	}
+
+	imgBytes, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid base64 image"})
+	}
+
+	tempPath := "temp/verify.jpg"
+	if err := ioutil.WriteFile(tempPath, imgBytes, 0644); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to save temp image"})
+	}
+
+	// Run Python script
+	cmd := exec.Command("python", "verify.py", tempPath, "faces")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err = cmd.Run()
+	if err != nil {
+		log.Println("Python script error:", err)
+		return c.JSON(500, map[string]string{"error": "Verification failed"})
+	}
+
+	output := strings.TrimSpace(out.String())
+	if strings.HasPrefix(output, "MATCH:") {
+		matchedUserID := strings.TrimPrefix(output, "MATCH:")
+		if matchedUserID == "unknown" {
+			return c.JSON(401, map[string]string{"error": "Face not recognized"})
+		}
+		
+		// If matched, return user info and widgets
+		return c.JSON(200, map[string]interface{}{
+			"user_id": matchedUserID,
+			"widgets": getWidgetsSlice(), // Ideally fetch based on user_id
+		})
+	}
+
+	return c.JSON(401, map[string]string{"error": "Face not recognized or no face found"})
+}
+
 func getDashboard(c echo.Context) error {
-	// TODO: Fetch dashboard from database
 	return c.JSON(200, Dashboard{
 		ID:      "dashboard-123",
 		UserID:  "user-123",
-		Widgets: []Widget{},
+		Widgets: getWidgetsSlice(),
 	})
 }
 
+// Simple in-memory store for widgets
+var widgetsDB = make(map[string]Widget)
+
+func getWidgetsSlice() []Widget {
+	list := make([]Widget, 0, len(widgetsDB))
+	for _, w := range widgetsDB {
+		list = append(list, w)
+	}
+	return list
+}
+
 func getWidgets(c echo.Context) error {
-	// TODO: Fetch widgets from database
-	return c.JSON(200, []Widget{})
+	return c.JSON(200, getWidgetsSlice())
 }
 
 func addWidget(c echo.Context) error {
 	var widget Widget
-	if err := c.BindJSON(&widget); err != nil {
+	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
-	widget.ID = generateID()
-	// TODO: Save widget to database
+	
+	if widget.ID == "" {
+		widget.ID = generateID()
+	}
+	
+	widgetsDB[widget.ID] = widget
 	return c.JSON(201, widget)
 }
 
 func updateWidget(c echo.Context) error {
 	id := c.Param("id")
 	var widget Widget
-	if err := c.BindJSON(&widget); err != nil {
+	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 	widget.ID = id
-	// TODO: Update widget in database
+	widgetsDB[id] = widget
 	return c.JSON(200, widget)
 }
 
 func deleteWidget(c echo.Context) error {
 	id := c.Param("id")
-	// TODO: Delete widget from database
+	delete(widgetsDB, id)
 	return c.JSON(200, map[string]string{"message": "Widget deleted", "id": id})
 }
 
 // Helpers
 
 func generateID() string {
-	return "widget-" + string(rune(len([]rune{})))
+	return "widget-" + string(rune(len(widgetsDB) + 97)) // A simple id
 }
 
 func getAuth0PublicKey() interface{} {
-	// TODO: Fetch Auth0 public key
 	return nil
 }

@@ -1,74 +1,81 @@
 package main
 
 import (
-	"fmt"
-	"time"
+"context"
+"log"
+"net/url"
+"os"
+"strings"
+"time"
 
-	"github.com/golang-jwt/jwt"
-	echojwt "github.com/labstack/echo-jwt/v4"
-	"github.com/labstack/echo/v4"
+"github.com/auth0/go-jwt-middleware/v2/jwks"
+"github.com/auth0/go-jwt-middleware/v2/validator"
+"github.com/labstack/echo/v4"
 )
 
-// CustomClaims represents JWT claims
 type CustomClaims struct {
-	Sub   string `json:"sub"`
-	Email string `json:"email"`
-	jwt.StandardClaims
+Scope string `json:"scope"`
 }
 
-// JWTConfig returns the JWT middleware configuration for Auth0
-func JWTConfig() echojwt.Config {
-	return echojwt.Config{
-		SigningMethod: "RS256",
-		KeyFunc: func(token *jwt.Token) (interface{}, error) {
-			// TODO: Implement JWKS fetching for Auth0
-			// This should fetch the public key from Auth0's JWKS endpoint
-			return nil, fmt.Errorf("key not implemented")
-		},
-		SuccessHandler: func(c echo.Context) {
-			// Token is valid, continue to handler
-		},
-		ErrorHandler: func(c echo.Context, err error) error {
-			return echo.ErrUnauthorized
-		},
-	}
+func (c CustomClaims) Validate(ctx context.Context) error {
+return nil
 }
 
-// ErrorResponse represents a standard error response
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Code    int    `json:"code"`
+func EnsureValidToken() echo.MiddlewareFunc {
+domain := os.Getenv("AUTH0_DOMAIN")
+audience := os.Getenv("AUTH0_AUDIENCE")
+
+if domain == "" || audience == "" {
+log.Println("WARNING: AUTH0_DOMAIN or AUTH0_AUDIENCE is not set in .env")
 }
 
-// SuccessResponse represents a standard success response
-type SuccessResponse struct {
-	Data      interface{} `json:"data"`
-	Message   string      `json:"message,omitempty"`
-	Timestamp time.Time   `json:"timestamp"`
+if !strings.HasPrefix(domain, "http") {
+domain = "https://" + domain
+}
+if !strings.HasSuffix(domain, "/") {
+domain = domain + "/"
 }
 
-// ErrorHandler handles errors in a consistent way
-func ErrorHandler(c echo.Context, err error) error {
-	code := 500
-	message := "Internal Server Error"
-
-	if he, ok := err.(*echo.HTTPError); ok {
-		code = he.Code
-		message = fmt.Sprintf("%v", he.Message)
-	}
-
-	return c.JSON(code, ErrorResponse{
-		Error:   fmt.Sprintf("Error %d", code),
-		Message: message,
-		Code:    code,
-	})
+issuerURL, err := url.Parse(domain)
+if err != nil {
+log.Fatalf("Failed to parse the issuer url: %v", err)
 }
 
-// SuccessHandler returns a standardized success response
-func SuccessHandler(c echo.Context, data interface{}) error {
-	return c.JSON(200, SuccessResponse{
-		Data:      data,
-		Timestamp: time.Now(),
-	})
+provider := jwks.NewCachingProvider(issuerURL, 5*time.Minute)
+
+jwtValidator, err := validator.New(
+provider.KeyFunc,
+validator.RS256,
+issuerURL.String(),
+[]string{audience},
+validator.WithCustomClaims(func() validator.CustomClaims {
+return &CustomClaims{}
+}),
+validator.WithAllowedClockSkew(time.Minute),
+)
+if err != nil {
+log.Fatalf("Failed to set up the jwt validator: %v", err)
 }
+
+return func(next echo.HandlerFunc) echo.HandlerFunc {
+return func(c echo.Context) error {
+authHeader := c.Request().Header.Get("Authorization")
+if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+return echo.NewHTTPError(401, "Missing or malformed Authorization header")
+}
+
+token := strings.TrimPrefix(authHeader, "Bearer ")
+
+parsedToken, err := jwtValidator.ValidateToken(c.Request().Context(), token)
+if err != nil {
+log.Printf("Token validation failed: %v", err)
+return echo.NewHTTPError(401, "Invalid token")
+}
+
+c.Set("user", parsedToken.(*validator.ValidatedClaims))
+
+return next(c)
+}
+}
+}
+
