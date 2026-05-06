@@ -22,11 +22,11 @@ type User struct {
 }
 
 type Widget struct {
-	ID    string      `json:"id"`
-	Type  string      `json:"type"`
-	X     float64     `json:"x"`
-	Y     float64     `json:"y"`
-	Data  interface{} `json:"data,omitempty"`
+	ID   string      `json:"id"`
+	Type string      `json:"type"`
+	X    float64     `json:"x"`
+	Y    float64     `json:"y"`
+	Data interface{} `json:"data,omitempty"`
 }
 
 type Dashboard struct {
@@ -59,7 +59,7 @@ func main() {
 	e.POST("/auth/login", login)
 	e.POST("/auth/register", register)
 	e.POST("/auth/refresh", refreshToken)
-	
+
 	// Mirror endpoint (no auth needed for the mirror to verify, but typically would use an API key)
 	e.POST("/api/verify-face", verifyFace)
 
@@ -217,7 +217,7 @@ func verifyFace(c echo.Context) error {
 		if matchedUserID == "unknown" {
 			return c.JSON(401, map[string]string{"error": "Face not recognized"})
 		}
-		
+
 		// If matched, return user info and widgets
 		return c.JSON(200, map[string]interface{}{
 			"user_id": matchedUserID,
@@ -256,11 +256,11 @@ func addWidget(c echo.Context) error {
 	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
-	
+
 	if widget.ID == "" {
 		widget.ID = generateID()
 	}
-	
+
 	widgetsDB[widget.ID] = widget
 	return c.JSON(201, widget)
 }
@@ -285,7 +285,7 @@ func deleteWidget(c echo.Context) error {
 // Helpers
 
 func generateID() string {
-	return "widget-" + string(rune(len(widgetsDB) + 97)) // A simple id
+	return "widget-" + string(rune(len(widgetsDB)+97)) // A simple id
 }
 
 func getAuth0PublicKey() interface{} {
