@@ -61,7 +61,7 @@ echo   npm run dev
 echo.
 echo Backend:
 echo   cd server
-echo   go run main.go auth.go middleware.go
+echo   go run .
 echo.
 echo Or use Docker:
 echo   cd server

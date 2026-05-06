@@ -44,7 +44,7 @@ export default function WidgetContainer({ widget, onRemove, onMove }) {
       initial={{ opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.2 }}
-      className={`absolute rounded-2xl border border-white/10 bg-mirror-gray/90 p-4 text-white shadow-soft backdrop-blur ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      className={`glass-panel widget-container ${isDragging ? 'dragging' : ''}`}
       style={{
         left: `${widget.x}px`,
         top: `${widget.y}px`,
@@ -55,24 +55,24 @@ export default function WidgetContainer({ widget, onRemove, onMove }) {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
-      <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2">
-        <span className="text-xs uppercase tracking-[0.3em] text-white/70">
+      <div className="widget-header">
+        <span className="text-overline">
           {widget.type}
         </span>
         <button
-          className="text-lg text-white/60 transition hover:text-white"
+          className="widget-close"
           onClick={() => onRemove(widget.id)}
         >
           ×
         </button>
       </div>
-      <div className="text-sm text-white/80">
-        {widget.type === 'clock' && <div>12:34 PM</div>}
+      <div className="widget-content">
+        {widget.type === 'clock' && <div className="widget-clock">12:34 PM</div>}
         {widget.type === 'weather' && <div>72°F · Sunny</div>}
         {widget.type === 'calendar' && <div>Tuesday · April 24</div>}
         {widget.type === 'note' && (
           <textarea
-            className="h-20 w-full resize-none rounded-lg border border-white/10 bg-black/40 p-2 text-sm text-white outline-none"
+            className="widget-textarea"
             placeholder="Type your note..."
           />
         )}

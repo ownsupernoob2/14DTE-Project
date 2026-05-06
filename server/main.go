@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -102,8 +101,23 @@ func login(c echo.Context) error {
 	return c.JSON(200, map[string]string{"message": "Login endpoint"})
 }
 
+type RegisterRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+}
+
 func register(c echo.Context) error {
-	return c.JSON(200, map[string]string{"message": "Register endpoint"})
+	var req RegisterRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request"})
+	}
+
+	if !strings.HasSuffix(req.Email, "@kingshigh.school.nz") {
+		return c.JSON(403, map[string]string{"error": "Only @kingshigh.school.nz email addresses are allowed to register"})
+	}
+
+	return c.JSON(200, map[string]string{"message": "Registration successful"})
 }
 
 func refreshToken(c echo.Context) error {

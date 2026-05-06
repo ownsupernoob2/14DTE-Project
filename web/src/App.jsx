@@ -2,7 +2,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
 import Login from './pages/Login'
-import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Preferences from './pages/Preferences'
 
@@ -11,7 +10,7 @@ function App() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-xs uppercase tracking-[0.35em] text-white/70">
+      <div className="app-loading">
         Loading
       </div>
     )
@@ -20,11 +19,11 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
+        
         <Route
           path="/"
-          element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />}
+          element={isAuthenticated ? <Navigate to="/dashboard" /> : <Navigate to="/login" />}
         />
         <Route
           path="/dashboard"
@@ -34,6 +33,8 @@ function App() {
           path="/preferences"
           element={isAuthenticated ? <Preferences /> : <Navigate to="/login" />}
         />
+        
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>
   )

@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import WidgetContainer from '../components/WidgetContainer'
 
@@ -7,9 +8,28 @@ export default function Dashboard() {
   const [widgets, setWidgets] = useState([])
   const [showAddMenu, setShowAddMenu] = useState(false)
   const containerRef = useRef(null)
-  const widgetIdRef = useRef(1)
+  const { getAccessTokenSilently } = useAuth0()
 
-  const addWidget = (type) => {
+  useEffect(() => {
+    fetchWidgets()
+  }, [])
+
+  const fetchWidgets = async () => {
+    try {
+      const token = await getAccessTokenSilently()
+      const res = await fetch('http://localhost:8080/api/dashboard/widgets', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setWidgets(data || [])
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const addWidget = async (type) => {
     const containerWidth = containerRef.current?.offsetWidth || 900
     const containerHeight = containerRef.current?.offsetHeight || 600
     const widgetWidth = 220
@@ -20,30 +40,75 @@ export default function Dashboard() {
     const y = Math.min(Math.floor(index / cols) * widgetHeight + 96, containerHeight - widgetHeight)
 
     const newWidget = {
-      id: widgetIdRef.current++,
+      id: `new-${Date.now()}`,
       type,
       x,
       y,
     }
-    setWidgets([...widgets, newWidget])
+
     setShowAddMenu(false)
+    setWidgets([...widgets, newWidget])
+
+    try {
+      const token = await getAccessTokenSilently()
+      const res = await fetch('http://localhost:8080/api/dashboard/widgets', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ type, x, y })
+      })
+      if (res.ok) {
+        const savedWidget = await res.json()
+        setWidgets(prev => prev.map(w => w.id === newWidget.id ? savedWidget : w))
+      }
+    } catch (e) {
+      console.error(e)
+    }
   }
 
-  const removeWidget = (id) => {
+  const removeWidget = async (id) => {
     setWidgets(widgets.filter((w) => w.id !== id))
+    try {
+      const token = await getAccessTokenSilently()
+      await fetch(`http://localhost:8080/api/dashboard/widgets/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      console.error(e)
+    }
   }
 
-  const updateWidgetPosition = (id, x, y) => {
+  const updateWidgetPosition = async (id, x, y) => {
+    const widgetToUpdate = widgets.find(w => w.id === id)
+    if (!widgetToUpdate) return
+
     setWidgets(
       widgets.map((w) => (w.id === id ? { ...w, x, y } : w))
     )
+
+    try {
+      const token = await getAccessTokenSilently()
+      await fetch(`http://localhost:8080/api/dashboard/widgets/${id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ ...widgetToUpdate, x, y })
+      })
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   return (
-    <div className="relative min-h-screen bg-black text-white">
+    <div className="dashboard-container">
       <Navbar />
-      <div ref={containerRef} className="relative h-screen w-screen overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_45%)]" />
+      <div ref={containerRef} className="dashboard-canvas">
+        <div className="dashboard-bg-gradient" />
 
         {widgets.map((widget) => (
           <WidgetContainer
@@ -58,7 +123,7 @@ export default function Dashboard() {
           onClick={() => setShowAddMenu(!showAddMenu)}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          className="absolute bottom-8 right-8 z-40 flex h-14 w-14 items-center justify-center rounded-full border border-white/30 bg-white text-2xl font-semibold text-black shadow-glow"
+          className="fab-btn"
         >
           +
         </motion.button>
@@ -70,13 +135,13 @@ export default function Dashboard() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.98 }}
               transition={{ duration: 0.2 }}
-              className="absolute bottom-28 right-8 z-40 w-48 rounded-2xl border border-white/10 bg-black/80 p-3 shadow-soft backdrop-blur"
+              className="glass-panel add-widget-menu"
             >
               {['clock', 'weather', 'calendar', 'note'].map((type) => (
                 <button
                   key={type}
                   onClick={() => addWidget(type)}
-                  className="mb-2 w-full rounded-xl border border-white/10 px-4 py-2 text-left text-xs uppercase tracking-[0.3em] text-white/80 transition hover:border-white/40 hover:text-white"
+                  className="widget-menu-item"
                 >
                   {type}
                 </button>

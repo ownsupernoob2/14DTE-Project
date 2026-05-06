@@ -37,7 +37,7 @@ export default function Navbar() {
     <>
       <div
         onMouseMove={handleMouseMove}
-        className="fixed left-0 right-0 top-0 z-40 h-12"
+        className="navbar-trigger"
       />
 
       <AnimatePresence>
@@ -48,19 +48,19 @@ export default function Navbar() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -80, opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-black/90 backdrop-blur"
+            className="navbar"
             onMouseEnter={handleMouseEnterNav}
             onMouseLeave={handleMouseLeaveNav}
           >
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-              <Link to="/" className="text-sm font-semibold uppercase tracking-[0.3em] text-white">
+            <div className="navbar-content">
+              <Link to="/" className="navbar-brand">
                 Smart Mirror
               </Link>
-              <div className="flex items-center gap-6 text-xs uppercase tracking-[0.3em] text-white/70">
-                <Link to="/dashboard" className="transition hover:text-white">
+              <div className="navbar-links">
+                <Link to="/dashboard" className="nav-link">
                   Dashboard
                 </Link>
-                <Link to="/preferences" className="transition hover:text-white">
+                <Link to="/preferences" className="nav-link">
                   Preferences
                 </Link>
               </div>
