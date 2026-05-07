@@ -1,56 +1,12 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import { motion } from 'framer-motion'
-import Webcam from 'react-webcam'
 import Navbar from '../components/Navbar'
+import FaceCaptureModal from '../components/FaceCaptureModal'
 
 export default function Preferences() {
-  const { user, logout, getAccessTokenSilently } = useAuth0()
-  const [showWebcam, setShowWebcam] = useState(false)
-  const [capturedImage, setCapturedImage] = useState(null)
-  const [uploadStatus, setUploadStatus] = useState('')
-  const webcamRef = useRef(null)
-
-  const capture = useCallback(() => {
-    const imageSrc = webcamRef.current.getScreenshot()
-    setCapturedImage(imageSrc)
-  }, [webcamRef])
-
-  const retake = () => {
-    setCapturedImage(null)
-    setUploadStatus('')
-  }
-
-  const saveFace = async () => {
-    if (!capturedImage) return
-    setUploadStatus('Uploading...')
-
-    try {
-      const token = await getAccessTokenSilently()
-      const res = await fetch('http://localhost:8080/api/users/me/face', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ image: capturedImage })
-      })
-
-      if (res.ok) {
-        setUploadStatus('Face successfully registered!')
-        setTimeout(() => {
-          setShowWebcam(false)
-          setCapturedImage(null)
-          setUploadStatus('')
-        }, 2000)
-      } else {
-        setUploadStatus('Failed to register face.')
-      }
-    } catch (e) {
-      console.error(e)
-      setUploadStatus('Error connecting to server.')
-    }
-  }
+  const { user, logout } = useAuth0()
+  const [showFaceModal, setShowFaceModal] = useState(false)
 
   return (
     <div className="preferences-container">
@@ -66,11 +22,7 @@ export default function Preferences() {
 
           {user && (
             <section className="pref-section user-profile">
-              <img
-                src={user.picture}
-                alt={user.name}
-                className="profile-img"
-              />
+              <img src={user.picture} alt={user.name} className="profile-img" />
               <div>
                 <h3 className="profile-name">{user.name}</h3>
                 <p className="profile-email">{user.email}</p>
@@ -83,36 +35,9 @@ export default function Preferences() {
             <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
               Register your face so the smart mirror can identify you and load your dashboard.
             </p>
-            
-            {!showWebcam ? (
-              <button className="modern-btn" onClick={() => setShowWebcam(true)}>
-                Register Face Scan
-              </button>
-            ) : (
-              <div className="webcam-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
-                {!capturedImage ? (
-                  <>
-                    <Webcam
-                      audio={false}
-                      ref={webcamRef}
-                      screenshotFormat="image/jpeg"
-                      style={{ width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                    />
-                    <button className="modern-btn" onClick={capture}>Capture Photo</button>
-                    <button className="modern-btn modern-btn-outline" onClick={() => setShowWebcam(false)}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <img src={capturedImage} alt="Captured face" style={{ width: '100%', maxWidth: '400px', borderRadius: '8px' }} />
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="modern-btn" onClick={saveFace}>Save Face</button>
-                      <button className="modern-btn modern-btn-outline" onClick={retake}>Retake</button>
-                    </div>
-                    {uploadStatus && <p style={{ color: uploadStatus.includes('Error') || uploadStatus.includes('Failed') ? '#ef4444' : '#10b981', fontSize: '0.875rem' }}>{uploadStatus}</p>}
-                  </>
-                )}
-              </div>
-            )}
+            <button className="modern-btn" onClick={() => setShowFaceModal(true)}>
+              Register Face Scan
+            </button>
           </section>
 
           <section className="pref-grid">
@@ -132,10 +57,7 @@ export default function Preferences() {
 
             <div className="pref-section">
               <h2 className="text-overline">Language</h2>
-              <select
-                defaultValue="en"
-                className="pref-select"
-              >
+              <select defaultValue="en" className="pref-select">
                 <option value="en">English</option>
                 <option value="es">Spanish</option>
                 <option value="fr">French</option>
@@ -155,6 +77,8 @@ export default function Preferences() {
           </section>
         </motion.div>
       </div>
+
+      <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
     </div>
   )
 }

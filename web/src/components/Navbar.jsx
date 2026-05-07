@@ -8,16 +8,12 @@ export default function Navbar() {
   const navRef = useRef(null)
 
   const handleMouseMove = (e) => {
-    // Show navbar if mouse is near top
     if (e.clientY < 50) {
       setIsVisible(true)
       clearTimeout(timeoutRef.current)
     } else if (isVisible) {
-      // Start timer to hide navbar when mouse leaves
       clearTimeout(timeoutRef.current)
-      timeoutRef.current = setTimeout(() => {
-        setIsVisible(false)
-      }, 10000)
+      timeoutRef.current = setTimeout(() => setIsVisible(false), 10000)
     }
   }
 
@@ -28,18 +24,12 @@ export default function Navbar() {
 
   const handleMouseLeaveNav = () => {
     clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(() => {
-      setIsVisible(false)
-    }, 10000)
+    timeoutRef.current = setTimeout(() => setIsVisible(false), 10000)
   }
 
   return (
     <>
-      <div
-        onMouseMove={handleMouseMove}
-        className="navbar-trigger"
-      />
-
+      <div onMouseMove={handleMouseMove} className="navbar-trigger" />
       <AnimatePresence>
         {isVisible && (
           <motion.nav
@@ -53,16 +43,10 @@ export default function Navbar() {
             onMouseLeave={handleMouseLeaveNav}
           >
             <div className="navbar-content">
-              <Link to="/" className="navbar-brand">
-                Smart Mirror
-              </Link>
+              <Link to="/" className="navbar-brand">Smart Mirror</Link>
               <div className="navbar-links">
-                <Link to="/dashboard" className="nav-link">
-                  Dashboard
-                </Link>
-                <Link to="/preferences" className="nav-link">
-                  Preferences
-                </Link>
+                <Link to="/dashboard" className="nav-link">Dashboard</Link>
+                <Link to="/preferences" className="nav-link">Preferences</Link>
               </div>
             </div>
           </motion.nav>

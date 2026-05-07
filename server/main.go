@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -35,8 +35,14 @@ type Dashboard struct {
 	Widgets []Widget `json:"widgets"`
 }
 
+// FaceRequest is used by the legacy single-image upload and verify endpoints.
 type FaceRequest struct {
 	Image string `json:"image"`
+}
+
+// TrainRequest accepts a batch of up to 10 base64-encoded images.
+type TrainRequest struct {
+	Images []string `json:"images"`
 }
 
 func init() {
@@ -45,6 +51,7 @@ func init() {
 	}
 	os.MkdirAll("faces", 0755)
 	os.MkdirAll("temp", 0755)
+	os.MkdirAll("encodings", 0755)
 }
 
 func main() {
@@ -60,7 +67,7 @@ func main() {
 	e.POST("/auth/register", register)
 	e.POST("/auth/refresh", refreshToken)
 
-	// Mirror endpoint (no auth needed for the mirror to verify, but typically would use an API key)
+	// Mirror endpoint — no auth needed for the mirror to verify faces
 	e.POST("/api/verify-face", verifyFace)
 
 	// Protected routes (JWT middleware)
@@ -71,6 +78,11 @@ func main() {
 	protected.GET("/users/me", getCurrentUser)
 	protected.PUT("/users/:id", updateUser)
 	protected.GET("/users/:id", getUser)
+
+	// Face training route — replaces the old single-image upload
+	protected.POST("/faces/train", trainFace)
+
+	// Legacy single-image face upload (kept for backward compatibility)
 	protected.POST("/users/me/face", uploadFace)
 
 	// Dashboard/Widget routes
@@ -91,7 +103,7 @@ func main() {
 	e.Logger.Fatal(e.Start(":" + port))
 }
 
-// Handlers
+// ─── Handlers ────────────────────────────────────────────────────────────────
 
 func health(c echo.Context) error {
 	return c.JSON(200, map[string]string{"status": "ok"})
@@ -125,10 +137,11 @@ func refreshToken(c echo.Context) error {
 }
 
 func getCurrentUser(c echo.Context) error {
+	userID := getUserIDFromToken(c)
 	return c.JSON(200, User{
-		ID:    "user-123",
+		ID:    userID,
 		Email: "user@example.com",
-		Name:  "John Doe",
+		Name:  "Student",
 	})
 }
 
@@ -137,7 +150,7 @@ func getUser(c echo.Context) error {
 	return c.JSON(200, User{
 		ID:    id,
 		Email: "user@example.com",
-		Name:  "John Doe",
+		Name:  "Student",
 	})
 }
 
@@ -151,17 +164,103 @@ func updateUser(c echo.Context) error {
 	return c.JSON(200, user)
 }
 
+// trainFace receives up to 10 base64 images, saves them temporarily, runs train.py
+// to build a face encoding pickle, then deletes the raw images.
+// The encoding is saved to encodings/<user_id>.pickle.
+func trainFace(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
+	}
+
+	var req TrainRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+	}
+
+	if len(req.Images) == 0 {
+		return c.JSON(400, map[string]string{"error": "No images provided"})
+	}
+
+	// Sanitise userID for use as a directory name (Auth0 sub looks like "auth0|abc123")
+	safeUserID := strings.ReplaceAll(userID, "|", "_")
+	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
+
+	tempDir := fmt.Sprintf("temp/%s", safeUserID)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return c.JSON(500, map[string]string{"error": "Could not create temp directory"})
+	}
+	// Always clean up temp images when we're done
+	defer os.RemoveAll(tempDir)
+
+	// Decode and save each image
+	saved := 0
+	for i, img := range req.Images {
+		b64data := img
+		if idx := strings.Index(b64data, ","); idx != -1 {
+			b64data = b64data[idx+1:]
+		}
+		imgBytes, err := base64.StdEncoding.DecodeString(b64data)
+		if err != nil {
+			log.Printf("Skipping image %d: base64 decode error: %v", i, err)
+			continue
+		}
+		filepath := fmt.Sprintf("%s/frame_%d.jpg", tempDir, i)
+		if err := os.WriteFile(filepath, imgBytes, 0644); err != nil {
+			log.Printf("Skipping image %d: write error: %v", i, err)
+			continue
+		}
+		saved++
+	}
+
+	if saved == 0 {
+		return c.JSON(400, map[string]string{"error": "No valid images could be decoded"})
+	}
+
+	outputPickle := fmt.Sprintf("encodings/%s.pickle", safeUserID)
+
+	// Run the Python training script
+	cmd := exec.Command("python", "train.py", tempDir, outputPickle)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("train.py error: %v, stderr: %s", err, errOut.String())
+		return c.JSON(500, map[string]string{"error": "Training failed: " + strings.TrimSpace(out.String())})
+	}
+
+	output := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(output, "OK:") {
+		msg := strings.TrimPrefix(output, "ERROR:")
+		return c.JSON(500, map[string]string{"error": "Training failed: " + msg})
+	}
+
+	framesUsed := 0
+	fmt.Sscanf(strings.TrimPrefix(output, "OK:"), "%d", &framesUsed)
+
+	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
+
+	return c.JSON(200, map[string]interface{}{
+		"status":      "trained",
+		"frames_used": framesUsed,
+		"user_id":     safeUserID,
+	})
+}
+
+// uploadFace is the legacy single-image face upload, kept for backward compat.
 func uploadFace(c echo.Context) error {
-	// In a real app, extract user ID from JWT claims
-	// For now, assume a single user or extract from some context
-	userID := "user-123"
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		userID = "user-123"
+	}
 
 	var req FaceRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 
-	// Remove data URI prefix if present
 	b64data := req.Image
 	if idx := strings.Index(b64data, ","); idx != -1 {
 		b64data = b64data[idx+1:]
@@ -173,7 +272,7 @@ func uploadFace(c echo.Context) error {
 	}
 
 	filepath := fmt.Sprintf("faces/%s.jpg", userID)
-	if err := ioutil.WriteFile(filepath, imgBytes, 0644); err != nil {
+	if err := os.WriteFile(filepath, imgBytes, 0644); err != nil {
 		return c.JSON(500, map[string]string{"error": "Failed to save image"})
 	}
 
@@ -197,54 +296,67 @@ func verifyFace(c echo.Context) error {
 	}
 
 	tempPath := "temp/verify.jpg"
-	if err := ioutil.WriteFile(tempPath, imgBytes, 0644); err != nil {
+	if err := os.WriteFile(tempPath, imgBytes, 0644); err != nil {
 		return c.JSON(500, map[string]string{"error": "Failed to save temp image"})
 	}
+	defer os.Remove(tempPath)
 
-	// Run Python script
-	cmd := exec.Command("python", "verify.py", tempPath, "faces")
+	// Run Python verification script against the encodings directory
+	cmd := exec.Command("python", "verify.py", tempPath, "encodings")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
-		log.Println("Python script error:", err)
+		log.Println("Python verify error:", err)
 		return c.JSON(500, map[string]string{"error": "Verification failed"})
 	}
 
 	output := strings.TrimSpace(out.String())
+
+	if output == "NO_FACE" {
+		return c.JSON(401, map[string]string{"error": "No face detected"})
+	}
+
 	if strings.HasPrefix(output, "MATCH:") {
 		matchedUserID := strings.TrimPrefix(output, "MATCH:")
 		if matchedUserID == "unknown" {
-			return c.JSON(401, map[string]string{"error": "Face not recognized"})
+			return c.JSON(401, map[string]string{"error": "Face not recognised"})
 		}
 
-		// If matched, return user info and widgets
 		return c.JSON(200, map[string]interface{}{
 			"user_id": matchedUserID,
-			"widgets": getWidgetsSlice(), // Ideally fetch based on user_id
+			"widgets": getWidgetsForUser(matchedUserID),
 		})
 	}
 
-	return c.JSON(401, map[string]string{"error": "Face not recognized or no face found"})
+	return c.JSON(401, map[string]string{"error": "Face not recognised"})
 }
 
 func getDashboard(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		userID = c.QueryParam("user_id")
+	}
 	return c.JSON(200, Dashboard{
-		ID:      "dashboard-123",
-		UserID:  "user-123",
-		Widgets: getWidgetsSlice(),
+		ID:      "dashboard-" + userID,
+		UserID:  userID,
+		Widgets: getWidgetsForUser(userID),
 	})
 }
 
-// Simple in-memory store for widgets
+// Simple in-memory widget store (keyed by user_id → widget list)
 var widgetsDB = make(map[string]Widget)
 
-func getWidgetsSlice() []Widget {
+func getWidgetsForUser(userID string) []Widget {
 	list := make([]Widget, 0, len(widgetsDB))
 	for _, w := range widgetsDB {
 		list = append(list, w)
 	}
 	return list
+}
+
+func getWidgetsSlice() []Widget {
+	return getWidgetsForUser("")
 }
 
 func getWidgets(c echo.Context) error {
@@ -256,11 +368,9 @@ func addWidget(c echo.Context) error {
 	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
-
 	if widget.ID == "" {
 		widget.ID = generateID()
 	}
-
 	widgetsDB[widget.ID] = widget
 	return c.JSON(201, widget)
 }
@@ -282,12 +392,8 @@ func deleteWidget(c echo.Context) error {
 	return c.JSON(200, map[string]string{"message": "Widget deleted", "id": id})
 }
 
-// Helpers
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 func generateID() string {
-	return "widget-" + string(rune(len(widgetsDB)+97)) // A simple id
-}
-
-func getAuth0PublicKey() interface{} {
-	return nil
+	return "widget-" + strconv.Itoa(len(widgetsDB)+1)
 }

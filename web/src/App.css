@@ -380,3 +380,365 @@
 .widget-textarea:focus {
   border-color: var(--accent);
 }
+
+/* === Face Capture Modal (fc-*) — B&W scheme, 80% viewport === */
+
+.fc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 5vh 5vw;
+}
+
+.fc-modal {
+  position: relative;
+  width: 80vw;
+  height: 80vh;
+  max-width: 900px;
+  background: rgba(8, 8, 10, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 28px;
+  box-shadow:
+    0 40px 80px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  transition: background 0.2s, color 0.2s;
+}
+
+.fc-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* Phase layout */
+.fc-phase {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 48px 52px 40px;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.fc-phase-center {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.fc-phase-capture {
+  align-items: center;
+  text-align: center;
+  padding: 32px 52px 36px;
+  gap: 20px;
+}
+
+/* Typography */
+.fc-overline {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+}
+
+.fc-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: #fff;
+  line-height: 1.2;
+}
+
+.fc-sub {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.65;
+  max-width: 520px;
+}
+
+.fc-sub strong {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Intro list */
+.fc-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  width: 100%;
+  text-align: left;
+}
+
+.fc-list li {
+  font-size: 0.83rem;
+  color: rgba(255, 255, 255, 0.5);
+  padding-left: 18px;
+  position: relative;
+}
+
+.fc-list li::before {
+  content: '—';
+  position: absolute;
+  left: 0;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Buttons */
+.fc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 32px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  background: #fff;
+  color: #000;
+  transition: opacity 0.2s;
+}
+
+.fc-row-btns .fc-btn {
+  flex: 1;
+  align-self: auto;
+}
+
+.fc-btn:hover {
+  opacity: 0.9;
+}
+
+.fc-btn-outline {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.fc-btn-outline:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.fc-row-btns {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* Consent / policy */
+.fc-policy-scroll {
+  flex: 1;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 20px 24px;
+  min-height: 0;
+  width: 100%;
+  text-align: left;
+}
+
+.fc-policy-text {
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.38);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fc-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.fc-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.83rem;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.fc-check-row:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.fc-check-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fc-check-row strong {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Lighting warning */
+.fc-dark-warn {
+  overflow: hidden;
+  width: 100%;
+  max-width: 360px;
+  background: rgba(255, 200, 0, 0.07);
+  border: 1px solid rgba(255, 200, 0, 0.2);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 0.8rem;
+  color: rgba(255, 220, 80, 0.85);
+  text-align: center;
+}
+
+/* Circular camera */
+.fc-cam-ring {
+  position: relative;
+  width: min(44vh, 340px);
+  height: min(44vh, 340px);
+  border-radius: 50%;
+  overflow: hidden;
+  background: #111;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.fc-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  transition: opacity 0.4s;
+}
+
+.fc-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  pointer-events: none;
+  border-radius: 50%;
+}
+
+.fc-cam-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.83rem;
+  text-align: center;
+  padding: 16px;
+}
+
+/* Spinner */
+.fc-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2.5px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  animation: fc-spin 0.75s linear infinite;
+}
+
+@keyframes fc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Progress bar */
+.fc-bar-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.fc-bar-fill {
+  height: 100%;
+  background: #fff;
+  border-radius: 9999px;
+}
+
+/* Upload pulse ring */
+.fc-pulse-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  margin-bottom: 8px;
+  animation: fc-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes fc-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.15); opacity: 1; }
+  50% { box-shadow: 0 0 0 16px rgba(255, 255, 255, 0); opacity: 0.6; }
+}
+
+/* Status rings */
+.fc-status-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.fc-status-ok {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.fc-status-err {
+  background: rgba(255, 80, 80, 0.06);
+  border: 1.5px solid rgba(255, 80, 80, 0.25);
+  color: rgba(255, 120, 120, 0.9);
+}

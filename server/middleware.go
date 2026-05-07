@@ -78,3 +78,17 @@ func EnsureValidToken() echo.MiddlewareFunc {
 		}
 	}
 }
+
+// getUserIDFromToken extracts the Auth0 'sub' claim (user ID) from the validated
+// JWT stored in the echo context. Returns empty string if unavailable.
+func getUserIDFromToken(c echo.Context) string {
+	raw := c.Get("user")
+	if raw == nil {
+		return ""
+	}
+	claims, ok := raw.(*validator.ValidatedClaims)
+	if !ok {
+		return ""
+	}
+	return claims.RegisteredClaims.Subject
+}
