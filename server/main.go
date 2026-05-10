@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -344,56 +346,98 @@ func getDashboard(c echo.Context) error {
 	})
 }
 
-// Simple in-memory widget store (keyed by user_id → widget list)
-var widgetsDB = make(map[string]Widget)
-
-func getWidgetsForUser(userID string) []Widget {
-	list := make([]Widget, 0, len(widgetsDB))
-	for _, w := range widgetsDB {
-		list = append(list, w)
-	}
-	return list
+// In-memory cache + file sync per user
+func getSafeUserID(userID string) string {
+	safeUserID := strings.ReplaceAll(userID, "|", "_")
+	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
+	return safeUserID
 }
 
-func getWidgetsSlice() []Widget {
-	return getWidgetsForUser("")
+func getUserWidgetsPath(userID string) string {
+	return fmt.Sprintf("data/%s_widgets.json", getSafeUserID(userID))
+}
+
+func getWidgetsForUser(userID string) []Widget {
+	if userID == "" {
+		return []Widget{}
+	}
+	path := getUserWidgetsPath(userID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []Widget{}
+	}
+	var widgets []Widget
+	// Use standard json logic via decoding
+	json.Unmarshal(data, &widgets)
+	return widgets
+}
+
+func saveWidgetsForUser(userID string, widgets []Widget) {
+	if userID == "" {
+		return
+	}
+	path := getUserWidgetsPath(userID)
+	data, err := json.MarshalIndent(widgets, "", "  ")
+	if err == nil {
+		os.WriteFile(path, data, 0644)
+	}
 }
 
 func getWidgets(c echo.Context) error {
-	return c.JSON(200, getWidgetsSlice())
+	userID := getUserIDFromToken(c)
+	return c.JSON(200, getWidgetsForUser(userID))
 }
 
 func addWidget(c echo.Context) error {
+	userID := getUserIDFromToken(c)
 	var widget Widget
 	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 	if widget.ID == "" {
-		widget.ID = generateID()
+		widget.ID = "widget-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
-	widgetsDB[widget.ID] = widget
+	widgets := getWidgetsForUser(userID)
+	widgets = append(widgets, widget)
+	saveWidgetsForUser(userID, widgets)
+	
 	return c.JSON(201, widget)
 }
 
 func updateWidget(c echo.Context) error {
+	userID := getUserIDFromToken(c)
 	id := c.Param("id")
 	var widget Widget
 	if err := c.Bind(&widget); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 	widget.ID = id
-	widgetsDB[id] = widget
-	return c.JSON(200, widget)
+	
+	widgets := getWidgetsForUser(userID)
+	for i, w := range widgets {
+		if w.ID == id {
+			widgets[i] = widget
+			saveWidgetsForUser(userID, widgets)
+			return c.JSON(200, widget)
+		}
+	}
+	return c.JSON(404, map[string]string{"error": "Widget not found"})
 }
 
 func deleteWidget(c echo.Context) error {
+	userID := getUserIDFromToken(c)
 	id := c.Param("id")
-	delete(widgetsDB, id)
+	
+	widgets := getWidgetsForUser(userID)
+	newWidgets := []Widget{}
+	for _, w := range widgets {
+		if w.ID != id {
+			newWidgets = append(newWidgets, w)
+		}
+	}
+	saveWidgetsForUser(userID, newWidgets)
+	
 	return c.JSON(200, map[string]string{"message": "Widget deleted", "id": id})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-func generateID() string {
-	return "widget-" + strconv.Itoa(len(widgetsDB)+1)
-}
