@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
+import Webcam from 'react-webcam'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 const TOTAL_PHOTOS = 10
@@ -64,38 +65,29 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
   const [cameraError, setCameraError] = useState(false)
   const [captureFlash, setCaptureFlash] = useState(false)
 
-  const videoRef = useRef(null)
+  const webcamRef = useRef(null)
   const canvasRef = useRef(null)
-  const streamRef = useRef(null)
   const brightnessTimerRef = useRef(null)
   const burstTimerRef = useRef(null)
   const capturedImagesRef = useRef([])
   const phase1DoneRef = useRef(false)
 
   // ── Camera ──────────────────────────────────────────────────────────────────
-  const startCamera = useCallback(async () => {
+  const handleUserMedia = useCallback(() => {
+    setIsCameraReady(true)
     setCameraError(false)
+  }, [])
+
+  const handleUserMediaError = useCallback((err) => {
+    console.error("Camera error:", err)
+    setCameraError(true)
     setIsCameraReady(false)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: 'user' },
-        audio: false,
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.onloadedmetadata = () => setIsCameraReady(true)
-      }
-    } catch {
-      setCameraError(true)
-    }
   }, [])
 
   const stopCamera = useCallback(() => {
     clearInterval(brightnessTimerRef.current)
     clearInterval(burstTimerRef.current)
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
+    setIsCameraReady(false)
   }, [])
 
   // ── Reset on open/close ──────────────────────────────────────────────────
@@ -119,26 +111,22 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
   }, [isOpen, stopCamera])
 
   useEffect(() => {
-    if (phase === 'capture') startCamera()
-    else stopCamera()
-  }, [phase, startCamera, stopCamera])
+    if (phase !== 'capture') stopCamera()
+  }, [phase, stopCamera])
 
   // ── Frame helpers ────────────────────────────────────────────────────────
   const snapFrame = useCallback(() => {
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    if (!video || !canvas) return null
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 640
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    return canvas.toDataURL('image/jpeg', 0.85)
+    if (!webcamRef.current) return null
+    return webcamRef.current.getScreenshot()
   }, [])
 
   const measureBrightness = useCallback(() => {
-    const video = videoRef.current
+    if (!webcamRef.current || !webcamRef.current.video) return 255
+    const video = webcamRef.current.video
+    if (!video.videoWidth) return 255
     const canvas = canvasRef.current
-    if (!video || !canvas || !video.videoWidth) return 255
+    if (!canvas) return 255
+    
     canvas.width = 80
     canvas.height = 80
     const ctx = canvas.getContext('2d')
@@ -169,18 +157,21 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
     }
   }, []) // eslint-disable-line
 
-  // ── Brightness polling + phase-1 auto-capture ────────────────────────────
+  // ── Brightness polling + user-initiated first capture ────────────────────────────
   useEffect(() => {
     if (phase !== 'capture' || !isCameraReady) return
     brightnessTimerRef.current = setInterval(() => {
       const lum = measureBrightness()
       setBrightness(lum)
-      if (!phase1DoneRef.current && lum >= BRIGHTNESS_THRESHOLD && capturedImagesRef.current.length === 0) {
-        addCapture(snapFrame())
-      }
     }, BRIGHTNESS_CHECK_MS)
     return () => clearInterval(brightnessTimerRef.current)
-  }, [phase, isCameraReady, measureBrightness, snapFrame, addCapture])
+  }, [phase, isCameraReady, measureBrightness])
+
+  const handleStartCapture = () => {
+    if (!phase1DoneRef.current && brightness >= BRIGHTNESS_THRESHOLD && capturedImagesRef.current.length === 0) {
+      addCapture(snapFrame())
+    }
+  }
 
   // ── Burst (photos 2-10) ──────────────────────────────────────────────────
   useEffect(() => {
@@ -369,9 +360,13 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                     </div>
                   ) : (
                     <>
-                      <video
-                        ref={videoRef}
-                        autoPlay muted playsInline
+                      <Webcam
+                        ref={webcamRef}
+                        audio={false}
+                        screenshotFormat="image/jpeg"
+                        videoConstraints={{ width: 640, height: 640, facingMode: "user" }}
+                        onUserMedia={handleUserMedia}
+                        onUserMediaError={handleUserMediaError}
                         className="fc-video"
                         style={{ opacity: isCameraReady ? 1 : 0 }}
                       />
@@ -386,6 +381,19 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 </div>
 
                 <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+                {isCameraReady && capturedImagesRef.current.length === 0 && (
+                  <motion.button 
+                    className="fc-btn" 
+                    style={{ marginTop: 16 }}
+                    whileHover={{ scale: 1.02 }} 
+                    whileTap={{ scale: 0.97 }} 
+                    onClick={handleStartCapture}
+                    disabled={isTooDark}
+                  >
+                    Start Capture (10 Photos)
+                  </motion.button>
+                )}
 
                 {/* Progress bar only — no photo count */}
                 <div className="fc-bar-track">

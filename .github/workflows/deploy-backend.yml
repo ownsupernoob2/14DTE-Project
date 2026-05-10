@@ -1,0 +1,38 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'server/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          
+      # Usually you will build the docker image here or SSH into a droplet.
+      # If using DigitalOcean App Platform, DO detects the Dockerfile automatically and builds it.
+      # This action uses SSH to deploy to a Droplet:
+
+      - name: Deploy to DigitalOcean Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_DROPLET_IP }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /root/14DTE-Project/server
+            git pull origin main
+            /usr/bin/go build -o server.exe
+            # Restart the background service (we will create this service manually once)
+            systemctl restart smart-mirror-api
