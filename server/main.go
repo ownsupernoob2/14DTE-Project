@@ -222,7 +222,7 @@ func trainFace(c echo.Context) error {
 	outputPickle := fmt.Sprintf("encodings/%s.pickle", safeUserID)
 
 	// Run the Python training script
-	cmd := exec.Command("python", "train.py", tempDir, outputPickle)
+	cmd := exec.Command(getPythonCmd(), "train.py", tempDir, outputPickle)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	cmd.Stdout = &out
@@ -304,7 +304,7 @@ func verifyFace(c echo.Context) error {
 	defer os.Remove(tempPath)
 
 	// Run Python verification script against the encodings directory
-	cmd := exec.Command("python", "verify.py", tempPath, "encodings")
+	cmd := exec.Command(getPythonCmd(), "verify.py", tempPath, "encodings")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = cmd.Run()
@@ -400,7 +400,7 @@ func addWidget(c echo.Context) error {
 	widgets := getWidgetsForUser(userID)
 	widgets = append(widgets, widget)
 	saveWidgetsForUser(userID, widgets)
-	
+
 	return c.JSON(201, widget)
 }
 
@@ -412,7 +412,7 @@ func updateWidget(c echo.Context) error {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 	widget.ID = id
-	
+
 	widgets := getWidgetsForUser(userID)
 	for i, w := range widgets {
 		if w.ID == id {
@@ -427,7 +427,7 @@ func updateWidget(c echo.Context) error {
 func deleteWidget(c echo.Context) error {
 	userID := getUserIDFromToken(c)
 	id := c.Param("id")
-	
+
 	widgets := getWidgetsForUser(userID)
 	newWidgets := []Widget{}
 	for _, w := range widgets {
@@ -436,8 +436,15 @@ func deleteWidget(c echo.Context) error {
 		}
 	}
 	saveWidgetsForUser(userID, newWidgets)
-	
+
 	return c.JSON(200, map[string]string{"message": "Widget deleted", "id": id})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+func getPythonCmd() string {
+	if _, err := exec.LookPath("python3"); err == nil {
+		return "python3"
+	}
+	return "python"
+}
