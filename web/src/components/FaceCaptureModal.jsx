@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_URL = 'http://170.64.217.121:8080'
 const TOTAL_PHOTOS = 10
 const BURST_INTERVAL_MS = 500
 const BRIGHTNESS_THRESHOLD = 40
@@ -126,7 +126,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
     if (!video.videoWidth) return 255
     const canvas = canvasRef.current
     if (!canvas) return 255
-    
+
     canvas.width = 80
     canvas.height = 80
     const ctx = canvas.getContext('2d')
@@ -383,11 +383,11 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 <canvas ref={canvasRef} style={{ display: 'none' }} />
 
                 {isCameraReady && capturedImagesRef.current.length === 0 && (
-                  <motion.button 
-                    className="fc-btn" 
+                  <motion.button
+                    className="fc-btn"
                     style={{ marginTop: 16 }}
-                    whileHover={{ scale: 1.02 }} 
-                    whileTap={{ scale: 0.97 }} 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={handleStartCapture}
                     disabled={isTooDark}
                   >
