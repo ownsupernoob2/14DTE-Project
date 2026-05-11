@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
 
-const API_URL = 'http://170.64.217.121:8080'
+const API_URL = 'https://api.smartmirror.me'
 const TOTAL_PHOTOS = 10
 const BURST_INTERVAL_MS = 500
 const BRIGHTNESS_THRESHOLD = 40
@@ -210,7 +210,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
         setPhase('error')
       }
     } catch {
-      setErrorMsg('Could not connect to the server. Make sure the server is running.')
+      setErrorMsg('The Smart Mirror server is offline, please try again later.')
       setPhase('error')
     }
   }

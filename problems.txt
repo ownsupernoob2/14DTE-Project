@@ -1,0 +1,24 @@
+the domain gets a 404 error in any url path other than main: 
+https://smartmirror.me works, but https://smartmirror.me/dashboard or https://smartmirror.me/login don't. Vercel is being used for hosting, namecheap for the domain
+
+The server api should use the domain instead of the ip address.
+
+The face scanning should be a bit slower with proper instructions (i.e Look straight on, then look left slowly, then look right slowly, look straight again.). It should also make sure the lighting is good before starting to scan. It should also make sure that the face is clearly visible, and to stop taking photos until the face is visible again.
+
+After scanning tell the user if the scan was successful or not. If it was successful, add a 24 hr limit before next scan to prevent abuse. (for developer use only, i want a way to bypass that) If it was not successful, tell the user why and how to fix it and if its a system issue just tell it to contact support. If it was successful, also tell the user when the 24 hour limit will end.
+
+Since i have trouble accessing the mirror, create a simulator on a different path (i.e. https://smartmirror.me/simulator) that will simulate what the smart mirror will do, see the face, and show the users layout.
+
+The layout should have a save button when changes are done and an undo button to undo changes, the save button will save it to the cloud, add rate limit to prevent abuse ofc.
+
+Since faces change and high school students are going through puberty, the site should ask for a rescan every year.
+
+The cloud server should turn off during school break and holidays to save costs, getting a message on the site saying 
+"The Smart Mirror server is off during school breaks, we will be back online on [Date]"
+
+If the site cant reach the cloud server, say:
+"The Smart Mirror server is offline, please try again later." (This could be due to server maintenance or other issues)
+
+The smart mirror is at school, and i cant ssh because its on a different wifi network, i need a plan at school to connect to it.
+The smart mirror python pygame program runs on a raspberry pi, there should be a way for the smart mirror to recieive updates from the github and to restart without trouble or manual work, and to launch when turned on.
+

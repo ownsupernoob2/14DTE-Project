@@ -72,6 +72,9 @@ func main() {
 	// Mirror endpoint — no auth needed for the mirror to verify faces
 	e.POST("/api/verify-face", verifyFace)
 
+	// Fetch parsed AI notices
+	e.GET("/api/notices", getNotices)
+
 	// Protected routes (JWT middleware)
 	protected := e.Group("/api")
 	protected.Use(EnsureValidToken())
@@ -448,3 +451,18 @@ func getPythonCmd() string {
 	}
 	return "python"
 }
+
+ 
+ / /   g e t N o t i c e s   s e r v e s   t h e   d a i l y _ n o t i c e s . j s o n   c r e a t e d   b y   t h e   P y t h o n   A I   s c r a p e r 
+ f u n c   g e t N o t i c e s ( c   e c h o . C o n t e x t )   e r r o r   { 
+ 	 d a t a F i l e   : =   " . / d a t a / d a i l y _ n o t i c e s . j s o n " 
+ 	 
+ 	 / /   R e a d   t h e   J S O N   f i l e 
+ 	 f i l e D a t a ,   e r r   : =   o s . R e a d F i l e ( d a t a F i l e ) 
+ 	 i f   e r r   ! =   n i l   { 
+ 	 	 r e t u r n   c . J S O N ( h t t p . S t a t u s N o t F o u n d ,   m a p [ s t r i n g ] s t r i n g { " e r r o r " :   " N o t i c e s   n o t   a v a i l a b l e   y e t . " } ) 
+ 	 } 
+ 
+ 	 r e t u r n   c . J S O N B l o b ( h t t p . S t a t u s O K ,   f i l e D a t a ) 
+ }  
+ 
