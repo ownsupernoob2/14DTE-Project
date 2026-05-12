@@ -7,6 +7,7 @@ import WidgetContainer from '../components/WidgetContainer'
 export default function Dashboard() {
   const [widgets, setWidgets] = useState([])
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
   const containerRef = useRef(null)
   const { getAccessTokenSilently } = useAuth0()
 
@@ -23,9 +24,13 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json()
         setWidgets(data || [])
+        setErrorMsg('')
+      } else {
+        setErrorMsg('The Smart Mirror server is offline, please try again later.')
       }
     } catch (e) {
       console.error(e)
+      setErrorMsg('The Smart Mirror server is offline, please try again later.')
     }
   }
 
@@ -109,6 +114,12 @@ export default function Dashboard() {
       <Navbar />
       <div ref={containerRef} className="dashboard-canvas">
         <div className="dashboard-bg-gradient" />
+
+        {errorMsg && (
+          <div className="error-banner" style={{ background: 'red', color: 'white', padding: '10px', textAlign: 'center', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 }}>
+            {errorMsg}
+          </div>
+        )}
 
         {widgets.map((widget) => (
           <WidgetContainer
