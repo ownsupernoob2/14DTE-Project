@@ -4,6 +4,8 @@ import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import WidgetContainer from '../components/WidgetContainer'
 
+const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
+
 export default function Dashboard() {
   const [widgets, setWidgets] = useState([])
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -18,7 +20,7 @@ export default function Dashboard() {
   const fetchWidgets = async () => {
     try {
       const token = await getAccessTokenSilently()
-      const res = await fetch('http://localhost:8080/api/dashboard/widgets', {
+      const res = await fetch(`${API_URL}/api/dashboard/widgets`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (res.ok) {
@@ -56,7 +58,7 @@ export default function Dashboard() {
 
     try {
       const token = await getAccessTokenSilently()
-      const res = await fetch('http://localhost:8080/api/dashboard/widgets', {
+      const res = await fetch(`${API_URL}/api/dashboard/widgets`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -77,7 +79,7 @@ export default function Dashboard() {
     setWidgets(widgets.filter((w) => w.id !== id))
     try {
       const token = await getAccessTokenSilently()
-      await fetch(`http://localhost:8080/api/dashboard/widgets/${id}`, {
+      await fetch(`${API_URL}/api/dashboard/widgets/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -96,7 +98,7 @@ export default function Dashboard() {
 
     try {
       const token = await getAccessTokenSilently()
-      await fetch(`http://localhost:8080/api/dashboard/widgets/${id}`, {
+      await fetch(`${API_URL}/api/dashboard/widgets/${id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
