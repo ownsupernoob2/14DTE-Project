@@ -4,7 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
 const API_URL = 'https://api.smartmirror.me'
 const TOTAL_PHOTOS = 10
-const BURST_INTERVAL_MS = 500
+const BURST_INTERVAL_MS = 1000
 const BRIGHTNESS_THRESHOLD = 40
 const BRIGHTNESS_CHECK_MS = 200
 
@@ -334,7 +334,15 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
               <motion.div key="capture" className="fc-phase fc-phase-capture" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
                 <p className="fc-overline">Step 3 of 3</p>
                 <h2 className="fc-title" style={{ marginBottom: 0 }}>
-                  {captureProgress === 0 ? 'Look straight at the camera' : 'Slowly rotate your head in a circle'}
+                  {(() => {
+                    const count = capturedImagesRef.current.length;
+                    if (count === 0) return 'Look straight at the camera';
+                    if (count < 3) return 'Keep looking straight...';
+                    if (count < 5) return 'Slowly turn your head to the right...';
+                    if (count < 7) return 'Now slowly turn your head to the left...';
+                    if (count < 9) return 'Look slightly up...';
+                    return 'Look slightly down...';
+                  })()}
                 </h2>
 
                 <AnimatePresence>
