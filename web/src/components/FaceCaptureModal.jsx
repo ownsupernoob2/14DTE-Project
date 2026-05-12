@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
-
 const API_URL = 'https://api.smartmirror.me'
 const TOTAL_PHOTOS = 10
 const BURST_INTERVAL_MS = 500
