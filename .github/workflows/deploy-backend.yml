@@ -33,6 +33,23 @@ jobs:
           script: |
             cd /root/14DTE-Project/server
             git pull origin main
-            /usr/bin/go build -o server.exe
-            # Restart the background service (we will create this service manually once)
+            /usr/bin/go build -o smart-mirror-api
+            
+            # Update the systemd service to ensure it runs the built executable instead of main.go
+            cat << 'EOF' > /etc/systemd/system/smart-mirror-api.service
+            [Unit]
+            Description=Smart Mirror API
+            After=network.target
+
+            [Service]
+            WorkingDirectory=/root/14DTE-Project/server
+            ExecStart=/root/14DTE-Project/server/smart-mirror-api
+            Restart=always
+            RestartSec=3
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            
+            systemctl daemon-reload
             systemctl restart smart-mirror-api
