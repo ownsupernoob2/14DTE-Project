@@ -203,6 +203,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
         setFramesUsed(data.frames_used || images.length)
         setUploadProgress(100)
         setPhase('success')
+        localStorage.setItem('lastFaceScan', Date.now().toString())
       } else {
         const data = await res.json().catch(() => ({}))
         setErrorMsg(data.error || 'Upload failed. Please try again.')

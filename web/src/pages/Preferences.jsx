@@ -8,6 +8,10 @@ export default function Preferences() {
   const { user, logout } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
 
+  const lastScan = localStorage.getItem('lastFaceScan')
+  const scanTime = lastScan ? parseInt(lastScan, 10) : 0
+  const isScanRecent = (Date.now() - scanTime) < 24 * 60 * 60 * 1000
+
   return (
     <div className="preferences-container">
       <Navbar />
@@ -35,9 +39,16 @@ export default function Preferences() {
             <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
               Register your face so the smart mirror can identify you and load your dashboard.
             </p>
-            <button className="modern-btn" onClick={() => setShowFaceModal(true)}>
-              Register Face Scan
-            </button>
+            {isScanRecent ? (
+              <div style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.1)', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(74, 222, 128, 0.2)' }}>
+                <strong style={{ display: 'block', marginBottom: '4px' }}>✓ Face Registered Successfully</strong>
+                <span style={{ fontSize: '0.85rem', opacity: 0.9 }}>Your face scan was successful. To prevent spam, you can update your face scan again in 24 hours.</span>
+              </div>
+            ) : (
+              <button className="modern-btn" onClick={() => setShowFaceModal(true)}>
+                Register Face Scan
+              </button>
+            )}
           </section>
 
           <section className="pref-grid">
