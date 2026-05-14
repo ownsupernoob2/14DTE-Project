@@ -18,11 +18,18 @@ FROM alpine:latest
 
 WORKDIR /root/
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS, along with Python
+RUN apk --no-cache add ca-certificates python3 py3-pip
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
 
 # Copy binary from builder
 COPY --from=builder /app/smart-mirror-api .
+
+# Copy python scripts
+COPY *.py ./
 
 # Expose port
 EXPOSE 8080

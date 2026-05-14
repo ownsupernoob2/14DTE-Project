@@ -3,10 +3,12 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
+import { useServerStatus } from '../contexts/ServerStatusContext'
 
 export default function Preferences() {
   const { user, logout } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
+  const { isServerUp } = useServerStatus()
 
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
@@ -45,8 +47,13 @@ export default function Preferences() {
                 <span style={{ fontSize: '0.85rem', opacity: 0.9 }}>Your face scan was successful. To prevent spam, you can update your face scan again in 24 hours.</span>
               </div>
             ) : (
-              <button className="modern-btn" onClick={() => setShowFaceModal(true)}>
-                Register Face Scan
+              <button 
+                className="modern-btn" 
+                onClick={() => setShowFaceModal(true)}
+                disabled={!isServerUp}
+                style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed' }}
+              >
+                {isServerUp ? "Register Face Scan" : "Server Offline"}
               </button>
             )}
           </section>
