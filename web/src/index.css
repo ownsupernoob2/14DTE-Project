@@ -7,9 +7,9 @@
   --glass-bg: rgba(255, 255, 255, 0.03);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-hover: rgba(255, 255, 255, 0.08);
-  --accent: #6d28d9;
-  --accent-hover: #7c3aed;
-  --accent-glow: rgba(124, 58, 237, 0.4);
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-glow: rgba(59, 130, 246, 0.4);
 }
 
 * {

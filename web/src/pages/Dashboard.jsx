@@ -121,8 +121,8 @@ export default function Dashboard() {
               exit={{ opacity: 0, y: -20 }}
               style={{
                 position: 'absolute',
-                top: 20,
-                right: 20,
+                bottom: 20,
+                left: 20,
                 zIndex: 100,
                 display: 'flex',
                 gap: '10px'

@@ -54,6 +54,7 @@ export default function WidgetContainer({ widget, onRemove, onMove, readonly = f
         left: `${widget.x}px`,
         top: `${widget.y}px`,
         width: '220px',
+        maxHeight: readonly ? '100%' : '300px',
         position: 'absolute',
         ...(readonly ? { background: 'none', border: 'none', boxShadow: 'none' } : {})
       }}
@@ -77,8 +78,11 @@ export default function WidgetContainer({ widget, onRemove, onMove, readonly = f
           </button>
         </div>
       )}
-      <div className="widget-content" style={readonly ? { color: 'white', padding: 0 } : {}}>
-        {widget.type === 'clock' && <div className="widget-clock" style={readonly ? { fontSize: '2rem', fontWeight: 'bold' } : {}}>{new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>}
+      <div className="widget-content" style={readonly ? { color: 'white', padding: 0, height: '100%', overflowY: 'auto' } : { overflowY: 'auto', maxHeight: '250px' }}>
+        {widget.type === 'clock' && <div className="widget-clock" style={readonly ? { fontSize: '2rem', fontWeight: 'bold' } : {}}>
+          {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+          <div style={{ fontSize: '1rem', fontWeight: 'normal', marginTop: '4px' }}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+        </div>}
         {widget.type === 'weather' && <div>72°F · Sunny</div>}
         {widget.type === 'calendar' && <div>Tuesday · April 24</div>}
         {widget.type === 'notices' && <DailyNoticesWidget />}

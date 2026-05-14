@@ -20,6 +20,7 @@ func init() {
 }
 
 func main() {
+	StartNoticeFetcher()
 	e := echo.New()
 
 	// Middleware
