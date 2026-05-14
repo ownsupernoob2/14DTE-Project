@@ -1,0 +1,44 @@
+# Face Management & Registration Fixes
+
+This plan outlines the changes needed to address the face matching issue across multiple accounts, along with UI additions in Preferences for bypassing limits and deleting face data.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Clarification needed on "Same face, multiple accounts"**
+> To fix the issue where the same face can be registered to multiple accounts, I propose we **prevent** a user from registering a face if it is already registered to another account.
+> 
+> When a user tries to register their face, the backend will first scan the images to see if they match an *existing* user's face. If it finds a match to a different account, it will return an error: *"This face is already registered to another account."*
+> 
+> **Question:** Does this approach sound good, or would you prefer a different behavior (e.g., automatically unlinking the face from the old account)?
+
+## Proposed Changes
+
+### Backend API (`c:\14DTE-Project\server\`)
+
+#### [MODIFY] [handlers_face.go](file:///c:/14DTE-Project/server/handlers_face.go)
+- Update `trainFace` to invoke the `verify.py` script on one of the uploaded images *before* running the training script.
+- If `verify.py` returns a match for a user ID that is different from the current user, abort the training and return an HTTP 409 Conflict with an appropriate error message.
+- Add a new function `deleteFace(c echo.Context)` to handle `DELETE /api/faces/me`. This will find and delete the user's `.pickle` file in the `encodings/` directory.
+
+#### [MODIFY] [main.go](file:///c:/14DTE-Project/server/main.go)
+- Register the new route: `protected.DELETE("/faces/me", deleteFace)`
+
+### Frontend Dashboard (`c:\14DTE-Project\web\src\`)
+
+#### [MODIFY] [Preferences.jsx](file:///c:/14DTE-Project/web/src/pages/Preferences.jsx)
+- **Developer Bypass**: Add a small developer button below the face registration section that clears `lastFaceScan` from `localStorage`, instantly bypassing the 24-hour cooldown.
+- **Delete Face**: Add a "Delete Face Scan" button that calls the new `DELETE /api/faces/me` endpoint. On success, it will clear the `lastFaceScan` local storage so the user can register again immediately.
+
+#### [MODIFY] [FaceCaptureModal.jsx](file:///c:/14DTE-Project/web/src/components/FaceCaptureModal.jsx)
+- Update the error handling in the `uploadImages` function to display the specific error message returned by the server (e.g., "Face already registered to another account").
+
+## Verification Plan
+
+### Automated/Backend Verification
+- Test face registration with an already registered face to ensure a 409 error is correctly returned.
+- Test the `/api/faces/me` DELETE endpoint to ensure the pickle file is successfully removed from the filesystem.
+
+### Manual Verification
+- Go to the Preferences page, use the Developer Bypass button, and confirm the registration button becomes active.
+- Register a face, then click "Delete Face Scan" and ensure the success state resets.
