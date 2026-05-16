@@ -73,6 +73,12 @@ export default function Dashboard() {
     )
   }
 
+  const updateWidgetSize = (id, width, height) => {
+    setWidgets(
+      widgets.map((w) => (w.id === id ? { ...w, w: Math.round(width), h: Math.round(height) } : w))
+    )
+  }
+
   const saveLayout = async () => {
     setIsSaving(true)
     try {
@@ -154,6 +160,7 @@ export default function Dashboard() {
             widget={widget}
             onRemove={removeWidget}
             onMove={updateWidgetPosition}
+            onResize={updateWidgetSize}
           />
         ))}
 
@@ -176,13 +183,16 @@ export default function Dashboard() {
               transition={{ duration: 0.2 }}
               className="glass-panel add-widget-menu"
             >
-              {['clock', 'weather', 'calendar', 'note', 'notices'].map((type) => (
+              {['clock', 'notices', 'timetable', 'note'].map((type) => (
                 <button
                   key={type}
                   onClick={() => addWidget(type)}
                   className="widget-menu-item"
                 >
-                  {type}
+                  {type === 'clock' ? 'Clock' : ''}
+                  {type === 'notices' ? 'Daily Notices' : ''}
+                  {type === 'timetable' ? 'Timetable' : ''}
+                  {type === 'note' ? 'Note' : ''}
                 </button>
               ))}
             </motion.div>
