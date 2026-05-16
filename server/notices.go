@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/labstack/echo/v4"
@@ -26,6 +27,31 @@ const (
 type NoticeItem struct {
 	Category string `json:"category"`
 	Notice   string `json:"notice"`
+}
+
+func StartNoticeFetcher() {
+	go func() {
+		for {
+			now := time.Now()
+			stat, err := os.Stat(outFile)
+			needsFetch := false
+			if err != nil {
+				needsFetch = true
+			} else {
+				sevenAM := time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, now.Location())
+				if now.After(sevenAM) && stat.ModTime().Before(sevenAM) {
+					needsFetch = true
+				}
+			}
+
+			if needsFetch {
+				log.Println("Automatic notice fetch triggered...")
+				fetchNoticesLogic()
+			}
+			
+			time.Sleep(10 * time.Minute)
+		}
+	}()
 }
 
 func getNotices(c echo.Context) error {
