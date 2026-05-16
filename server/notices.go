@@ -33,7 +33,7 @@ func getNotices(c echo.Context) error {
 	if err != nil {
 		return c.JSON(404, map[string]string{"error": "Notices not found"})
 	}
-	
+
 	var notices interface{}
 	if err := json.Unmarshal(data, &notices); err != nil {
 		return c.JSON(500, map[string]string{"error": "Failed to parse notices"})
@@ -123,7 +123,7 @@ func fetchLatestPDFURL() (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -154,7 +154,7 @@ func downloadAndExtractText(pdfURL string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
