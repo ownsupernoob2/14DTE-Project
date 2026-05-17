@@ -34,3 +34,7 @@ go.work
 # Build output
 smart-mirror-api
 dist/
+
+# Ignored Local Testing Folder
+local_tests/
+
