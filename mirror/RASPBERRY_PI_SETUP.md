@@ -159,3 +159,20 @@ Press CTRL+C to stop watching.
 | `sudo journalctl -u smartmirror.service -f` | Watch live mirror logs |
 | `tail -f ~/mirror_update.log` | Watch the auto-update log |
 | `cd ~/14DTE-Project && git pull` | Manually force a git pull |
+
+
+
+# 1. Pull the latest files
+cd ~/14DTE-Project && git pull
+
+# 2. Nuke the broken venv
+rm -rf ~/mirror-venv
+
+# 3. Install pre-built ARM packages via apt (no compilation)
+sudo apt install python3-opencv python3-pyaudio python3-pyqt5 python3-numpy python3-pil python3-full portaudio19-dev -y
+
+# 4. Recreate venv with access to those apt packages
+python3 -m venv --system-site-packages ~/mirror-venv
+
+# 5. Upgrade pip then install pure Python packages
+~/mirror-venv/bin/pip install --upgrade pip setuptools wheel && ~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
