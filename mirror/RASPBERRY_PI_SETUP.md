@@ -210,3 +210,6 @@ note: If you believe this is a mistake, please contact your Python installation 
 hint: See PEP 668 for the detailed specification.
 raspi@raspi:~/14DTE-Project/mirror $ 
 
+
+
+
