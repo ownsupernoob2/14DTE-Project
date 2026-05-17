@@ -1,13 +1,13 @@
 # Raspberry Pi Smart Mirror Setup
 Run these commands in order. Copy-paste each block exactly.
-Your username appears to be "raspi" and your home is /home/raspi — replace if different.
+Your username is "raspi" — replace if different.
 
 ---
 
-## STEP 1: Update packages and install dependencies
+## STEP 1: Update packages and install git
 
 ```bash
-sudo apt update && sudo apt install git python3-full python3-pip -y
+sudo apt update && sudo apt install git -y
 ```
 
 ---
@@ -20,27 +20,48 @@ git clone https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
 
 ---
 
-## STEP 3: Create a Python virtual environment
+## STEP 3: Install system-level Python packages via apt
 
-Modern Raspberry Pi OS requires a venv for pip installs.
+These packages need compiled C/C++ code (ARM binaries).
+apt provides pre-built versions so we don't have to compile from source.
 
 ```bash
-python3 -m venv ~/mirror-venv
+sudo apt install python3-opencv python3-pyaudio python3-pyqt5 python3-numpy python3-pil python3-full portaudio19-dev -y
+```
+
+This may take a few minutes.
+
+---
+
+## STEP 4: Create a Python virtual environment with access to system packages
+
+The --system-site-packages flag lets the venv use the apt packages we just installed.
+
+```bash
+python3 -m venv --system-site-packages ~/mirror-venv
 ```
 
 ---
 
-## STEP 4: Install Python packages into the venv
+## STEP 5: Upgrade pip and setuptools inside the venv
+
+```bash
+~/mirror-venv/bin/pip install --upgrade pip setuptools wheel
+```
+
+---
+
+## STEP 6: Install remaining pure-Python packages
 
 ```bash
 ~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
 ```
 
-This will take a few minutes. Wait for it to fully finish before moving on.
+This should complete without any compilation errors.
 
 ---
 
-## STEP 5: Make the update script executable
+## STEP 7: Make the update script executable
 
 ```bash
 chmod +x ~/14DTE-Project/mirror/update_mirror.sh
@@ -48,7 +69,7 @@ chmod +x ~/14DTE-Project/mirror/update_mirror.sh
 
 ---
 
-## STEP 6: Set up auto-update cron job (checks GitHub every 5 minutes)
+## STEP 8: Set up auto-update cron job (checks GitHub every 5 minutes)
 
 ```bash
 crontab -e
@@ -59,20 +80,17 @@ Scroll to the very bottom and add this line:
 
     */5 * * * * /home/raspi/14DTE-Project/mirror/update_mirror.sh >> /home/raspi/mirror_update.log 2>&1
 
-NOTE: If your username is NOT "raspi", replace /home/raspi with your actual home directory.
-      You can check what it is by running: echo $HOME
-
 Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
-## STEP 7: Set up the mirror to auto-start on boot
+## STEP 9: Set up the mirror to auto-start on boot
 
 ```bash
 sudo nano /etc/systemd/system/smartmirror.service
 ```
 
-Paste this entire block into the file (replace "raspi" with your username if different):
+Paste this entire block (replace "raspi" with your username if different):
 
     [Unit]
     Description=Smart Mirror
@@ -92,7 +110,7 @@ Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
-## STEP 8: Enable and start the mirror service
+## STEP 10: Enable and start the mirror service
 
 ```bash
 sudo systemctl daemon-reload
@@ -102,7 +120,7 @@ sudo systemctl start smartmirror.service
 
 ---
 
-## STEP 9: Verify everything is working
+## STEP 11: Verify everything is working
 
 Check the mirror service is running:
 ```bash
@@ -110,7 +128,7 @@ sudo systemctl status smartmirror.service
 ```
 You should see "active (running)" in green.
 
-If it shows an error, view the full logs:
+If it shows an error, view the logs:
 ```bash
 sudo journalctl -u smartmirror.service -n 50
 ```
@@ -141,64 +159,3 @@ Press CTRL+C to stop watching.
 | `sudo journalctl -u smartmirror.service -f` | Watch live mirror logs |
 | `tail -f ~/mirror_update.log` | Watch the auto-update log |
 | `cd ~/14DTE-Project && git pull` | Manually force a git pull |
-
-
-
-home/raspi/14DTE-Project/mirror/requirements.txt (line 8))
-  Downloading https://www.piwheels.org/simple/google-api-python-client/google_api_python_client-2.196.0-py3-none-any.whl.metadata (7.0 kB)
-Collecting google-ai-generativelanguage>=0.4.0 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 9))
-  Downloading https://www.piwheels.org/simple/google-ai-generativelanguage/google_ai_generativelanguage-0.11.0-py3-none-any.whl.metadata (10.0 kB)
-Collecting google-generativeai>=0.3.0 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 10))
-  Downloading google_generativeai-0.8.6-py3-none-any.whl.metadata (3.9 kB)
-Collecting PyAudio==0.2.13 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 11))
-  Downloading PyAudio-0.2.13.tar.gz (46 kB)
-  Installing build dependencies ... done
-  Getting requirements to build wheel ... error
-  error: subprocess-exited-with-error
-  
-  × Getting requirements to build wheel did not run successfully.
-  │ exit code: 1
-  ╰─> [32 lines of output]
-      Traceback (most recent call last):
-        File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 389, in <module>
-          main()
-          ~~~~^^
-        File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 373, in main
-          json_out["return_val"] = hook(**hook_input["kwargs"])
-                                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^
-        File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 137, in get_requires_for_build_wheel
-          backend = _build_backend()
-        File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 70, in _build_backend
-          obj = import_module(mod_path)
-        File "/usr/lib/python3.13/importlib/__init__.py", line 88, in import_module
-          return _bootstrap._gcd_import(name[level:], package, level)
-                 ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
-        File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
-        File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
-        File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-        File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
-        File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
-        File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
-        File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
-        File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
-        File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-        File "/tmp/pip-build-env-ms_oadkc/overlay/lib/python3.13/site-packages/setuptools/__init__.py", line 16, in <module>
-          import setuptools.version
-        File "/tmp/pip-build-env-ms_oadkc/overlay/lib/python3.13/site-packages/setuptools/version.py", line 1, in <module>
-          import pkg_resources
-        File "/tmp/pip-build-env-ms_oadkc/overlay/lib/python3.13/site-packages/pkg_resources/__init__.py", line 2191, in <module>
-          register_finder(pkgutil.ImpImporter, find_on_path)
-                          ^^^^^^^^^^^^^^^^^^^
-      AttributeError: module 'pkgutil' has no attribute 'ImpImporter'. Did you mean: 'zipimporter'?
-      [end of output]
-  
-  note: This error originates from a subprocess, and is likely not a problem with pip.
-error: subprocess-exited-with-error
-
-× Getting requirements to build wheel did not run successfully.
-│ exit code: 1
-╰─> See above for output.
-
-note: This error originates from a subprocess, and is likely not a problem with pip.
-raspi@raspi:~/14DTE-Project/mirror $ 
