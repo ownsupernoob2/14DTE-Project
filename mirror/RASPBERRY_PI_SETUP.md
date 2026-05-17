@@ -141,3 +141,131 @@ Press CTRL+C to stop watching.
 | `sudo journalctl -u smartmirror.service -f` | Watch live mirror logs |
 | `tail -f ~/mirror_update.log` | Watch the auto-update log |
 | `cd ~/14DTE-Project && git pull` | Manually force a git pull |
+
+
+
+
+raspi@raspi:~/14DTE-Project/mirror $ ~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
+Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
+Collecting opencv-python==4.8.0.74 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 1))
+  Downloading opencv_python-4.8.0.74-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (19 kB)
+Collecting opencv-contrib-python==4.8.0.74 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 2))
+  Downloading opencv_contrib_python-4.8.0.74-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (19 kB)
+Collecting numpy==1.24.3 (from -r /home/raspi/14DTE-Project/mirror/requirements.txt (line 3))
+  Downloading numpy-1.24.3.tar.gz (10.9 MB)
+     ━━━━━━━━━━━━━━━━ 10.9/10.9 MB 7.0 MB/s eta 0:00:00
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+ERROR: Exception:
+Traceback (most recent call last):
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/cli/base_command.py", line 105, in _run_wrapper
+    status = _inner_run()
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/cli/base_command.py", line 96, in _inner_run
+    return self.run(options, args)
+           ~~~~~~~~^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/cli/req_command.py", line 68, in wrapper
+    return func(self, options, args)
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/commands/install.py", line 387, in run
+    requirement_set = resolver.resolve(
+        reqs, check_supported_wheels=not options.target_dir
+    )
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/resolver.py", line 96, in resolve
+    result = self._result = resolver.resolve(
+                            ~~~~~~~~~~~~~~~~^
+        collected.requirements, max_rounds=limit_how_complex_resolution_can_be
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/resolvelib/resolvers/resolution.py", line 515, in resolve
+    state = resolution.resolve(requirements, max_rounds=max_rounds)
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/resolvelib/resolvers/resolution.py", line 388, in resolve
+    self._add_to_criteria(self.state.criteria, r, parent=None)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/resolvelib/resolvers/resolution.py", line 141, in _add_to_criteria
+    if not criterion.candidates:
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/resolvelib/structs.py", line 194, in __bool__
+    return bool(self._sequence)
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/found_candidates.py", line 163, in __bool__
+    self._bool = any(self)
+                 ~~~^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/found_candidates.py", line 147, in <genexpr>
+    return (c for c in iterator if id(c) not in self._incompatible_ids)
+                       ^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/found_candidates.py", line 37, in _iter_built
+    candidate = func()
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/factory.py", line 187, in _make_candidate_from_link
+    base: Optional[BaseCandidate] = self._make_base_candidate_from_link(
+                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        link, template, name, version
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/factory.py", line 233, in _make_base_candidate_from_link
+    self._link_candidate_cache[link] = LinkCandidate(
+                                       ~~~~~~~~~~~~~^
+        link,
+        ^^^^^
+    ...<3 lines>...
+        version=version,
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 306, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        link=link,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        version=version,
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 159, in __init__
+    self.dist = self._prepare()
+                ~~~~~~~~~~~~~^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 236, in _prepare
+    dist = self._prepare_distribution()
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 317, in _prepare_distribution
+    return preparer.prepare_linked_requirement(self._ireq, parallel_builds=True)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/operations/prepare.py", line 532, in prepare_linked_requirement
+    return self._prepare_linked_requirement(req, parallel_builds)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/operations/prepare.py", line 647, in _prepare_linked_requirement
+    dist = _get_prepared_distribution(
+        req,
+    ...<3 lines>...
+        self.check_build_deps,
+    )
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/operations/prepare.py", line 71, in _get_prepared_distribution
+    abstract_dist.prepare_distribution_metadata(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        finder, build_isolation, check_build_deps
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/distributions/sdist.py", line 56, in prepare_distribution_metadata
+    self._install_build_reqs(finder)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/distributions/sdist.py", line 126, in _install_build_reqs
+    build_reqs = self._get_build_requires_wheel()
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/distributions/sdist.py", line 103, in _get_build_requires_wheel
+    return backend.get_requires_for_build_wheel()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_internal/utils/misc.py", line 702, in get_requires_for_build_wheel
+    return super().get_requires_for_build_wheel(config_settings=cs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_impl.py", line 196, in get_requires_for_build_wheel
+    return self._call_hook(
+           ~~~~~~~~~~~~~~~^
+        "get_requires_for_build_wheel", {"config_settings": config_settings}
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/raspi/mirror-venv/lib/python3.13/site-packages/pip/_vendor/pyproject_hooks/_impl.py", line 402, in _call_hook
+    raise BackendUnavailable(
+    ...<4 lines>...
+    )
+pip._vendor.pyproject_hooks._impl.BackendUnavailable: Cannot import 'setuptools.build_meta'
+raspi@raspi:~/14DTE-Project/mirror $ 
