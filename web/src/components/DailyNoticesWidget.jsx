@@ -24,7 +24,7 @@ export default function DailyNoticesWidget() {
         const res = await fetch(`${API_URL}/api/notices`);
         if (!res.ok) throw new Error('Notices not found/failed to load');
         const data = await res.json();
-        
+
         if (Array.isArray(data)) {
           setNotices(data);
           localStorage.setItem('notices_date', today);
@@ -48,16 +48,20 @@ export default function DailyNoticesWidget() {
     localStorage.setItem('notices_filter', val);
   };
 
-
-  if (loading) return <div className="widget-notices-loading">Loading notices...</div>;
-  if (error) return <div className="widget-notices-error">{error}</div>;
-  if (notices.length === 0) return <div className="widget-notices-empty">No notices today.</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.7, padding: '8px' }}>
+      <div className="notices-spinner" />
+      <span>Loading notices...</span>
+    </div>
+  );
+  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>⚠️ {error}</div>;
+  if (notices.length === 0) return <div style={{ opacity: 0.5, padding: '8px', fontStyle: 'italic', fontSize: '0.85rem' }}>No notices today.</div>;
 
   // Filter notices
   const lowerFilter = filterQuery.toLowerCase();
   const filteredNotices = notices.filter(n => {
     if (!filterQuery) return true;
-    return (n.category && n.category.toLowerCase().includes(lowerFilter)) || 
+    return (n.category && n.category.toLowerCase().includes(lowerFilter)) ||
            (n.notice && n.notice.toLowerCase().includes(lowerFilter));
   });
 
@@ -69,27 +73,41 @@ export default function DailyNoticesWidget() {
     return acc;
   }, {});
 
+  const containsHTML = (str) => /<[a-z][\s\S]*>/i.test(str);
+
   return (
-    <div className="widget-notices" style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: '0.85rem' }}>
-      <input 
-        type="text" 
-        placeholder="Filter notices (e.g. Student Council)" 
-        value={filterQuery}
-        onChange={handleFilterChange}
-        style={{ marginBottom: '8px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem', background: 'rgba(0,0,0,0.2)', color: 'white' }}
-      />
-      <div style={{ overflowY: 'auto', textAlign: 'left', flex: 1 }}>
+    <div className="widget-notices">
+      {/* Filter input */}
+      <div style={{ padding: '2px 0 10px' }}>
+        <input
+          type="text"
+          placeholder="🔍 Filter notices..."
+          value={filterQuery}
+          onChange={handleFilterChange}
+          className="notices-filter-input"
+        />
+      </div>
+
+      {/* Notices list */}
+      <div className="notices-scroll-area">
         {filteredNotices.length === 0 ? (
-          <div style={{ opacity: 0.7, fontStyle: 'italic' }}>No matches found.</div>
+          <div style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.85rem' }}>No matches found.</div>
         ) : (
           Object.entries(groupedNotices).map(([category, items], idx) => (
-            <div key={idx} className="notice-category-group" style={{ marginBottom: '8px' }}>
-              <strong style={{ display: 'block', color: 'var(--accent-color, #4a90e2)', marginBottom: '4px' }}>{category}</strong>
-              <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                {items.map((item, i) => (
-                  <li key={i} style={{ marginBottom: '4px' }}>{item}</li>
-                ))}
-              </ul>
+            <div key={idx} className="notice-category-group">
+              <div className="notice-category-label">{category}</div>
+              {items.map((item, i) => (
+                containsHTML(item) ? (
+                  // Render HTML tables safely
+                  <div
+                    key={i}
+                    className="notice-table-wrapper"
+                    dangerouslySetInnerHTML={{ __html: item }}
+                  />
+                ) : (
+                  <p key={i} className="notice-text">{item}</p>
+                )
+              ))}
             </div>
           ))
         )}

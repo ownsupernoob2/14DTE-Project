@@ -31,35 +31,50 @@ type NoticeItem struct {
 
 func StartNoticeFetcher() {
 	go func() {
+		firstRun := true
 		for {
 			now := time.Now()
 			stat, err := os.Stat(outFile)
+
 			needsFetch := false
 			if err != nil {
+				// File doesn't exist at all
+				log.Println("[notices] No notices file found — fetching on startup.")
 				needsFetch = true
 			} else {
-				sevenAM := time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, now.Location())
-				if now.After(sevenAM) && stat.ModTime().Before(sevenAM) {
+				today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+				if stat.ModTime().Before(today) {
+					// File is from a previous day
+					if firstRun {
+						log.Println("[notices] Notices are from a previous day — fetching on startup.")
+					} else {
+						log.Println("[notices] Notices are stale — refreshing.")
+					}
 					needsFetch = true
+				} else if firstRun {
+					log.Println("[notices] Notices are already up to date for today — skipping fetch.")
 				}
 			}
 
 			if needsFetch {
-				log.Println("Automatic notice fetch triggered...")
-				fetchNoticesLogic()
+				if err := fetchNoticesLogic(); err != nil {
+					log.Printf("[notices] Fetch failed: %v", err)
+				}
 			}
-			
+
+			firstRun = false
 			time.Sleep(10 * time.Minute)
 		}
 	}()
 }
+
 
 func getNotices(c echo.Context) error {
 	data, err := os.ReadFile(outFile)
 	if err != nil {
 		return c.JSON(404, map[string]string{"error": "Notices not found"})
 	}
-	
+
 	var notices interface{}
 	if err := json.Unmarshal(data, &notices); err != nil {
 		return c.JSON(500, map[string]string{"error": "Failed to parse notices"})
@@ -149,7 +164,7 @@ func fetchLatestPDFURL() (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -180,7 +195,7 @@ func downloadAndExtractText(pdfURL string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -323,6 +338,11 @@ func processWithGemini(text string) []NoticeItem {
 
 	prompt := `Extract the following daily school notices into a neat JSON array.
 Each object should have "category" and "notice".
+Please also clean up the text:
+1. Fix any strange character encodings and smart quotes (e.g., change "King?Ts" or "King?Ts" to "King's").
+2. Fix broken words with random spaces (e.g., "min utes" to "minutes", "i s" to "is").
+3. Ensure proper punctuation and spacing.
+4. If the text contains class/room changes, a timetable, or structured data, format it as an HTML <table> with proper headers (<th>). Do not use markdown tables, strictly use HTML tags.
 Text:
 ` + text
 
