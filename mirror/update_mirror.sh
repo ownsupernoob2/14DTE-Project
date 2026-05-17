@@ -1,6 +1,7 @@
 #!/bin/bash
 # Path to your repository
 REPO_DIR="$HOME/14DTE-Project"
+VENV_DIR="$HOME/mirror-venv"
 
 cd $REPO_DIR
 
@@ -17,14 +18,11 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     git reset --hard origin/main
     git pull origin main
     
-    echo "Code updated."
+    # Re-install any new dependencies into the venv
+    $VENV_DIR/bin/pip install -r $REPO_DIR/mirror/requirements.txt --quiet
     
-    # If you have a systemd service running your mirror (e.g., smartmirror.service),
-    # uncomment the line below to automatically restart it when new code arrives!
-    # sudo systemctl restart smartmirror.service
-    
-    # Or, if you use a tool like PM2 to manage your python script:
-    # pm2 restart smart_mirror
+    echo "Code updated. Restarting mirror service..."
+    sudo systemctl restart smartmirror.service
 else
     echo "Mirror is up to date. ($LOCAL)"
 fi

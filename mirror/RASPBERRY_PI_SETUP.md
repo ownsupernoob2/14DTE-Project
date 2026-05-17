@@ -1,31 +1,13 @@
 # Raspberry Pi Smart Mirror Setup
 Run these commands in order. Copy-paste each block exactly.
-raspi@raspi:~/14DTE-Project/mirror $ cd ~/14DTE-Project/mirror
-pip3 install -r requirements.txt
-error: externally-managed-environment
-
-× This environment is externally managed
-╰─> To install Python packages system-wide, try apt install
-    python3-xyz, where xyz is the package you are trying to
-    install.
-    
-    If you wish to install a non-Debian-packaged Python package,
-    create a virtual environment using python3 -m venv path/to/venv.
-    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
-    sure you have python3-full installed.
-    
-    For more information visit http://rptl.io/venv
-
-note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
-hint: See PEP 668 for the detailed specification.
-raspi@raspi:~/14DTE-Project/mirror $ 
+Your username appears to be "raspi" and your home is /home/raspi — replace if different.
 
 ---
 
-## STEP 1: Install dependencies
+## STEP 1: Update packages and install dependencies
 
 ```bash
-sudo apt update && sudo apt install git python3-pip -y
+sudo apt update && sudo apt install git python3-full python3-pip -y
 ```
 
 ---
@@ -33,60 +15,36 @@ sudo apt update && sudo apt install git python3-pip -y
 ## STEP 2: Clone the repository
 
 ```bash
-git clone raspi@raspi:~/14DTE-Project/mirror $ cd ~/14DTE-Project/mirror
-pip3 install -r requirements.txt
-error: externally-managed-environment
-
-× This environment is externally managed
-╰─> To install Python packages system-wide, try apt install
-    python3-xyz, where xyz is the package you are trying to
-    install.
-    
-    If you wish to install a non-Debian-packaged Python package,
-    create a virtual environment using python3 -m venv path/to/venv.
-    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
-    sure you have python3-full installed.
-    
-    For more information visit http://rptl.io/venv
-
-note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
-hint: See PEP 668 for the detailed specification.
-raspi@raspi:~/14DTE-Project/mirror $ 
-https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
+git clone https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
 ```
 
 ---
 
-## STEP 3: Install Python packages
+## STEP 3: Create a Python virtual environment
+
+Modern Raspberry Pi OS requires a venv for pip installs.
 
 ```bash
-cd ~/14DTE-Project/mirror
-pip3 install -r requirements.txt
+python3 -m venv ~/mirror-venv
 ```
 
 ---
 
-## STEP 4: Make the update script executable
+## STEP 4: Install Python packages into the venv
+
+```bash
+~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
+```
+
+This will take a few minutes. Wait for it to fully finish before moving on.
+
+---
+
+## STEP 5: Make the update script executable
 
 ```bash
 chmod +x ~/14DTE-Project/mirror/update_mirror.sh
 ```
-
----
-
-## STEP 5: Edit the update script to auto-restart the mirror on update
-
-```bash
-nano ~/14DTE-Project/mirror/update_mirror.sh
-```
-
-Find this line:
-    # sudo systemctl restart smartmirror.service
-
-Remove the # at the start so it becomes:
-    sudo systemctl restart smartmirror.service
-
-Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
@@ -99,10 +57,10 @@ crontab -e
 If it asks which editor, press 1 for nano.
 Scroll to the very bottom and add this line:
 
-    */5 * * * * /home/pi/14DTE-Project/mirror/update_mirror.sh >> /home/pi/mirror_update.log 2>&1
+    */5 * * * * /home/raspi/14DTE-Project/mirror/update_mirror.sh >> /home/raspi/mirror_update.log 2>&1
 
-NOTE: If your username is NOT "pi", replace /home/pi with your actual home directory.
-      You can check by running: echo $HOME
+NOTE: If your username is NOT "raspi", replace /home/raspi with your actual home directory.
+      You can check what it is by running: echo $HOME
 
 Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
@@ -114,29 +72,27 @@ Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 sudo nano /etc/systemd/system/smartmirror.service
 ```
 
-Paste this entire block into the file:
+Paste this entire block into the file (replace "raspi" with your username if different):
 
     [Unit]
     Description=Smart Mirror
     After=network.target
 
     [Service]
-    User=pi
-    WorkingDirectory=/home/pi/14DTE-Project/mirror
-    ExecStart=/usr/bin/python3 /home/pi/14DTE-Project/mirror/smart_mirror_pro.py
+    User=raspi
+    WorkingDirectory=/home/raspi/14DTE-Project/mirror
+    ExecStart=/home/raspi/mirror-venv/bin/python /home/raspi/14DTE-Project/mirror/smart_mirror_pro.py
     Restart=always
     RestartSec=10
 
     [Install]
     WantedBy=multi-user.target
 
-NOTE: Again, replace "pi" and "/home/pi" with your actual username if different.
-
 Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
-## STEP 8: Enable and start the service
+## STEP 8: Enable and start the mirror service
 
 ```bash
 sudo systemctl daemon-reload
@@ -154,11 +110,16 @@ sudo systemctl status smartmirror.service
 ```
 You should see "active (running)" in green.
 
-Check the update log (wait a few minutes first):
+If it shows an error, view the full logs:
+```bash
+sudo journalctl -u smartmirror.service -n 50
+```
+
+Check the auto-update log (wait 5+ minutes first):
 ```bash
 tail -f ~/mirror_update.log
 ```
-Press CTRL+C to stop watching the log.
+Press CTRL+C to stop watching.
 
 ---
 
@@ -174,42 +135,9 @@ Press CTRL+C to stop watching the log.
 
 | Command | What it does |
 |---|---|
-
-
-
-
 | `sudo systemctl status smartmirror.service` | Check if mirror is running |
 | `sudo systemctl restart smartmirror.service` | Manually restart the mirror |
 | `sudo systemctl stop smartmirror.service` | Stop the mirror |
 | `sudo journalctl -u smartmirror.service -f` | Watch live mirror logs |
 | `tail -f ~/mirror_update.log` | Watch the auto-update log |
 | `cd ~/14DTE-Project && git pull` | Manually force a git pull |
-
-
-
-
-error:
-
-raspi@raspi:~/14DTE-Project/mirror $ cd ~/14DTE-Project/mirror
-pip3 install -r requirements.txt
-error: externally-managed-environment
-
-× This environment is externally managed
-╰─> To install Python packages system-wide, try apt install
-    python3-xyz, where xyz is the package you are trying to
-    install.
-    
-    If you wish to install a non-Debian-packaged Python package,
-    create a virtual environment using python3 -m venv path/to/venv.
-    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
-    sure you have python3-full installed.
-    
-    For more information visit http://rptl.io/venv
-
-note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
-hint: See PEP 668 for the detailed specification.
-raspi@raspi:~/14DTE-Project/mirror $ 
-
-
-
-
