@@ -127,6 +127,20 @@ Check the mirror service is running:
 sudo systemctl status smartmirror.service
 ```
 You should see "active (running)" in green.
+raspi@raspi:~/14DTE-Project/mirror $ sudo systemctl status smartmirror.service
+● smartmirror.service - Smart Mirror
+     Loaded: loaded (/etc/systemd/system/smartmirror.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2026-05-19 11:15:58 NZST; 1min 7s ago
+ Invocation: d51a1156b91d4c4096206d747a0dae41
+   Main PID: 11927 (python)
+      Tasks: 8 (limit: 9570)
+        CPU: 18.177s
+     CGroup: /system.slice/smartmirror.service
+             └─11927 /home/raspi/mirror-venv/bin/python /home/raspi/14DTE-Project/mirror/smart_mirror_pro.py
+
+May 19 11:15:58 raspi systemd[1]: Started smartmirror.service - Smart Mirror.
+May 19 11:16:00 raspi python[11927]: error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+raspi@raspi:~/14DTE-Project/mirror $ 
 
 If it shows an error, view the logs:
 ```bash
