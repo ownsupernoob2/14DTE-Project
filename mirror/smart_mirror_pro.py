@@ -186,9 +186,9 @@ class SmartMirrorPro:
 
                     self.prev_touch = self.thumb_index_touch
                     
-                    if os.path.exists(FACE_STATUS_FILE):
+                    if os.path.exists(FACE_DATA_FILE):
                         try:
-                            with open(FACE_STATUS_FILE) as f:
+                            with open(FACE_DATA_FILE) as f:
                                 fdata = json.load(f)
                                 new_user_id = fdata.get('user_id')
                                 self.face_detected = fdata.get('detected', False)
