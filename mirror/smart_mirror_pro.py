@@ -16,7 +16,7 @@ from ui.loading_screen import LoadingScreen
 from utils.fonts import get_font
 from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget
 
-API_URL = os.environ.get('API_URL', 'http://localhost:8080')
+API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 class SmartMirrorPro:
     def __init__(self):
