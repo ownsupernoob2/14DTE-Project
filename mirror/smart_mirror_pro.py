@@ -16,7 +16,7 @@ from ui.loading_screen import LoadingScreen
 from utils.fonts import get_font
 from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget
 
-API_URL = os.environ.get('API_URL', 'http://localhost:8080')
+API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 class SmartMirrorPro:
     def __init__(self):
@@ -186,9 +186,9 @@ class SmartMirrorPro:
 
                     self.prev_touch = self.thumb_index_touch
                     
-                    if os.path.exists(FACE_STATUS_FILE):
+                    if os.path.exists(FACE_DATA_FILE):
                         try:
-                            with open(FACE_STATUS_FILE) as f:
+                            with open(FACE_DATA_FILE) as f:
                                 fdata = json.load(f)
                                 new_user_id = fdata.get('user_id')
                                 self.face_detected = fdata.get('detected', False)

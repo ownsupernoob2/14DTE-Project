@@ -7,7 +7,7 @@ import base64
 
 # Paths
 FACE_STATUS_FILE = '/tmp/face_status.json'
-API_URL = os.environ.get('API_URL', 'http://localhost:8080')
+API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 # Initialize camera
 cap = cv2.VideoCapture(10)  # Use virtual camera /dev/video10
