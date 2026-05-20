@@ -77,7 +77,7 @@ class SmartMirrorPro:
 
     def fetch_remote_profile(self, user_id):
         try:
-            res = requests.get(f"{API_URL}/api/dashboard", params={"user_id": user_id}, timeout=3)
+            res = requests.get(f"{API_URL}/api/mirror/layout", params={"user_id": user_id}, timeout=3)
             if res.status_code == 200:
                 data = res.json()
                 remote_widgets = data.get('widgets', [])
