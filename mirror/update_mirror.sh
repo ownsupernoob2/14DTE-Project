@@ -1,7 +1,7 @@
 #!/bin/bash
 # Path to your repository
 REPO_DIR="$HOME/14DTE-Project"
-PYTHON_ENV="/home/raspi/.pyenv/versions/3.10.7/envs/mediapipe"
+VENV_DIR="$HOME/mirror-venv"
 
 cd $REPO_DIR
 
@@ -18,12 +18,10 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     git reset --hard origin/main
     git pull origin main
     
-    # Re-install any new dependencies into the pyenv
-    $PYTHON_ENV/bin/pip install -r $REPO_DIR/mirror/requirements.txt --quiet
+    # Re-install any new dependencies into the venv
+    $VENV_DIR/bin/pip install -r $REPO_DIR/mirror/requirements.txt --quiet
     
-    echo "Code updated. Restarting mirror..."
-    # Run start_smart_mirror.sh to restart everything
-    /home/raspi/14DTE-Project/mirror/start_smart_mirror.sh
+    bash $REPO_DIR/mirror/start_smart_mirror.sh
 else
     echo "Mirror is up to date. ($LOCAL)"
 fi
