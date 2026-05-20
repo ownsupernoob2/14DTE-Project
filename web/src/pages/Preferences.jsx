@@ -10,9 +10,40 @@ export default function Preferences() {
   const [showFaceModal, setShowFaceModal] = useState(false)
   const { isServerUp } = useServerStatus()
 
+  const [isDeleting, setIsDeleting] = useState(false)
+
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
   const isScanRecent = (Date.now() - scanTime) < 24 * 60 * 60 * 1000
+
+  const { getAccessTokenSilently } = useAuth0()
+  const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
+
+  const bypass24h = () => {
+    localStorage.removeItem('lastFaceScan')
+    window.location.reload()
+  }
+
+  const deleteFace = async () => {
+    setIsDeleting(true)
+    try {
+      const token = await getAccessTokenSilently()
+      const res = await fetch(`${API_URL}/api/faces/me`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        localStorage.removeItem('lastFaceScan')
+        window.location.reload()
+      } else {
+        alert('Failed to delete face data')
+      }
+    } catch (err) {
+      alert('Error connecting to server')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <div className="preferences-container">
@@ -45,16 +76,50 @@ export default function Preferences() {
               <div style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.1)', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(74, 222, 128, 0.2)' }}>
                 <strong style={{ display: 'block', marginBottom: '4px' }}>✓ Face Registered Successfully</strong>
                 <span style={{ fontSize: '0.85rem', opacity: 0.9 }}>Your face scan was successful. To prevent spam, you can update your face scan again in 24 hours.</span>
+                
+                <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
+                  <button 
+                    onClick={deleteFace} 
+                    disabled={isDeleting || !isServerUp}
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', cursor: 'pointer' }}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete Face Data'}
+                  </button>
+                  <button 
+                    onClick={bypass24h} 
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '6px', background: 'transparent', border: '1px solid #666', color: '#ccc', cursor: 'pointer' }}
+                  >
+                    Developer Bypass 24h
+                  </button>
+                </div>
               </div>
             ) : (
-              <button 
-                className="modern-btn" 
-                onClick={() => setShowFaceModal(true)}
-                disabled={!isServerUp}
-                style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed' }}
-              >
-                {isServerUp ? "Register Face Scan" : "Server Offline"}
-              </button>
+              <div>
+                <button 
+                  className="modern-btn" 
+                  onClick={() => setShowFaceModal(true)}
+                  disabled={!isServerUp}
+                  style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed', marginBottom: '12px' }}
+                >
+                  {isServerUp ? "Register Face Scan" : "Server Offline"}
+                </button>
+                
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button 
+                    onClick={deleteFace} 
+                    disabled={isDeleting || !isServerUp}
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', cursor: 'pointer' }}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete Face Data'}
+                  </button>
+                  <button 
+                    onClick={bypass24h} 
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '6px', background: 'transparent', border: '1px solid #666', color: '#ccc', cursor: 'pointer' }}
+                  >
+                    Developer Bypass 24h
+                  </button>
+                </div>
+              </div>
             )}
           </section>
 

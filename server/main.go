@@ -35,8 +35,6 @@ func main() {
 
 	// Mirror endpoint — no auth needed for the mirror to verify faces
 	e.POST("/api/verify-face", verifyFace)
-	e.GET("/api/encodings/download", downloadEncodings)
-	e.GET("/api/mirror/layout", getMirrorLayout)
 
 	// Protected routes (JWT middleware)
 	protected := e.Group("/api")
@@ -49,6 +47,7 @@ func main() {
 
 	// Face training route — replaces the old single-image upload
 	protected.POST("/faces/train", trainFace)
+	protected.DELETE("/faces/me", deleteFace)
 
 	// Legacy single-image face upload (kept for backward compatibility)
 	protected.POST("/users/me/face", uploadFace)

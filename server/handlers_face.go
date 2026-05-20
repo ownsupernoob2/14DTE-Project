@@ -100,19 +100,30 @@ func trainFace(c echo.Context) error {
 
 	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
 
-	// Recompile the unified encodings.pickle file containing all users
-	compileCmd := exec.Command(getPythonCmd(), "compile_encodings.py")
-	if err := compileCmd.Run(); err != nil {
-		log.Printf("[WARNING] Failed to compile unified encodings: %v", err)
-	} else {
-		log.Println("Unified encodings.pickle recompiled successfully")
-	}
-
 	return c.JSON(200, map[string]interface{}{
 		"status":      "trained",
 		"frames_used": framesUsed,
 		"user_id":     safeUserID,
 	})
+}
+
+// deleteFace removes the user's face encoding pickle file
+func deleteFace(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
+	}
+
+	safeUserID := strings.ReplaceAll(userID, "|", "_")
+	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
+	
+	picklePath := fmt.Sprintf("encodings/%s.pickle", safeUserID)
+	if err := os.Remove(picklePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Failed to delete face encoding for %s: %v", safeUserID, err)
+		return c.JSON(500, map[string]string{"error": "Failed to delete face scan"})
+	}
+
+	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
 }
 
 // uploadFace is the legacy single-image face upload, kept for backward compat.
@@ -203,28 +214,4 @@ func verifyFace(c echo.Context) error {
 	}
 
 	return c.JSON(401, map[string]string{"error": "Face not recognised"})
-}
-
-func downloadEncodings(c echo.Context) error {
-	picklePath := "encodings.pickle"
-	if _, err := os.Stat(picklePath); os.IsNotExist(err) {
-		// Run compiler first if it doesn't exist
-		cmd := exec.Command(getPythonCmd(), "compile_encodings.py")
-		if err := cmd.Run(); err != nil {
-			log.Printf("[ERROR] Failed to compile unified encodings: %v", err)
-			return c.JSON(500, map[string]string{"error": "Failed to compile encodings file"})
-		}
-	}
-	return c.Attachment(picklePath, "encodings.pickle")
-}
-
-func getMirrorLayout(c echo.Context) error {
-	userID := c.QueryParam("user_id")
-	if userID == "" {
-		return c.JSON(400, map[string]string{"error": "Missing user_id parameter"})
-	}
-	// Return the list of widgets mapped to this user from the DB/memory
-	return c.JSON(200, map[string]interface{}{
-		"widgets": getWidgetsForUser(userID),
-	})
 }
