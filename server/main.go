@@ -47,6 +47,7 @@ func main() {
 
 	// Face training route — replaces the old single-image upload
 	protected.POST("/faces/train", trainFace)
+	protected.DELETE("/faces/me", deleteFace)
 
 	// Legacy single-image face upload (kept for backward compatibility)
 	protected.POST("/users/me/face", uploadFace)

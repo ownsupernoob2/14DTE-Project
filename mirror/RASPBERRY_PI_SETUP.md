@@ -84,68 +84,60 @@ Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
-## STEP 9: Set up the mirror to auto-start on boot
+## STEP 9: Set up the mirror to auto-start on boot (GUI Autostart)
 
-```bash
-sudo nano /etc/systemd/system/smartmirror.service
-```
+Because Pygame is a graphical application, systemd system services cannot easily open the window (leading to `XDG_RUNTIME_DIR is invalid` errors). Instead, we use the standard Linux Desktop Autostart, which launches the mirror inside your GUI session once the desktop loads.
 
-Paste this entire block (replace "raspi" with your username if different):
+1. Create the autostart directory if it doesn't exist:
+   ```bash
+   mkdir -p ~/.config/autostart
+   ```
 
-    [Unit]
-    Description=Smart Mirror
-    After=network.target
+2. Create the autostart config file:
+   ```bash
+   nano ~/.config/autostart/smartmirror.desktop
+   ```
 
-    [Service]
-    User=raspi
-    WorkingDirectory=/home/raspi/14DTE-Project/mirror
-    ExecStart=/home/raspi/mirror-venv/bin/python /home/raspi/14DTE-Project/mirror/smart_mirror_pro.py
-    Restart=always
-    RestartSec=10
+3. Paste this configuration:
 
-    [Install]
-    WantedBy=multi-user.target
+   ```ini
+   [Desktop Entry]
+   Type=Application
+   Name=Smart Mirror
+   Exec=/home/raspi/14DTE-Project/mirror/start_smart_mirror.sh
+   StartupNotify=false
+   Terminal=false
+   ```
+
+   *(Replace "raspi" with your username if different)*
+
+4. Make the start script executable:
+   ```bash
+   chmod +x ~/14DTE-Project/mirror/start_smart_mirror.sh
+   ```
 
 Save: press CTRL+O, then ENTER, then CTRL+X to exit.
 
 ---
 
-## STEP 10: Enable and start the mirror service
+## STEP 10: Manually launch the mirror for the first time
 
+To test it right now without rebooting, simply run the start script:
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable smartmirror.service
-sudo systemctl start smartmirror.service
+~/14DTE-Project/mirror/start_smart_mirror.sh
 ```
+
+This will run all required background services (virtual camera, face recognition, hand gestures, and voice) and finally open your Pygame GUI window!
 
 ---
 
 ## STEP 11: Verify everything is working
 
-Check the mirror service is running:
+Verify the processes are running:
 ```bash
-sudo systemctl status smartmirror.service
+ps aux | grep python
 ```
-You should see "active (running)" in green.
-raspi@raspi:~/14DTE-Project/mirror $ sudo systemctl status smartmirror.service
-● smartmirror.service - Smart Mirror
-     Loaded: loaded (/etc/systemd/system/smartmirror.service; enabled; preset: enabled)
-     Active: active (running) since Tue 2026-05-19 11:15:58 NZST; 1min 7s ago
- Invocation: d51a1156b91d4c4096206d747a0dae41
-   Main PID: 11927 (python)
-      Tasks: 8 (limit: 9570)
-        CPU: 18.177s
-     CGroup: /system.slice/smartmirror.service
-             └─11927 /home/raspi/mirror-venv/bin/python /home/raspi/14DTE-Project/mirror/smart_mirror_pro.py
-
-May 19 11:15:58 raspi systemd[1]: Started smartmirror.service - Smart Mirror.
-May 19 11:16:00 raspi python[11927]: error: XDG_RUNTIME_DIR is invalid or not set in the environment.
-raspi@raspi:~/14DTE-Project/mirror $ 
-
-If it shows an error, view the logs:
-```bash
-sudo journalctl -u smartmirror.service -n 50
-```
+You should see `smart_mirror_pro.py`, `recognize.py`, `face_recognize.py`, and `ai_service.py` running in the background.
 
 Check the auto-update log (wait 5+ minutes first):
 ```bash
@@ -159,7 +151,7 @@ Press CTRL+C to stop watching.
 
 1. Edit code on your Windows PC
 2. git push to the main branch on GitHub
-3. Within 5 minutes, the Pi automatically pulls the new code and restarts the mirror
+3. Within 5 minutes, the Pi automatically pulls the new code, restarts all services, and opens the mirror!
 
 ---
 
@@ -167,10 +159,9 @@ Press CTRL+C to stop watching.
 
 | Command | What it does |
 |---|---|
-| `sudo systemctl status smartmirror.service` | Check if mirror is running |
-| `sudo systemctl restart smartmirror.service` | Manually restart the mirror |
-| `sudo systemctl stop smartmirror.service` | Stop the mirror |
-| `sudo journalctl -u smartmirror.service -f` | Watch live mirror logs |
+| `~/14DTE-Project/mirror/start_smart_mirror.sh` | Start/Restart the mirror and all services |
+| `pkill -f smart_mirror_pro.py` | Stop the mirror window |
+| `pkill -f python` | Stop all python background services |
 | `tail -f ~/mirror_update.log` | Watch the auto-update log |
 | `cd ~/14DTE-Project && git pull` | Manually force a git pull |
 

@@ -21,8 +21,7 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     # Re-install any new dependencies into the venv
     $VENV_DIR/bin/pip install -r $REPO_DIR/mirror/requirements.txt --quiet
     
-    echo "Code updated. Restarting mirror service..."
-    sudo systemctl restart smartmirror.service
+    bash $REPO_DIR/mirror/start_smart_mirror.sh
 else
     echo "Mirror is up to date. ($LOCAL)"
 fi

@@ -28,18 +28,19 @@ sleep 5
 
 # [New] Start Face Recognition (background)
 # Ensuring we use the correct path and venv
-/home/raspi/.pyenv/versions/3.10.7/envs/mediapipe/bin/python face_recognize.py &
+/home/raspi/mirror-venv/bin/python face_recognize.py &
 
 # Activate venv and start recognize.py (background)
-/home/raspi/.pyenv/versions/3.10.7/envs/mediapipe/bin/python recognize.py \
+/home/raspi/mirror-venv/bin/python recognize.py \
   --cameraId 11 --frameWidth 640 --frameHeight 480 & # Using the virtual camera 2
 
 # Wait a bit
 sleep 2
 
 # Start AI Service (background)
-/home/raspi/.pyenv/versions/3.10.7/envs/mediapipe/bin/python ai_service.py &
+/home/raspi/mirror-venv/bin/python ai_service.py &
 
-# Start smart_mirror.py (background)
+# Start smart_mirror_pro.py (background)
 export DISPLAY=:0
-/home/raspi/.pyenv/versions/3.10.7/envs/mediapipe/bin/python smart_mirror_pro.py &
+/home/raspi/mirror-venv/bin/python smart_mirror_pro.py &
+

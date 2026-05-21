@@ -75,33 +75,29 @@ class SmartMirrorPro:
             if name == "weather": self.widgets.append(WeatherWidget(x, y + 220, 300, 200))
             if name == "calendar": self.widgets.append(GoogleCalendarWidget(x + 320, y + 220, 400, 300, user_name))
 
-    def fetch_remote_profile(self, user_id):
+    def apply_remote_widgets(self, remote_widgets):
         try:
-            res = requests.get(f"{API_URL}/api/dashboard", params={"user_id": user_id}, timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                remote_widgets = data.get('widgets', [])
-                self.widgets = []
-                user_name = self.current_user_name if self.current_user_name else ""
+            self.widgets = []
+            user_name = self.current_user_name if self.current_user_name else ""
+            
+            if not remote_widgets:
+                self.load_widgets(["clock", "weather"], user_name)
+                return
+            
+            for wd in remote_widgets:
+                x, y = wd.get('x', 50), wd.get('y', 50)
+                wtype = wd.get('type', '').lower()
                 
-                if not remote_widgets:
-                    self.load_widgets(["clock", "weather"], user_name)
-                    return
-                
-                for wd in remote_widgets:
-                    x, y = wd.get('x', 50), wd.get('y', 50)
-                    wtype = wd.get('type', '').lower()
-                    
-                    if wtype == 'clock' or wd.get('type') == 'ClockWidget':
-                        self.widgets.append(ClockWidget(x, y, 400, 200))
-                    elif wtype == 'weather' or wd.get('type') == 'WeatherWidget':
-                        self.widgets.append(WeatherWidget(x, y, 300, 200))
-                    elif wtype == 'calendar' or wd.get('type') == 'GoogleCalendarWidget':
-                        self.widgets.append(GoogleCalendarWidget(x, y, 400, 300, user_name))
-            else:
-                self.load_widgets(["clock", "weather"], self.current_user_name)
+                if wtype == 'clock' or wd.get('type') == 'ClockWidget':
+                    self.widgets.append(ClockWidget(x, y, 400, 200))
+                elif wtype == 'weather' or wd.get('type') == 'WeatherWidget':
+                    self.widgets.append(WeatherWidget(x, y, 300, 200))
+                elif wtype == 'calendar' or wd.get('type') == 'GoogleCalendarWidget':
+                    self.widgets.append(GoogleCalendarWidget(x, y, 400, 300, user_name))
+                elif wtype == 'notices' or wd.get('type') == 'DailyNoticesWidget':
+                    pass # Placeholder if needed
         except Exception as e:
-            print(f"[ERROR] Failed to fetch profile from API: {e}")
+            print(f"[ERROR] Failed to apply remote widgets: {e}")
             self.load_widgets(["clock", "weather"], self.current_user_name)
 
     # --- Actions called by Menu ---
@@ -199,7 +195,8 @@ class SmartMirrorPro:
                                     self.current_user_name = fdata.get('user_name', '')
 
                                     if new_user_id and new_user_id != "idle":
-                                        self.fetch_remote_profile(new_user_id)
+                                        remote_widgets = fdata.get('widgets', [])
+                                        self.apply_remote_widgets(remote_widgets)
                                     else:
                                         self.load_widgets(["clock", "weather"])
                         except: pass

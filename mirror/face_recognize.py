@@ -27,6 +27,7 @@ start_time = time.time()
 last_detected_time = 0
 current_user = "idle"
 last_api_call = 0
+current_widgets = []
 
 while True:
     ret, frame = cap.read()
@@ -71,9 +72,11 @@ while True:
                 if res.status_code == 200:
                     data = res.json()
                     current_user = data.get("user_id", "idle")
+                    current_widgets = data.get("widgets", [])
                     confidence = 1.0 # The server successfully matched
                 else:
                     confidence = 0.0
+                    current_widgets = []
             except Exception as e:
                 print(f"[ERROR] API Call failed: {e}")
 
@@ -91,7 +94,8 @@ while True:
         "count": len(faces),
         "user_id": user_id,
         "user_name": user_name,
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "widgets": current_widgets
     }
 
     # Write to JSON

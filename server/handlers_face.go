@@ -107,6 +107,25 @@ func trainFace(c echo.Context) error {
 	})
 }
 
+// deleteFace removes the user's face encoding pickle file
+func deleteFace(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
+	}
+
+	safeUserID := strings.ReplaceAll(userID, "|", "_")
+	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
+	
+	picklePath := fmt.Sprintf("encodings/%s.pickle", safeUserID)
+	if err := os.Remove(picklePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Failed to delete face encoding for %s: %v", safeUserID, err)
+		return c.JSON(500, map[string]string{"error": "Failed to delete face scan"})
+	}
+
+	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
+}
+
 // uploadFace is the legacy single-image face upload, kept for backward compat.
 func uploadFace(c echo.Context) error {
 	userID := getUserIDFromToken(c)
