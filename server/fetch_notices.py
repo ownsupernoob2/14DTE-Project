@@ -90,6 +90,7 @@ def clean_messy_text(raw_text):
                 # Save the current notice before starting a new one
                 if current_notice:
                     notices.append({
+                        "title": current_category,
                         "category": current_category,
                         "notice": " ".join(current_notice)
                     })
@@ -107,13 +108,14 @@ def clean_messy_text(raw_text):
     # Save the last accumulated notice
     if current_notice:
         notices.append({
+            "title": current_category,
             "category": current_category,
             "notice": " ".join(current_notice)
         })
             
     # If no notices matched, just wrap the whole thing or chunks
     if not notices and cleaned_lines:
-        notices = [{"category": "General", "notice": " ".join(cleaned_lines)}]
+        notices = [{"title": "Daily Notice", "category": "General", "notice": " ".join(cleaned_lines)}]
         
     return notices
 
@@ -125,11 +127,20 @@ def process_with_gemini(text):
     try:
         client = genai.Client(api_key=api_key)
         
-        prompt = """
-        Extract the following daily school notices into a neat JSON array.
-        Each object should have "category" and "notice".
-        Text:
-        """ + text
+        prompt = """You are an expert school notices parsing assistant.
+Analyze the following daily school notices and extract them into a clean JSON array of notice objects.
+
+Strict JSON format requirements:
+Each notice object in the array must have EXACTLY these fields:
+- "title": A clean, concise headline summarizing the notice (e.g. "Year 12 Geography Field Trip").
+- "category": Must be exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Choose the most appropriate category based on the content.
+- "notice": The body of the notice formatted as clean, well-spaced HTML paragraphs (<p>) and/or bullet lists (<ul><li>) for maximum readability. Bold critical details like Date, Time, Location, Cost, and Deadlines using <strong>. Correct any OCR/spelling/spacing errors (e.g., replace strange characters like "King?s" with "King's", "min utes" with "minutes").
+- "targetYears": An array of strings representing the target school year levels, e.g. ["9", "10"], ["12"], or ["All"] if it applies to everyone or isn't specified. Extract year level mentions like "Year 9", "Y10", "Juniors" (Year 9 and 10), "Seniors" (Year 11, 12, and 13).
+- "importance": Either "high" (use for room changes, time-critical updates, urgent instructions, cancellations) or "normal" (general notices).
+- "contact": The name of the teacher, facilitator, or staff member in charge of the event/notice if mentioned (e.g. "Mr Smith"), otherwise an empty string "".
+
+Text to process:
+""" + text
         
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -147,6 +158,156 @@ def process_with_gemini(text):
     except Exception as e:
         print(f"Gemini API error: {e}")
         return None
+
+def get_standard_category(title, text):
+    t = (title + " " + text).lower()
+    if any(word in t for word in ["sport", "rugby", "football", "soccer", "cricket", "hockey", "basketball", "netball", "athletics", "tennis", "badminton", "swimming", "rowing"]):
+        return "Sports"
+    if any(word in t for word in ["meeting", "committee", "council", "practice", " rehearsal", "club", "group"]):
+        if any(word in t for word in ["choir", "band", "music", "drama", "play", "art", "culture"]):
+            return "Arts & Culture"
+        return "Meetings"
+    if any(word in t for word in ["choir", "band", "music", "drama", "play", "art", "cultural", "dance", "debating", "speech"]):
+        return "Arts & Culture"
+    if any(word in t for word in ["career", "university", "job", "work", "employment", "polytech", "scholarship", "tertiary"]):
+        return "Careers"
+    if any(word in t for word in ["service", "charity", "volunteer", "community", "fundrais", "donation", "foodbank"]):
+        return "Service"
+    if any(word in t for word in ["class", "exam", "test", "study", "academic", "math", "english", "science", "history", "geography", "library", "homework", "detention"]):
+        return "Academic"
+    return "General"
+
+def extract_target_years(text):
+    years = []
+    lower_text = text.lower()
+    
+    def add_year(y):
+        if y not in years:
+            years.append(y)
+            
+    has_junior = "junior" in lower_text
+    has_senior = "senior" in lower_text
+    
+    if re.search(r'\b(year|yr|y)\s*9\b', lower_text):
+        add_year("9")
+    if re.search(r'\b(year|yr|y)\s*10\b', lower_text):
+        add_year("10")
+    if re.search(r'\b(year|yr|y)\s*11\b', lower_text):
+        add_year("11")
+    if re.search(r'\b(year|yr|y)\s*12\b', lower_text):
+        add_year("12")
+    if re.search(r'\b(year|yr|y)\s*13\b', lower_text):
+        add_year("13")
+        
+    if has_junior:
+        add_year("9")
+        add_year("10")
+    if has_senior:
+        add_year("11")
+        add_year("12")
+        add_year("13")
+        
+    if not years:
+        return ["All"]
+    return years
+
+def extract_contact(text):
+    match = re.search(r'\b(Mr|Mrs|Ms|Miss|Dr|Teacher)\s+([A-Z][a-zA-Z]+)', text)
+    if match:
+        return match.group(0)
+    return ""
+
+def detect_importance(title, text):
+    t = (title + " " + text).lower()
+    if any(word in t for word in ["urgent", "important", "attention", "room change", "timetable change", "cancelled", "postponed", "alert", "warning"]):
+        return "high"
+    return "normal"
+
+def format_notice_html(text):
+    if any(tag in text for tag in ["<p>", "<ul>", "<li>", "<table>"]):
+        return text
+        
+    lines = text.split('\n')
+    html_parts = []
+    in_list = False
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        if line.startswith('*') or line.startswith('-') or line.startswith('•'):
+            if not in_list:
+                html_parts.append("<ul>")
+                in_list = True
+            content = line[1:].strip()
+            html_parts.append(f"<li>{content}</li>")
+        else:
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            html_parts.append(f"<p>{line}</p>")
+            
+    if in_list:
+        html_parts.append("</ul>")
+        
+    if not html_parts:
+        return f"<p>{text}</p>"
+        
+    return "".join(html_parts)
+
+def normalize_notice_item(item):
+    category = item.get("category", "").strip()
+    valid_categories = {"General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service"}
+    title = item.get("title", "").strip()
+    notice = item.get("notice", "").strip()
+    
+    if not category or category not in valid_categories:
+        category = get_standard_category(title, notice)
+        
+    if not title:
+        clean_text = re.sub(r'<[^>]*>', '', notice)
+        words = clean_text.split()
+        if words:
+            title = " ".join(words[:5]) + "..."
+        else:
+            title = f"{category} Notice"
+            
+    importance = item.get("importance", "").strip().lower()
+    if importance not in ["high", "normal"]:
+        importance = detect_importance(title, notice)
+        
+    target_years = item.get("targetYears", [])
+    if not target_years:
+        target_years = extract_target_years(title + " " + notice)
+    else:
+        clean_years = []
+        for y in target_years:
+            y = str(y).strip()
+            if y.lower() == "all":
+                clean_years = ["All"]
+                break
+            digit_match = re.search(r'\d+', y)
+            if digit_match:
+                clean_years.append(digit_match.group(0))
+        if not clean_years:
+            clean_years = ["All"]
+        target_years = clean_years
+        
+    contact = item.get("contact", "").strip()
+    if not contact:
+        contact = extract_contact(notice)
+        
+    notice_html = format_notice_html(notice)
+    
+    return {
+        "title": title,
+        "category": category,
+        "notice": notice_html,
+        "targetYears": target_years,
+        "importance": importance,
+        "contact": contact
+    }
 
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -172,7 +333,14 @@ def main():
     
     if not text:
         print("Could not retrieve notice text.")
-        notices = [{"category": "System", "notice": "No daily notices currently available."}]
+        notices = [{
+            "title": "Notice Status",
+            "category": "General",
+            "notice": "<p>No daily notices currently available.</p>",
+            "targetYears": ["All"],
+            "importance": "normal",
+            "contact": "System"
+        }]
     else:
         print("Processing text with Gemini...")
         notices = process_with_gemini(text)
@@ -180,6 +348,9 @@ def main():
         if not notices:
             print("Falling back to text cleanup...")
             notices = clean_messy_text(text)
+            
+    # Normalize all notices!
+    notices = [normalize_notice_item(n) for n in notices]
             
     with open(OUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(notices, f, indent=2, ensure_ascii=False)

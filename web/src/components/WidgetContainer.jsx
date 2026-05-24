@@ -7,7 +7,7 @@ import { useServerStatus } from '../contexts/ServerStatusContext'
 const DEFAULT_SIZES = {
   clock:     { w: 220, h: 100 },
   notices:   { w: 420, h: 340 },
-  timetable: { w: 280, h: 200 },
+  timetable: { w: 360, h: 320 },
   note:      { w: 220, h: 180 },
 }
 

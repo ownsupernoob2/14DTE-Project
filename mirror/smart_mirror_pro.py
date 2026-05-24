@@ -14,7 +14,7 @@ from ui.menu import GlobalMenu
 from ui.keyboard import VirtualKeyboard
 from ui.loading_screen import LoadingScreen
 from utils.fonts import get_font
-from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget
+from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget, NoticesWidget, TimetableWidget
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
@@ -95,7 +95,10 @@ class SmartMirrorPro:
                 elif wtype == 'calendar' or wd.get('type') == 'GoogleCalendarWidget':
                     self.widgets.append(GoogleCalendarWidget(x, y, 400, 300, user_name))
                 elif wtype == 'notices' or wd.get('type') == 'DailyNoticesWidget':
-                    pass # Placeholder if needed
+                    self.widgets.append(NoticesWidget(x, y, 400, 320, API_URL))
+                elif wtype == 'timetable' or wd.get('type') == 'TimetableWidget':
+                    tw = TimetableWidget(x, y, 360, 300, self.current_user_id or '', API_URL)
+                    self.widgets.append(tw)
         except Exception as e:
             print(f"[ERROR] Failed to apply remote widgets: {e}")
             self.load_widgets(["clock", "weather"], self.current_user_name)
@@ -122,6 +125,10 @@ class SmartMirrorPro:
             self.widgets.append(GoogleCalendarWidget(x, y, 400, 300, self.current_user_name))
         elif widget_type == "voice":
             self.widgets.append(VoiceAssistantWidget(x, y, 400, 250))
+        elif widget_type == "notices":
+            self.widgets.append(NoticesWidget(x, y, 400, 320, API_URL))
+        elif widget_type == "timetable":
+            self.widgets.append(TimetableWidget(x, y, 360, 300, self.current_user_id or '', API_URL))
 
     def reset_widgets(self, user_name):
         self.load_widgets(["clock", "weather", "calendar"], user_name)
@@ -197,6 +204,9 @@ class SmartMirrorPro:
                                     if new_user_id and new_user_id != "idle":
                                         remote_widgets = fdata.get('widgets', [])
                                         self.apply_remote_widgets(remote_widgets)
+                                        for w in self.widgets:
+                                            if hasattr(w, 'set_user_id'):
+                                                w.set_user_id(new_user_id)
                                     else:
                                         self.load_widgets(["clock", "weather"])
                         except: pass
