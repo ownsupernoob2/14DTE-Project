@@ -71,7 +71,7 @@ class GeminiVoiceWidget(Widget):
     def _run_gemini_session(self):
         """Run the Gemini Live API session in a separate thread."""
         try:
-            import google.genai as genai
+            from google import genai
 
             # Initialize the client
             client = genai.Client()
