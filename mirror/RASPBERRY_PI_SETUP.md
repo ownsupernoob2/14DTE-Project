@@ -3,6 +3,13 @@
 This setup is fully automated to match the exact working environment of the older mirror while supporting the latest code.
 
 ---
+cd ~/14DTE-Project
+git reset --hard origin/development
+git pull
+
+cd mirror
+chmod +x setup.sh
+./setup.sh
 
 ## 1. Get the latest code
 
@@ -46,7 +53,8 @@ cd ~/14DTE-Project/mirror
 ./start_smart_mirror.sh
 `
 
-Verify that i_service.py, ecognize.py, and the main smart_mirror_pro.py are properly running without (unknown location) errors.
+Verify that i_service.py, 
+ecognize.py, and the main smart_mirror_pro.py are properly running without (unknown location) errors.
 
 ---
 
