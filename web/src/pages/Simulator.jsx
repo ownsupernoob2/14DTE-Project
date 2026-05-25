@@ -8,9 +8,16 @@ const Simulator = () => {
   const [scanState, setScanState] = useState('waiting'); // waiting, scanning, authenticated, error
   const [widgets, setWidgets] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
+  const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const { isServerUp } = useServerStatus();
+
+  useEffect(() => {
+    const handleResize = () => setWinSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     let stream = null;
@@ -56,7 +63,26 @@ const Simulator = () => {
       if (res.ok) {
         const data = await res.json();
         console.log("Simulator authenticated successfully. Data:", data);
-        setWidgets(data.widgets || []);
+        
+        const fetched = data.widgets || []
+        const normalized = fetched.map(w => {
+          const wNew = { ...w }
+          if (w.x !== undefined && w.x > 100) {
+            wNew.x = (w.x / 1280) * 100
+          }
+          if (w.y !== undefined && w.y > 100) {
+            wNew.y = (w.y / 800) * 100
+          }
+          if (w.w !== undefined && w.w > 100) {
+            wNew.w = (w.w / 1280) * 100
+          }
+          if (w.h !== undefined && w.h > 100) {
+            wNew.h = (w.h / 800) * 100
+          }
+          return wNew
+        })
+        
+        setWidgets(normalized);
         setScanState('authenticated');
       } else {
         console.error("Authentication failed:", res.status);
@@ -116,6 +142,8 @@ const Simulator = () => {
               readonly={true} 
               onRemove={() => {}} 
               onMove={() => {}} 
+              containerWidth={winSize.w}
+              containerHeight={winSize.h}
             />
           ))}
         </div>

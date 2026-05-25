@@ -29,7 +29,7 @@ function ClockWidget() {
   )
 }
 
-export default function WidgetContainer({ widget, onRemove, onMove, onResize, readonly = false }) {
+export default function WidgetContainer({ widget, onRemove, onMove, onResize, readonly = false, containerWidth = 1280, containerHeight = 800 }) {
   const [isDragging, setIsDragging] = useState(false)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [isResizing, setIsResizing] = useState(false)
@@ -38,8 +38,12 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, re
   const { isServerUp } = useServerStatus()
 
   const defaults = DEFAULT_SIZES[widget.type] || { w: 220, h: 160 }
-  const widgetW = widget.w ?? defaults.w
-  const widgetH = widget.h ?? defaults.h
+  
+  // Convert percentage (0-100) back to pixels, or use pixels directly if absolute (backward compatibility)
+  const widgetW = widget.w !== undefined ? (widget.w > 100 ? widget.w : (widget.w / 100) * containerWidth) : defaults.w
+  const widgetH = widget.h !== undefined ? (widget.h > 100 ? widget.h : (widget.h / 100) * containerHeight) : defaults.h
+  const widgetX = widget.x !== undefined ? (widget.x > 100 ? widget.x : (widget.x / 100) * containerWidth) : 24
+  const widgetY = widget.y !== undefined ? (widget.y > 100 ? widget.y : (widget.y / 100) * containerHeight) : 96
 
   const handleMouseDown = (e) => {
     if (readonly) return
@@ -101,8 +105,8 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, re
       transition={{ duration: 0.2 }}
       className={`glass-panel widget-container ${isDragging ? 'dragging' : ''} ${isResizing ? 'resizing' : ''} ${readonly ? 'readonly' : ''}`}
       style={{
-        left: `${widget.x}px`,
-        top: `${widget.y}px`,
+        left: `${widgetX}px`,
+        top: `${widgetY}px`,
         width: `${widgetW}px`,
         height: `${widgetH}px`,
         position: 'absolute',

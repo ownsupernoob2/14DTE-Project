@@ -30,8 +30,28 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json()
         const fetchedWidgets = data || []
-        setWidgets(fetchedWidgets)
-        setSavedWidgets(fetchedWidgets)
+        
+        // Normalize any old absolute coordinates to percentages!
+        // We'll assume old coordinates were saved based on a standard 1280x800 web layout space.
+        const normalized = fetchedWidgets.map(w => {
+          const wNew = { ...w }
+          if (w.x !== undefined && w.x > 100) {
+            wNew.x = (w.x / 1280) * 100
+          }
+          if (w.y !== undefined && w.y > 100) {
+            wNew.y = (w.y / 800) * 100
+          }
+          if (w.w !== undefined && w.w > 100) {
+            wNew.w = (w.w / 1280) * 100
+          }
+          if (w.h !== undefined && w.h > 100) {
+            wNew.h = (w.h / 800) * 100
+          }
+          return wNew
+        })
+        
+        setWidgets(normalized)
+        setSavedWidgets(normalized)
         setErrorMsg('')
       } else {
         setErrorMsg('Failed to load dashboard.')
@@ -52,11 +72,19 @@ export default function Dashboard() {
     const x = Math.min((index % cols) * widgetWidth + 24, containerWidth - widgetWidth)
     const y = Math.min(Math.floor(index / cols) * widgetHeight + 96, containerHeight - widgetHeight)
 
+    // Store as percentages (0-100) immediately
+    const x_pct = (x / containerWidth) * 100
+    const y_pct = (y / containerHeight) * 100
+    const w_pct = (widgetWidth / containerWidth) * 100
+    const h_pct = (widgetHeight / containerHeight) * 100
+
     const newWidget = {
       id: `new-${Date.now()}`,
       type,
-      x,
-      y,
+      x: x_pct,
+      y: y_pct,
+      w: w_pct,
+      h: h_pct,
     }
 
     setShowAddMenu(false)
@@ -68,14 +96,22 @@ export default function Dashboard() {
   }
 
   const updateWidgetPosition = (id, x, y) => {
+    const containerWidth = containerRef.current?.offsetWidth || 1280
+    const containerHeight = containerRef.current?.offsetHeight || 800
+    const x_pct = (x / containerWidth) * 100
+    const y_pct = (y / containerHeight) * 100
     setWidgets(
-      widgets.map((w) => (w.id === id ? { ...w, x, y } : w))
+      widgets.map((w) => (w.id === id ? { ...w, x: x_pct, y: y_pct } : w))
     )
   }
 
   const updateWidgetSize = (id, width, height) => {
+    const containerWidth = containerRef.current?.offsetWidth || 1280
+    const containerHeight = containerRef.current?.offsetHeight || 800
+    const w_pct = (width / containerWidth) * 100
+    const h_pct = (height / containerHeight) * 100
     setWidgets(
-      widgets.map((w) => (w.id === id ? { ...w, w: Math.round(width), h: Math.round(height) } : w))
+      widgets.map((w) => (w.id === id ? { ...w, w: w_pct, h: h_pct } : w))
     )
   }
 
@@ -154,15 +190,21 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
 
-        {widgets.map((widget) => (
-          <WidgetContainer
-            key={widget.id}
-            widget={widget}
-            onRemove={removeWidget}
-            onMove={updateWidgetPosition}
-            onResize={updateWidgetSize}
-          />
-        ))}
+        {widgets.map((widget) => {
+          const containerWidth = containerRef.current?.offsetWidth || 1280
+          const containerHeight = containerRef.current?.offsetHeight || 800
+          return (
+            <WidgetContainer
+              key={widget.id}
+              widget={widget}
+              onRemove={removeWidget}
+              onMove={updateWidgetPosition}
+              onResize={updateWidgetSize}
+              containerWidth={containerWidth}
+              containerHeight={containerHeight}
+            />
+          )
+        })}
 
         <motion.button
           onClick={() => isServerUp && setShowAddMenu(!showAddMenu)}

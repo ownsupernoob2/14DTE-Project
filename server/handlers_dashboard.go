@@ -16,6 +16,8 @@ type Widget struct {
 	Type string      `json:"type"`
 	X    float64     `json:"x"`
 	Y    float64     `json:"y"`
+	W    float64     `json:"w,omitempty"`
+	H    float64     `json:"h,omitempty"`
 	Data interface{} `json:"data,omitempty"`
 }
 

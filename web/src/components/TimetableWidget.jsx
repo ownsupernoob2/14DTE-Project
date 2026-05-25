@@ -56,7 +56,7 @@ export default function TimetableWidget() {
       const cachedDate = localStorage.getItem('timetable_cache_date');
       const cachedData = localStorage.getItem('timetable_cache_data');
       if (cachedDate === today && cachedData) {
-        setPeriods(JSON.parse(cachedData));
+        setPeriods(JSON.parse(cachedDate === today && cachedData ? cachedData : '[]'));
         setLoading(false);
         return;
       }
@@ -146,7 +146,7 @@ export default function TimetableWidget() {
     return (
       <div className="widget-timetable">
         <div className="timetable-header">
-          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>📅 Timetable Setup</span>
+          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Timetable Setup</span>
         </div>
         <div className="timetable-setup">
           <p>
@@ -162,7 +162,7 @@ export default function TimetableWidget() {
             autoFocus
           />
           {saveError && (
-            <div style={{ color: '#f87171', fontSize: '0.78rem' }}>⚠️ {saveError}</div>
+            <div style={{ color: '#f87171', fontSize: '0.78rem' }}>[Error] {saveError}</div>
           )}
           <button
             className="timetable-save-btn"
@@ -194,7 +194,7 @@ export default function TimetableWidget() {
     return (
       <div className="widget-timetable">
         <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>
-          ⚠️ {error}
+          [Error] {error}
         </div>
         <button
           className="timetable-save-btn"
@@ -232,8 +232,9 @@ export default function TimetableWidget() {
           className="timetable-settings-btn"
           onClick={handleClearUrl}
           title="Change ICS URL"
+          style={{ fontSize: '0.7rem', padding: '2px 6px', width: 'auto', height: 'auto' }}
         >
-          ⚙️
+          Settings
         </button>
       </div>
 

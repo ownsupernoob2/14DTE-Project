@@ -258,7 +258,8 @@ export default function DailyNoticesWidget() {
       <span>Loading notices...</span>
     </div>
   );
-  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>⚠️ {error}</div>;
+
+  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>[Error] {error}</div>;
   if (notices.length === 0) return <div style={{ opacity: 0.5, padding: '8px', fontStyle: 'italic', fontSize: '0.85rem' }}>No notices today.</div>;
 
   return (
@@ -267,7 +268,7 @@ export default function DailyNoticesWidget() {
       <div className="notices-search-row">
         <input
           type="text"
-          placeholder="🔍 Filter notices..."
+          placeholder="Filter notices..."
           value={filterQuery}
           onChange={handleFilterChange}
           className="notices-filter-input"
@@ -277,8 +278,9 @@ export default function DailyNoticesWidget() {
           className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
           onClick={() => setShowSettings(!showSettings)}
           title="Notice settings"
+          style={{ fontSize: '0.75rem', padding: '4px 8px' }}
         >
-          ⚙️
+          Settings
         </button>
       </div>
 
@@ -352,7 +354,7 @@ export default function DailyNoticesWidget() {
             className={`notices-tab ${activeTab === 'Pinned' ? 'active' : ''}`}
             onClick={() => setActiveTab('Pinned')}
           >
-            📌 Pinned
+            Pinned
           </button>
           <button
             className={`notices-tab ${activeTab === 'For Me' ? 'active' : ''}`}
@@ -405,12 +407,12 @@ export default function DailyNoticesWidget() {
                     ))}
                     {n.importance === 'high' && (
                       <span className="notice-badge-urgent">
-                        ⚠️ URGENT
+                        URGENT
                       </span>
                     )}
                     {isMatched && (
                       <span className="notice-badge-class-warning">
-                        🔔 Class Update
+                        Class Update
                       </span>
                     )}
                   </div>
@@ -425,8 +427,9 @@ export default function DailyNoticesWidget() {
                       }
                     }}
                     title={isPinned ? "Unpin notice" : "Pin notice"}
+                    style={{ fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
                   >
-                    {isPinned ? '★' : '☆'}
+                    {isPinned ? 'Unpin' : 'Pin'}
                   </button>
                 </div>
 
@@ -438,20 +441,17 @@ export default function DailyNoticesWidget() {
                   <div className="pinned-summary-shelf">
                     {details.date && (
                       <div className="summary-item">
-                        <span className="summary-icon">📅</span>
-                        <span className="summary-text">{details.date}</span>
+                        <span className="summary-text">Date: {details.date}</span>
                       </div>
                     )}
                     {details.time && (
                       <div className="summary-item">
-                        <span className="summary-icon">⏰</span>
-                        <span className="summary-text">{details.time}</span>
+                        <span className="summary-text">Time: {details.time}</span>
                       </div>
                     )}
                     {details.location && (
                       <div className="summary-item">
-                        <span className="summary-icon">📍</span>
-                        <span className="summary-text">{details.location}</span>
+                        <span className="summary-text">Room: {details.location}</span>
                       </div>
                     )}
                   </div>
@@ -467,7 +467,7 @@ export default function DailyNoticesWidget() {
                 {n.contact && (
                   <div className="notice-card-footer">
                     <span className="notice-contact">
-                      👤 {n.contact}
+                      Contact: {n.contact}
                     </span>
                   </div>
                 )}
