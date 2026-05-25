@@ -1,20 +1,36 @@
 # ============================================================
-# These packages are installed via apt on Raspberry Pi OS.
-# Run this first:
-#   sudo apt install python3-opencv python3-pyaudio python3-pyqt5 python3-numpy python3-pil portaudio19-dev -y
-# Then recreate your venv with:
-#   python3 -m venv --system-site-packages ~/mirror-venv
+# Raspberry Pi Setup — run these commands first:
+#
+#   sudo apt install python3-opencv python3-numpy python3-pil portaudio19-dev libspeex-dev libspeexdsp-dev ffmpeg -y
+#
+# Create a clean venv (NO --system-site-packages so system mediapipe is ignored):
+#   python3 -m venv ~/mirror-venv
+#   source ~/mirror-venv/bin/activate
+#
+# Install packages:
+#   pip install --upgrade pip
+#   pip install -r requirements.txt
 # ============================================================
 
-# Pure Python packages - installed via pip
+# Core vision / ML — install via pip inside the clean venv
+mediapipe>=0.10.0
+opencv-python-headless>=4.8.0
+
+# Google auth / API
 google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.100.0
-google-ai-generativelanguage>=0.4.0
 google-generativeai>=0.3.0
+
+# Voice & TTS
 SpeechRecognition>=3.10.0
-pyttsx3>=2.90
+gTTS>=2.3.0
+pygame>=2.5.0
+
+# Utilities
 python-dotenv>=1.0.0
 requests>=2.31.0
-mediapipe>=0.10.0
-
+face_recognition>=1.3.0
+numpy>=1.24.0
+Pillow>=10.0.0
+icalendar>=5.0.0

@@ -1,6 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
+
+// Extract title and body from plain-text notice (fallback parser format: "TITLE – body text")
+const splitNoticeTitleBody = (notice) => {
+  if (!notice) return { extractedTitle: '', body: '' };
+  // If it already has HTML, return as-is
+  if (notice.includes('<p>') || notice.includes('<ul>')) return { extractedTitle: '', body: notice };
+  // Try to find "CAPS TITLE – rest of notice" pattern (the fallback parser format)
+  const dashMatch = notice.match(/^([A-Z][A-Z0-9 ,&/().''-]{2,80}?)\s+[\u2013\u2014-]\s+(.+)$/s);
+  if (dashMatch) {
+    return {
+      extractedTitle: dashMatch[1].trim(),
+      body: dashMatch[2].trim()
+    };
+  }
+  return { extractedTitle: '', body: notice };
+};
 
 // Helper to extract clean summary details from raw HTML/text
 const extractDetails = (html) => {
@@ -33,6 +49,16 @@ export default function DailyNoticesWidget() {
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Track which notice cards are expanded (showing full text)
+  const [expandedIds, setExpandedIds] = useState(new Set());
+  
+  const toggleExpanded = useCallback((id) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
   
   // Local filter search query
   const [filterQuery, setFilterQuery] = useState(localStorage.getItem('notices_filter') || '');
@@ -127,10 +153,19 @@ export default function DailyNoticesWidget() {
     const id = n.id || `notice-${idx}-${(n.title || '').substring(0, 10)}-${(n.notice || '').substring(0, 10)}`;
     const category = n.category || 'General';
     
-    // Fallback title: extract first sentence from the notice text if title not present
-    const cleanText = n.notice ? n.notice.replace(/<[^>]*>/g, ' ') : '';
+    // Try to extract title from plain-text notice body (fallback parser format)
+    const { extractedTitle, body: splitBody } = splitNoticeTitleBody(n.notice || '');
+    
+    // Determine title: use stored title > extracted from text > category fallback
+    const cleanText = (n.notice || '').replace(/<[^>]*>/g, ' ');
     const firstSentence = cleanText.split(/[.!?\n]/)[0] || '';
-    const title = n.title || (firstSentence.length > 5 && firstSentence.length < 60 ? firstSentence.trim() : `${category} Update`);
+    let title = n.title;
+    if (!title && extractedTitle) title = extractedTitle;
+    if (!title && firstSentence.length > 5 && firstSentence.length < 70) title = firstSentence.trim();
+    if (!title) title = `${category} Update`;
+
+    // Use the split body as the display notice if we found a title from it
+    const displayNotice = (extractedTitle && !n.title) ? splitBody : (n.notice || '');
 
     // Target Year levels parsing if missing
     let targetYears = [];
@@ -174,6 +209,7 @@ export default function DailyNoticesWidget() {
       ...n,
       id,
       title,
+      displayNotice,
       category,
       targetYears,
       importance,
@@ -387,7 +423,11 @@ export default function DailyNoticesWidget() {
           filteredNotices.map((n) => {
             const isPinned = pinnedIds.includes(n.id);
             const isMatched = isClassMatched(n);
-            const details = extractDetails(n.notice || '');
+            const details = extractDetails(n.displayNotice || n.notice || '');
+            const isExpanded = expandedIds.has(n.id);
+            const isPlainText = !(n.displayNotice || '').includes('<');
+            const plainText = isPlainText ? (n.displayNotice || n.notice || '') : '';
+            const isLong = isPlainText ? plainText.length > 200 : (n.displayNotice || '').length > 400;
 
             return (
               <div
@@ -458,10 +498,67 @@ export default function DailyNoticesWidget() {
                 )}
 
                 {/* Content */}
-                <div
-                  className="notice-card-body"
-                  dangerouslySetInnerHTML={{ __html: n.notice }}
-                />
+                {isPlainText ? (
+                  <div className="notice-card-body">
+                    <p style={{
+                      display: '-webkit-box',
+                      WebkitBoxOrient: 'vertical',
+                      WebkitLineClamp: isExpanded ? 'unset' : 4,
+                      overflow: isExpanded ? 'visible' : 'hidden',
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: '1.55'
+                    }}>
+                      {plainText}
+                    </p>
+                    {isLong && (
+                      <button
+                        onClick={() => toggleExpanded(n.id)}
+                        style={{
+                          marginTop: '6px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--accent)',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          padding: '0',
+                          letterSpacing: '0.02em'
+                        }}
+                      >
+                        {isExpanded ? 'Show less' : 'Show more'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="notice-card-body"
+                    style={{
+                      maxHeight: isExpanded ? 'none' : '6.5em',
+                      overflow: isExpanded ? 'visible' : 'hidden',
+                      WebkitMaskImage: isExpanded || !isLong ? 'none' : 'linear-gradient(to bottom, black 60%, transparent 100%)'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: n.displayNotice || n.notice }}
+                  />
+                )}
+                {!isPlainText && isLong && (
+                  <button
+                    onClick={() => toggleExpanded(n.id)}
+                    style={{
+                      marginTop: '2px',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--accent)',
+                      cursor: 'pointer',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      padding: '0',
+                      letterSpacing: '0.02em'
+                    }}
+                  >
+                    {isExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                )}
 
                 {/* Contact person badge */}
                 {n.contact && (
