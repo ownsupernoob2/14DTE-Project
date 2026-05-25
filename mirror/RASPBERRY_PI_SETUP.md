@@ -21,30 +21,30 @@ git clone https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
 
 ---
 
-## STEP 3: Install system-level Python packages via apt
+## STEP 3: Install system-level dependencies
 
-These packages need compiled C/C++ code (ARM binaries).
-apt provides pre-built versions so we don't have to compile from source.
+Install system packages needed for audio, display, and compiling Python packages.
+Do NOT install `python3-mediapipe` or `python3-opencv` via apt — we install those via pip to get working versions.
 
 ```bash
-sudo apt install python3-opencv python3-pyaudio python3-pyqt5 python3-numpy python3-pil python3-full portaudio19-dev -y
+sudo apt install python3-full python3-dev portaudio19-dev libspeex-dev libspeexdsp-dev libatlas-base-dev libjpeg-dev libpng-dev ffmpeg v4l2loopback-dkms cmake -y
 ```
 
 This may take a few minutes.
 
 ---
 
-## STEP 4: Create a Python virtual environment with access to system packages
+## STEP 4: Create a clean Python virtual environment
 
-The `--system-site-packages` flag lets the venv use the apt packages we just installed.
+**Important:** Do NOT use `--system-site-packages`. The system mediapipe package on Raspberry Pi OS is broken and will cause an import error. We install everything we need via pip instead.
 
 ```bash
-python3 -m venv --system-site-packages ~/mirror-venv
+python3 -m venv ~/mirror-venv
 ```
 
 ---
 
-## STEP 5: Upgrade pip and setuptools inside the venv
+## STEP 5: Upgrade pip inside the venv
 
 ```bash
 ~/mirror-venv/bin/pip install --upgrade pip setuptools wheel
@@ -52,19 +52,18 @@ python3 -m venv --system-site-packages ~/mirror-venv
 
 ---
 
-## STEP 6: Install remaining pure-Python packages
+## STEP 6: Install all Python packages
 
 ```bash
 ~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
 ```
 
-This should complete without any compilation errors.
+This installs mediapipe, opencv, and all other dependencies cleanly.
+This step may take several minutes on a Raspberry Pi.
 
 ---
 
 ## STEP 7: Make all mirror scripts executable
-
-Make sure the startup, update, and boot scripts have execute permissions:
 
 ```bash
 chmod +x ~/14DTE-Project/mirror/update_mirror.sh
@@ -74,9 +73,9 @@ chmod +x ~/14DTE-Project/mirror/boot_mirror.sh
 
 ---
 
-## STEP 8: Set up auto-update cron job (Checks GitHub every 5 minutes)
+## STEP 8: Set up auto-update cron job (Checks GitHub every 5 minutes AND on first launch)
 
-This ensures your mirror updates quietly in the background while it is running.
+This ensures your mirror updates quietly in the background while it is running, and also pulls the latest code immediately when the mirror boots.
 
 ```bash
 crontab -e
@@ -95,9 +94,9 @@ Save: press `CTRL+O`, then `ENTER`, then `CTRL+X` to exit.
 
 ## STEP 9: Set up Auto-Start on Boot (With Auto-Update First!)
 
-We use the standard Linux Desktop Autostart, which launches the mirror inside your GUI session once the desktop loads. It is configured to pull the latest GitHub code *before* launching the mirror window.
+The `boot_mirror.sh` script always pulls the latest code from GitHub **before** starting the mirror. This means every boot automatically has the newest version.
 
-1. Create the autostart directory if it doesn't exist:
+1. Create the autostart directory if it does not exist:
    ```bash
    mkdir -p ~/.config/autostart
    ```
@@ -126,7 +125,8 @@ Save: press `CTRL+O`, then `ENTER`, then `CTRL+X` to exit.
 
 ## STEP 10: Verify everything is working
 
-To test it right now without rebooting, simply run the boot script (which pulls the latest code and then starts the mirror):
+To test without rebooting, run the boot script directly:
+
 ```bash
 ~/14DTE-Project/mirror/boot_mirror.sh
 ```
@@ -136,6 +136,30 @@ Verify the processes are running in a new terminal:
 ps aux | grep python
 ```
 You should see `smart_mirror_pro.py`, `recognize.py`, `face_recognize.py`, and `ai_service.py` running in the background.
+
+---
+
+## Troubleshooting
+
+**mediapipe import error (`ModuleNotFoundError: No module named 'mediapipe.python._framework_bindings'`)**
+
+This happens when the broken system mediapipe is being picked up instead of the pip-installed one.
+Fix: Make sure your venv was created WITHOUT `--system-site-packages`. If you used that flag before, delete and recreate the venv:
+
+```bash
+rm -rf ~/mirror-venv
+python3 -m venv ~/mirror-venv
+~/mirror-venv/bin/pip install --upgrade pip setuptools wheel
+~/mirror-venv/bin/pip install -r ~/14DTE-Project/mirror/requirements.txt
+```
+
+**`ImportError: cannot import name 'genai' from 'google'`**
+
+The `google-generativeai` package changed its import. This is fixed in the latest code — just pull the latest version:
+
+```bash
+cd ~/14DTE-Project && git pull
+```
 
 ---
 

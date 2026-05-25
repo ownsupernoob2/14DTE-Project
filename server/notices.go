@@ -25,8 +25,12 @@ const (
 )
 
 type NoticeItem struct {
-	Category string `json:"category"`
-	Notice   string `json:"notice"`
+	Title       string   `json:"title"`
+	Category    string   `json:"category"`
+	Notice      string   `json:"notice"`
+	TargetYears []string `json:"targetYears"`
+	Importance  string   `json:"importance"`
+	Contact     string   `json:"contact"`
 }
 
 func StartNoticeFetcher() {
@@ -132,7 +136,14 @@ func fetchNoticesLogic() error {
 
 	if text == "" {
 		log.Println("Could not retrieve notice text.")
-		notices = []NoticeItem{{Category: "System", Notice: "No daily notices currently available."}}
+		notices = []NoticeItem{{
+			Title:       "Notice Status",
+			Category:    "General",
+			Notice:      "<p>No daily notices currently available.</p>",
+			TargetYears: []string{"All"},
+			Importance:  "normal",
+			Contact:     "System",
+		}}
 	} else {
 		log.Println("Processing text with Gemini...")
 		notices = processWithGemini(text)
@@ -141,6 +152,11 @@ func fetchNoticesLogic() error {
 			log.Println("Falling back to text cleanup...")
 			notices = cleanMessyText(text)
 		}
+	}
+
+	// Normalize all notices!
+	for i := range notices {
+		notices[i] = normalizeNoticeItem(notices[i])
 	}
 
 	fileData, err := json.MarshalIndent(notices, "", "  ")
@@ -277,6 +293,7 @@ func cleanMessyText(rawText string) []NoticeItem {
 			} else {
 				if len(currentNotice) > 0 {
 					notices = append(notices, NoticeItem{
+						Title:    currentCategory,
 						Category: currentCategory,
 						Notice:   strings.Join(currentNotice, " "),
 					})
@@ -294,13 +311,14 @@ func cleanMessyText(rawText string) []NoticeItem {
 
 	if len(currentNotice) > 0 {
 		notices = append(notices, NoticeItem{
+			Title:    currentCategory,
 			Category: currentCategory,
 			Notice:   strings.Join(currentNotice, " "),
 		})
 	}
 
 	if len(notices) == 0 && len(cleanedLines) > 0 {
-		notices = []NoticeItem{{Category: "General", Notice: strings.Join(cleanedLines, " ")}}
+		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: strings.Join(cleanedLines, " ")}}
 	}
 
 	return notices
@@ -336,14 +354,19 @@ func processWithGemini(text string) []NoticeItem {
 
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
 
-	prompt := `Extract the following daily school notices into a neat JSON array.
-Each object should have "category" and "notice".
-Please also clean up the text:
-1. Fix any strange character encodings and smart quotes (e.g., change "King?Ts" or "King?Ts" to "King's").
-2. Fix broken words with random spaces (e.g., "min utes" to "minutes", "i s" to "is").
-3. Ensure proper punctuation and spacing.
-4. If the text contains class/room changes, a timetable, or structured data, format it as an HTML <table> with proper headers (<th>). Do not use markdown tables, strictly use HTML tags.
-Text:
+	prompt := `You are an expert school notices parsing assistant.
+Analyze the following daily school notices and extract them into a clean JSON array of notice objects.
+
+Strict JSON format requirements:
+Each notice object in the array must have EXACTLY these fields:
+- "title": A clean, concise headline summarizing the notice (e.g. "Year 12 Geography Field Trip").
+- "category": Must be exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Choose the most appropriate category based on the content.
+- "notice": The body of the notice formatted as clean, well-spaced HTML paragraphs (<p>) and/or bullet lists (<ul><li>) for maximum readability. Bold critical details like Date, Time, Location, Cost, and Deadlines using <strong>. Correct any OCR/spelling/spacing errors (e.g., replace strange characters like "King?s" with "King's", "min utes" with "minutes").
+- "targetYears": An array of strings representing the target school year levels, e.g. ["9", "10"], ["12"], or ["All"] if it applies to everyone or isn't specified. Extract year level mentions like "Year 9", "Y10", "Juniors" (Year 9 and 10), "Seniors" (Year 11, 12, and 13).
+- "importance": Either "high" (use for room changes, time-critical updates, urgent instructions, cancellations) or "normal" (general notices).
+- "contact": The name of the teacher, facilitator, or staff member in charge of the event/notice if mentioned (e.g. "Mr Smith"), otherwise an empty string "".
+
+Text to process:
 ` + text
 
 	reqBody := geminiRequest{
@@ -398,4 +421,210 @@ Text:
 	}
 
 	return notices
+}
+
+func normalizeNoticeItem(item NoticeItem) NoticeItem {
+	// Normalize Category
+	item.Category = strings.TrimSpace(item.Category)
+	validCategories := map[string]bool{
+		"General": true, "Meetings": true, "Sports": true, "Arts & Culture": true,
+		"Academic": true, "Careers": true, "Service": true,
+	}
+	if item.Category == "" || !validCategories[item.Category] {
+		item.Category = getStandardCategory(item.Title, item.Notice)
+	}
+
+	// Normalize Title
+	item.Title = strings.TrimSpace(item.Title)
+	if item.Title == "" {
+		words := strings.Fields(regexp.MustCompile("<[^>]*>").ReplaceAllString(item.Notice, ""))
+		if len(words) > 0 {
+			limit := 5
+			if len(words) < 5 {
+				limit = len(words)
+			}
+			item.Title = strings.Join(words[:limit], " ") + "..."
+		} else {
+			item.Title = item.Category + " Notice"
+		}
+	}
+
+	// Normalize Importance
+	item.Importance = strings.ToLower(strings.TrimSpace(item.Importance))
+	if item.Importance != "high" && item.Importance != "normal" {
+		item.Importance = detectImportance(item.Title, item.Notice)
+	}
+
+	// Normalize TargetYears
+	if len(item.TargetYears) == 0 {
+		item.TargetYears = extractTargetYears(item.Title + " " + item.Notice)
+	} else {
+		var cleanYears []string
+		for _, y := range item.TargetYears {
+			y = strings.TrimSpace(y)
+			if strings.ToLower(y) == "all" {
+				cleanYears = []string{"All"}
+				break
+			}
+			digitRe := regexp.MustCompile(`\d+`)
+			digit := digitRe.FindString(y)
+			if digit != "" {
+				cleanYears = append(cleanYears, digit)
+			}
+		}
+		if len(cleanYears) == 0 {
+			cleanYears = []string{"All"}
+		}
+		item.TargetYears = cleanYears
+	}
+
+	// Normalize Contact
+	item.Contact = strings.TrimSpace(item.Contact)
+	if item.Contact == "" {
+		item.Contact = extractContact(item.Notice)
+	}
+
+	// Format notice HTML if raw
+	item.Notice = formatNoticeHTML(item.Notice)
+
+	return item
+}
+
+func getStandardCategory(title string, text string) string {
+	t := strings.ToLower(title + " " + text)
+	if strings.Contains(t, "sport") || strings.Contains(t, "rugby") || strings.Contains(t, "football") || strings.Contains(t, "soccer") || strings.Contains(t, "cricket") || strings.Contains(t, "hockey") || strings.Contains(t, "basketball") || strings.Contains(t, "netball") || strings.Contains(t, "athletics") || strings.Contains(t, "tennis") || strings.Contains(t, "badminton") || strings.Contains(t, "swimming") || strings.Contains(t, "rowing") {
+		return "Sports"
+	}
+	if strings.Contains(t, "meeting") || strings.Contains(t, "committee") || strings.Contains(t, "council") || strings.Contains(t, "practice") || strings.Contains(t, " rehearsal") || strings.Contains(t, "club") || strings.Contains(t, "group") {
+		if strings.Contains(t, "choir") || strings.Contains(t, "band") || strings.Contains(t, "music") || strings.Contains(t, "drama") || strings.Contains(t, "play") || strings.Contains(t, "art") || strings.Contains(t, "culture") {
+			return "Arts & Culture"
+		}
+		return "Meetings"
+	}
+	if strings.Contains(t, "choir") || strings.Contains(t, "band") || strings.Contains(t, "music") || strings.Contains(t, "drama") || strings.Contains(t, "play") || strings.Contains(t, "art") || strings.Contains(t, "cultural") || strings.Contains(t, "dance") || strings.Contains(t, "debating") || strings.Contains(t, "speech") {
+		return "Arts & Culture"
+	}
+	if strings.Contains(t, "career") || strings.Contains(t, "university") || strings.Contains(t, "job") || strings.Contains(t, "work") || strings.Contains(t, "employment") || strings.Contains(t, "polytech") || strings.Contains(t, "scholarship") || strings.Contains(t, "tertiary") {
+		return "Careers"
+	}
+	if strings.Contains(t, "service") || strings.Contains(t, "charity") || strings.Contains(t, "volunteer") || strings.Contains(t, "community") || strings.Contains(t, "fundrais") || strings.Contains(t, "donation") || strings.Contains(t, "foodbank") {
+		return "Service"
+	}
+	if strings.Contains(t, "class") || strings.Contains(t, "exam") || strings.Contains(t, "test") || strings.Contains(t, "study") || strings.Contains(t, "academic") || strings.Contains(t, "math") || strings.Contains(t, "english") || strings.Contains(t, "science") || strings.Contains(t, "history") || strings.Contains(t, "geography") || strings.Contains(t, "library") || strings.Contains(t, "homework") || strings.Contains(t, "detention") {
+		return "Academic"
+	}
+	return "General"
+}
+
+func extractTargetYears(text string) []string {
+	var years []string
+	lowerText := strings.ToLower(text)
+	
+	addYear := func(y string) {
+		for _, existing := range years {
+			if existing == y {
+				return
+			}
+		}
+		years = append(years, y)
+	}
+
+	hasJunior := strings.Contains(lowerText, "junior")
+	hasSenior := strings.Contains(lowerText, "senior")
+	
+	year9Re := regexp.MustCompile(`\b(year|yr|y)\s*9\b`)
+	year10Re := regexp.MustCompile(`\b(year|yr|y)\s*10\b`)
+	year11Re := regexp.MustCompile(`\b(year|yr|y)\s*11\b`)
+	year12Re := regexp.MustCompile(`\b(year|yr|y)\s*12\b`)
+	year13Re := regexp.MustCompile(`\b(year|yr|y)\s*13\b`)
+
+	if year9Re.MatchString(lowerText) {
+		addYear("9")
+	}
+	if year10Re.MatchString(lowerText) {
+		addYear("10")
+	}
+	if year11Re.MatchString(lowerText) {
+		addYear("11")
+	}
+	if year12Re.MatchString(lowerText) {
+		addYear("12")
+	}
+	if year13Re.MatchString(lowerText) {
+		addYear("13")
+	}
+
+	if hasJunior {
+		addYear("9")
+		addYear("10")
+	}
+	if hasSenior {
+		addYear("11")
+		addYear("12")
+		addYear("13")
+	}
+
+	if len(years) == 0 {
+		return []string{"All"}
+	}
+	return years
+}
+
+func extractContact(text string) string {
+	contactRe := regexp.MustCompile(`\b(Mr|Mrs|Ms|Miss|Dr|Teacher)\s+([A-Z][a-zA-Z]+)`)
+	match := contactRe.FindStringSubmatch(text)
+	if len(match) > 0 {
+		return match[0]
+	}
+	return ""
+}
+
+func detectImportance(title string, text string) string {
+	t := strings.ToLower(title + " " + text)
+	if strings.Contains(t, "urgent") || strings.Contains(t, "important") || strings.Contains(t, "attention") || strings.Contains(t, "room change") || strings.Contains(t, "timetable change") || strings.Contains(t, "cancelled") || strings.Contains(t, "postponed") || strings.Contains(t, "alert") || strings.Contains(t, "warning") {
+		return "high"
+	}
+	return "normal"
+}
+
+func formatNoticeHTML(text string) string {
+	if strings.Contains(text, "<p>") || strings.Contains(text, "<ul>") || strings.Contains(text, "<li>") || strings.Contains(text, "<table>") {
+		return text
+	}
+	
+	lines := strings.Split(text, "\n")
+	var htmlParts []string
+	inList := false
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		if strings.HasPrefix(line, "*") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "•") {
+			if !inList {
+				htmlParts = append(htmlParts, "<ul>")
+				inList = true
+			}
+			content := strings.TrimSpace(line[1:])
+			htmlParts = append(htmlParts, "<li>"+content+"</li>")
+		} else {
+			if inList {
+				htmlParts = append(htmlParts, "</ul>")
+				inList = false
+			}
+			htmlParts = append(htmlParts, "<p>"+line+"</p>")
+		}
+	}
+	
+	if inList {
+		htmlParts = append(htmlParts, "</ul>")
+	}
+	
+	if len(htmlParts) == 0 {
+		return "<p>" + text + "</p>"
+	}
+	
+	return strings.Join(htmlParts, "")
 }

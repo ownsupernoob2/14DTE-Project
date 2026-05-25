@@ -5,7 +5,7 @@ import speech_recognition as sr
 from contextlib import contextmanager
 from ctypes import *
 
-from google import genai
+import google.generativeai as genai
 
 from gtts import gTTS
 import pygame
@@ -35,7 +35,8 @@ def no_alsa_error():
             asound.snd_lib_error_set_handler(None)
 
 # --- AI SETUP ---
-client = genai.Client(api_key=API_KEY)
+genai.configure(api_key=API_KEY)
+client = genai.GenerativeModel("gemini-2.0-flash")
 
 def set_ai_state(state):
     data = {'state': state}
@@ -85,11 +86,7 @@ def listen():
 
 def generate_ai_response(prompt: str) -> str:
     try:
-        # Use flash model for better rate limits and speed
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt
-        )
+        response = client.generate_content(prompt)
         return response.text
     except Exception as e:
         print(f"API Error: {e}")

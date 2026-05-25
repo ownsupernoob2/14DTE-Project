@@ -48,13 +48,20 @@ class Widget:
 
         # Create widget surface with rounded corners
         s = pygame.Surface((self.rect.w, self.rect.h), pygame.SRCALPHA)
-        bg_color = list(COLOR_BG_OVERLAY)
-        bg_color[3] = int(bg_color[3] * (self.alpha / 255))
-        pygame.draw.rect(s, bg_color, s.get_rect(), border_radius=15)
+        
+        # Transparent glass-like background (alpha ~15) for high visual excellence
+        bg_alpha = int(15 * (self.alpha / 255))
+        bg_color = (255, 255, 255, bg_alpha)
+        pygame.draw.rect(s, bg_color, s.get_rect(), border_radius=24)
+
+        # Draw glass border outline (1px thin, white with low opacity)
+        border_alpha = int(24 * (self.alpha / 255))
+        border_color = (255, 255, 255, border_alpha)
+        pygame.draw.rect(s, border_color, s.get_rect(), 1, border_radius=24)
 
         # Draw drag highlight
         if self.dragging:
-            pygame.draw.rect(s, (255, 255, 255, 80), s.get_rect(), 1, border_radius=15)
+            pygame.draw.rect(s, (255, 255, 255, 80), s.get_rect(), 2, border_radius=24)
 
         # Draw title
         if self.title:
