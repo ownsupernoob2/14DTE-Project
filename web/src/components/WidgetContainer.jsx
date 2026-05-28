@@ -29,7 +29,7 @@ function ClockWidget() {
   )
 }
 
-export default function WidgetContainer({ widget, onRemove, onMove, onResize, readonly = false, containerWidth = 1280, containerHeight = 800 }) {
+export default function WidgetContainer({ widget, onRemove, onMove, onResize, onUpdateData, readonly = false, containerWidth = 1280, containerHeight = 800 }) {
   const [isDragging, setIsDragging] = useState(false)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [isResizing, setIsResizing] = useState(false)
@@ -139,7 +139,12 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, re
         {widget.type === 'notices'   && <DailyNoticesWidget />}
         {widget.type === 'timetable' && <TimetableWidget />}
         {widget.type === 'note'      && (
-          <textarea className="widget-textarea" placeholder="Type your note..." />
+          <textarea
+            className="widget-textarea"
+            placeholder="Type your note..."
+            value={widget.data || ''}
+            onChange={(e) => onUpdateData && onUpdateData(widget.id, e.target.value)}
+          />
         )}
       </div>
 

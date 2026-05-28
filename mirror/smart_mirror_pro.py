@@ -14,7 +14,7 @@ from ui.menu import GlobalMenu
 from ui.keyboard import VirtualKeyboard
 from ui.loading_screen import LoadingScreen
 from utils.fonts import get_font
-from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget, NoticesWidget, TimetableWidget
+from widgets import Widget, ClockWidget, WeatherWidget, GoogleCalendarWidget, VoiceAssistantWidget, NoticesWidget, TimetableWidget, NoteWidget
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
@@ -141,6 +141,9 @@ class SmartMirrorPro:
                 elif wtype == 'timetable' or wd.get('type') == 'TimetableWidget':
                     tw = TimetableWidget(real_x, real_y, real_w, real_h, self.current_user_id or '', API_URL)
                     self.widgets.append(tw)
+                elif wtype == 'note':
+                    note_data = wd.get('data', '') or ''
+                    self.widgets.append(NoteWidget(real_x, real_y, real_w, real_h, note_data))
         except Exception as e:
             print(f"[ERROR] Failed to apply remote widgets: {e}")
             self.load_widgets(["clock", "weather"], self.current_user_name)
@@ -187,6 +190,8 @@ class SmartMirrorPro:
             self.widgets.append(NoticesWidget(x, y, real_w, real_h, API_URL))
         elif widget_type == "timetable":
             self.widgets.append(TimetableWidget(x, y, real_w, real_h, self.current_user_id or '', API_URL))
+        elif widget_type == "note":
+            self.widgets.append(NoteWidget(x, y, real_w, real_h))
 
     def reset_widgets(self, user_name):
         self.load_widgets(["clock", "weather", "calendar"], user_name)

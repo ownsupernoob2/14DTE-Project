@@ -85,8 +85,9 @@ def listen():
 
 def generate_ai_response(prompt: str) -> str:
     try:
+        # Use flash model for better rate limits and speed
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=prompt
         )
         return response.text

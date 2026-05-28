@@ -1,68 +1,104 @@
-﻿# Raspberry Pi Smart Mirror Setup (Updated)
+# Raspberry Pi Setup Guide
 
-This setup is fully automated to match the exact working environment of the older mirror while supporting the latest code.
+This guide covers the complete setup process for the Smart Mirror on a Raspberry Pi running Raspberry Pi OS (Debian Bookworm or later).
 
----
-cd ~/14DTE-Project
-git reset --hard origin/development
-git pull
+## Requirements
 
-cd mirror
-chmod +x setup.sh
-./setup.sh
+- Raspberry Pi 4 (2GB RAM or more recommended)
+- Raspberry Pi OS (64-bit recommended)
+- Python 3.9 to 3.11 (3.13 is NOT supported by mediapipe)
+- Internet connection
+- Git
 
-## 1. Get the latest code
+## Step 1: Check Python Version
 
-First, make sure you are in the correct directory and have the very latest code:
+Verify your Python version:
+```
+python3 --version
+```
 
-`ash
-cd ~/14DTE-Project
-git reset --hard origin/main
-git pull origin main
-cd mirror
-`
+If Python is 3.13 or above, you must install an older version:
+```
+sudo apt install python3.11 python3.11-venv python3.11-dev -y
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+```
 
----
+## Step 2: Clone the Repository
 
-## 2. Run the Automated Setup
+```
+git clone https://github.com/ownsupernoob2/14DTE-Project.git
+cd 14DTE-Project/mirror
+git checkout development
+```
 
-We have created an automated setup script that properly handles Virtual Environments (venv), cleanly installs Mediapipe without system conflicts, and installs the required Google GenAI packages exact to the working old-mirror specification.
+## Step 3: Run the Setup Script
 
-`ash
-cd ~/14DTE-Project/mirror
-chmod +x setup.sh
-./setup.sh
-`
+```
+bash setup.sh
+```
 
-**What it does:**
-- Completely cleans up broken python3-mediapipe apt packages.
-- Creates an isolated Virtual Environment (~/mirror-venv).
-- Correctly sets up google-genai rather than the outdated google-generativeai.
-- Downloads the gesture_recognizer.task automatically.
+This script will:
+- Install system-level packages (OpenCV, Pygame, Mediapipe, PyAudio, NumPy, PIL) via apt
+- Create a Python virtual environment at `~/mirror-venv` with `--system-site-packages` so it can access apt-installed packages
+- Install remaining pip packages from requirements.txt
+- Download the gesture recognizer model
 
-If this completes successfully (it will say ✅ Setup Complete at the bottom), proceed to step 3.
+## Step 4: Configure Environment Variables
 
----
+Copy the example env file and edit it:
+```
+cp .env.example .env
+nano .env
+```
 
-## 3. Verify it Works
+Fill in the following values:
+```
+API_URL=https://api.smartmirror.me
+GEMINI_API_KEY=your_gemini_key_here
+```
 
-To test without rebooting, run the dedicated start script:
+## Step 5: Set up Face Recognition
 
-`ash
-cd ~/14DTE-Project/mirror
-./start_smart_mirror.sh
-`
+Capture face images:
+```
+~/mirror-venv/bin/python face_capture.py
+```
 
-Verify that i_service.py, 
-ecognize.py, and the main smart_mirror_pro.py are properly running without (unknown location) errors.
+Train the model:
+```
+~/mirror-venv/bin/python face_train.py
+```
 
----
+## Step 6: Start the Mirror
+
+```
+bash start_smart_mirror.sh
+```
+
+Or to auto-start on boot:
+```
+bash boot_mirror.sh
+```
 
 ## Troubleshooting
 
-### Q: "ModuleNotFoundError: No module named 'mediapipe.python._framework_bindings'"
-This will NOT happen if you run .start_smart_mirror.sh because it explicitly uses the cleanly built virtual environment from step 2 (~/mirror-venv/bin/python). Never run the python files manually using standard python3 command, you must either activate the venv or use the start scripts.
+### Pygame window freezes immediately
+- This usually means a dependency failed to install
+- Check that `python3-mediapipe` is installed: `python3 -c "import mediapipe; print(mediapipe.__version__)"`
+- If not, run: `sudo apt install python3-mediapipe -y`
 
-### Q: "cannot import name 'genai' from 'google'"
-The setup script completely uninstalls conflicting google packages and installs google-genai. If it ever occurs again, simply run ./setup.sh to fix it.
+### libgl1-mesa-glx error
+- This package was deprecated in Debian Bookworm
+- The setup script no longer installs it — you can safely ignore this error on older logs
 
+### mediapipe not found in venv
+- The venv must be created with `--system-site-packages`
+- Delete the old venv and re-run setup: `rm -rf ~/mirror-venv && bash setup.sh`
+
+### google-genai import error
+- The notices fetcher supports both `google-genai` and `google-generativeai` SDKs
+- If you see import errors, run: `pip install google-genai`
+
+### Face not recognized
+- Re-capture images with better lighting: `~/mirror-venv/bin/python face_capture.py`
+- Re-train: `~/mirror-venv/bin/python face_train.py`

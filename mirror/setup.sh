@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 echo "=========================================================="
 echo "Installing Smart Mirror Environment..."
 echo "=========================================================="
@@ -9,11 +9,10 @@ cd "$APP_DIR"
 # 1. Update system dependencies
 echo ">>> Installing missing apt packages..."
 sudo apt update
-sudo apt install -y python3-dev python3-venv portaudio19-dev libspeex-dev libspeexdsp-dev ffmpeg v4l2loopback-dkms libgl1-mesa-glx python3-pip
+sudo apt install -y python3-dev python3-venv portaudio19-dev libspeex-dev libspeexdsp-dev ffmpeg v4l2loopback-dkms python3-pip python3-opencv python3-numpy python3-pil python3-pygame python3-mediapipe python3-pyaudio
 
 # 2. Cleanup broken system packages to avoid conflicts
-echo ">>> Removing conflicting system packages (if any)..."
-sudo apt remove -y python3-mediapipe
+echo ">>> Ensuring virtual environment has access to system packages..."
 
 # 3. Create absolute virtual environment path
 VENV_DIR="$HOME/mirror-venv"
@@ -21,9 +20,9 @@ echo ">>> Using virtual environment at: $VENV_DIR"
 
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating clean python venv..."
-    # We create it with system site packages in case we want to fallback,
-    # but we heavily rely on pip for mediapipe and google modules.
-    python3 -m venv "$VENV_DIR"
+    # We create it with system site packages so we inherit OpenCV, Mediapipe,
+    # NumPy, PIL, Pygame, and PyAudio optimized ARM packages from the system!
+    python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
 # 4. Install all pip dependencies
@@ -46,6 +45,6 @@ fi
 chmod +x start_smart_mirror.sh update_mirror.sh boot_mirror.sh
 
 echo "=========================================================="
-echo "✅ Setup Complete!"
+echo "Setup Complete!"
 echo "You can now start the mirror using: ./start_smart_mirror.sh"
 echo "=========================================================="
