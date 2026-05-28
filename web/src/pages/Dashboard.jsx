@@ -115,6 +115,12 @@ export default function Dashboard() {
     )
   }
 
+  const updateWidgetData = (id, data) => {
+    setWidgets(
+      widgets.map((w) => (w.id === id ? { ...w, data } : w))
+    )
+  }
+
   const saveLayout = async () => {
     setIsSaving(true)
     try {
@@ -200,6 +206,7 @@ export default function Dashboard() {
               onRemove={removeWidget}
               onMove={updateWidgetPosition}
               onResize={updateWidgetSize}
+              onUpdateData={updateWidgetData}
               containerWidth={containerWidth}
               containerHeight={containerHeight}
             />

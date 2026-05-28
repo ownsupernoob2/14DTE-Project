@@ -295,7 +295,7 @@ func cleanMessyText(rawText string) []NoticeItem {
 					notices = append(notices, NoticeItem{
 						Title:    currentCategory,
 						Category: currentCategory,
-						Notice:   strings.Join(currentNotice, " "),
+						Notice:   "<p>" + strings.Join(currentNotice, "</p><p>") + "</p>",
 					})
 				}
 				currentCategory = potentialCategory
@@ -313,12 +313,12 @@ func cleanMessyText(rawText string) []NoticeItem {
 		notices = append(notices, NoticeItem{
 			Title:    currentCategory,
 			Category: currentCategory,
-			Notice:   strings.Join(currentNotice, " "),
+			Notice:   "<p>" + strings.Join(currentNotice, "</p><p>") + "</p>",
 		})
 	}
 
 	if len(notices) == 0 && len(cleanedLines) > 0 {
-		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: strings.Join(cleanedLines, " ")}}
+		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: "<p>" + strings.Join(cleanedLines, "</p><p>") + "</p>"}}
 	}
 
 	return notices

@@ -5,7 +5,16 @@ import requests
 from bs4 import BeautifulSoup
 import PyPDF2
 from io import BytesIO
-from google import genai
+try:
+    from google import genai
+    _GENAI_MODE = 'new'
+except ImportError:
+    try:
+        import google.generativeai as genai
+        _GENAI_MODE = 'legacy'
+    except ImportError:
+        genai = None
+        _GENAI_MODE = None
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 OUT_FILE = os.path.join(DATA_DIR, 'daily_notices.json')
@@ -92,7 +101,7 @@ def clean_messy_text(raw_text):
                     notices.append({
                         "title": current_category,
                         "category": current_category,
-                        "notice": " ".join(current_notice)
+                        "notice": "<p>" + "</p><p>".join(current_notice) + "</p>"
                     })
                 
                 current_category = potential_category
@@ -110,12 +119,12 @@ def clean_messy_text(raw_text):
         notices.append({
             "title": current_category,
             "category": current_category,
-            "notice": " ".join(current_notice)
+            "notice": "<p>" + "</p><p>".join(current_notice) + "</p>"
         })
             
     # If no notices matched, just wrap the whole thing or chunks
     if not notices and cleaned_lines:
-        notices = [{"title": "Daily Notice", "category": "General", "notice": " ".join(cleaned_lines)}]
+        notices = [{"title": "Daily Notice", "category": "General", "notice": "<p>" + "</p><p>".join(cleaned_lines) + "</p>"}]
         
     return notices
 
@@ -125,8 +134,6 @@ def process_with_gemini(text):
         return None
         
     try:
-        client = genai.Client(api_key=api_key)
-        
         prompt = """You are an expert school notices parsing assistant.
 Analyze the following daily school notices and extract them into a clean JSON array of notice objects.
 
@@ -141,12 +148,21 @@ Each notice object in the array must have EXACTLY these fields:
 
 Text to process:
 """ + text
-        
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        response_text = response.text
+
+        if _GENAI_MODE == 'new':
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            response_text = response.text
+        elif _GENAI_MODE == 'legacy':
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(prompt)
+            response_text = response.text
+        else:
+            return None
         
         # Extract JSON from markdown if exists
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', response_text, re.DOTALL)
