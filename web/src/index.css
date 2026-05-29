@@ -889,3 +889,96 @@ input:checked + .slider:before {
 .timetable-save-btn:hover {
   background: var(--accent-hover);
 }
+
+/* ── Premium Widget Styles ──────────────────────── */
+.widget-container {
+  background: rgba(10, 10, 18, 0.65) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  box-shadow: 0 16px 48px 0 rgba(0, 0, 0, 0.45) !important;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+
+.widget-container:hover {
+  border-color: rgba(59, 130, 246, 0.38) !important;
+  box-shadow: 0 24px 60px 0 rgba(0, 0, 0, 0.55), 0 0 20px 0 rgba(59, 130, 246, 0.18) !important;
+}
+
+.widget-header {
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.widget-header .text-overline {
+  font-size: 0.65em;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.widget-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+  transition: all 0.2s ease;
+}
+
+.widget-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.widget-content {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.widget-content::-webkit-scrollbar {
+  width: 4px;
+}
+.widget-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.widget-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+.widget-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.widget-textarea {
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 12px;
+  padding: 12px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.widget-textarea:focus {
+  border-color: rgba(59, 130, 246, 0.4) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+}
