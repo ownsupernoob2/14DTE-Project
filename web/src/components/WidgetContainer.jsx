@@ -19,10 +19,10 @@ function ClockWidget() {
   }, [])
   return (
     <div className="widget-clock">
-      <div style={{ fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
+      <div style={{ fontSize: '2.2em', fontWeight: 700, letterSpacing: '-0.02em' }}>
         {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
-      <div style={{ fontSize: '0.82rem', opacity: 0.6, marginTop: '4px' }}>
+      <div style={{ fontSize: '0.85em', opacity: 0.6, marginTop: '4px' }}>
         {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
       </div>
     </div>
@@ -40,10 +40,18 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
   const defaults = DEFAULT_SIZES[widget.type] || { w: 220, h: 160 }
   
   // Convert percentage (0-100) back to pixels, or use pixels directly if absolute (backward compatibility)
-  const widgetW = widget.w !== undefined ? (widget.w > 100 ? widget.w : (widget.w / 100) * containerWidth) : defaults.w
-  const widgetH = widget.h !== undefined ? (widget.h > 100 ? widget.h : (widget.h / 100) * containerHeight) : defaults.h
+  const rawW = widget.w !== undefined ? (widget.w > 100 ? widget.w : (widget.w / 100) * containerWidth) : defaults.w
+  const rawH = widget.h !== undefined ? (widget.h > 100 ? widget.h : (widget.h / 100) * containerHeight) : defaults.h
+
+  // Enforce minimum widget sizes to prevent collapsing to zero/microscopic size
+  const widgetW = Math.max(defaults.w * 0.6, Math.max(160, rawW))
+  const widgetH = Math.max(defaults.h * 0.6, Math.max(80, rawH))
+
   const widgetX = widget.x !== undefined ? (widget.x > 100 ? widget.x : (widget.x / 100) * containerWidth) : 24
   const widgetY = widget.y !== undefined ? (widget.y > 100 ? widget.y : (widget.y / 100) * containerHeight) : 96
+
+  // Calculate dynamic scale factor based on container width to adapt text sizes
+  const scaleFactor = Math.max(0.65, Math.min(1.5, containerWidth / 1280))
 
   const handleMouseDown = (e) => {
     if (readonly) return
@@ -83,8 +91,10 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
       if (!resizeStart.current) return
       const dx = moveE.clientX - resizeStart.current.x
       const dy = moveE.clientY - resizeStart.current.y
-      const newW = Math.max(160, resizeStart.current.w + dx)
-      const newH = Math.max(80, resizeStart.current.h + dy)
+      const minW = Math.max(defaults.w * 0.6, 160)
+      const minH = Math.max(defaults.h * 0.6, 80)
+      const newW = Math.max(minW, resizeStart.current.w + dx)
+      const newH = Math.max(minH, resizeStart.current.h + dy)
       onResize(widget.id, newW, newH)
     }
     const onMouseUp = () => {
@@ -95,7 +105,7 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
     }
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
-  }, [readonly, widgetW, widgetH, widget.id, onResize])
+  }, [readonly, widgetW, widgetH, widget.id, onResize, defaults])
 
   return (
     <motion.div
@@ -113,6 +123,7 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
+        fontSize: `${14 * scaleFactor}px`,
         ...(readonly ? { background: 'none', border: 'none', boxShadow: 'none' } : {})
       }}
       onMouseDown={handleMouseDown}

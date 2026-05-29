@@ -318,7 +318,11 @@ func cleanMessyText(rawText string) []NoticeItem {
 	}
 
 	if len(notices) == 0 && len(cleanedLines) > 0 {
-		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: "<p>" + strings.Join(cleanedLines, "</p><p>") + "</p>"}}
+		var htmlParts []string
+		for _, line := range cleanedLines {
+			htmlParts = append(htmlParts, "<p>"+line+"</p>")
+		}
+		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: strings.Join(htmlParts, "")}}
 	}
 
 	return notices
