@@ -38,3 +38,6 @@ dist/
 # Ignored Local Testing Folder
 local_tests/
 
+# Data folder (contains dynamically fetched notices and timetable configurations)
+data/
+
