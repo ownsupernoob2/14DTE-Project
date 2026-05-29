@@ -19,7 +19,20 @@ func init() {
 	os.MkdirAll("encodings", 0755)
 }
 
+func pullLatestCode() {
+	log.Println("[startup] Attempting to pull latest code from git...")
+	cmd := exec.Command("git", "pull")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("[startup] Git pull failed: %v", err)
+	} else {
+		log.Println("[startup] Git pull succeeded.")
+	}
+}
+
 func main() {
+	pullLatestCode()
 	StartNoticeFetcher()
 	e := echo.New()
 
