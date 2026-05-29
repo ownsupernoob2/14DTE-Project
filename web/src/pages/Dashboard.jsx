@@ -13,12 +13,28 @@ export default function Dashboard() {
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [dimensions, setDimensions] = useState({ width: 1280, height: 800 })
   const containerRef = useRef(null)
   const { getAccessTokenSilently } = useAuth0()
   const { isServerUp } = useServerStatus()
 
   useEffect(() => {
     fetchWidgets()
+
+    const handleResize = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.offsetWidth,
+          height: containerRef.current.offsetHeight
+        })
+      }
+    }
+
+    // Measure container size on mount after initial render
+    setTimeout(handleResize, 100)
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
   }, [])
 
   const fetchWidgets = async () => {
@@ -63,10 +79,20 @@ export default function Dashboard() {
   }
 
   const addWidget = (type) => {
-    const containerWidth = containerRef.current?.offsetWidth || 900
-    const containerHeight = containerRef.current?.offsetHeight || 600
-    const widgetWidth = 220
-    const widgetHeight = 160
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
+    
+    // Type-specific default sizes matching DEFAULT_SIZES to avoid shrinking/covering content
+    const defaults = {
+      clock:     { w: 220, h: 100 },
+      notices:   { w: 420, h: 340 },
+      timetable: { w: 360, h: 320 },
+      note:      { w: 220, h: 180 },
+    }
+    const size = defaults[type] || { w: 220, h: 160 }
+    const widgetWidth = size.w
+    const widgetHeight = size.h
+
     const cols = Math.max(1, Math.floor(containerWidth / widgetWidth))
     const index = widgets.length
     const x = Math.min((index % cols) * widgetWidth + 24, containerWidth - widgetWidth)
@@ -96,8 +122,8 @@ export default function Dashboard() {
   }
 
   const updateWidgetPosition = (id, x, y) => {
-    const containerWidth = containerRef.current?.offsetWidth || 1280
-    const containerHeight = containerRef.current?.offsetHeight || 800
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
     const x_pct = (x / containerWidth) * 100
     const y_pct = (y / containerHeight) * 100
     setWidgets(
@@ -106,8 +132,8 @@ export default function Dashboard() {
   }
 
   const updateWidgetSize = (id, width, height) => {
-    const containerWidth = containerRef.current?.offsetWidth || 1280
-    const containerHeight = containerRef.current?.offsetHeight || 800
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
     const w_pct = (width / containerWidth) * 100
     const h_pct = (height / containerHeight) * 100
     setWidgets(
@@ -197,8 +223,6 @@ export default function Dashboard() {
         </AnimatePresence>
 
         {widgets.map((widget) => {
-          const containerWidth = containerRef.current?.offsetWidth || 1280
-          const containerHeight = containerRef.current?.offsetHeight || 800
           return (
             <WidgetContainer
               key={widget.id}
@@ -207,8 +231,8 @@ export default function Dashboard() {
               onMove={updateWidgetPosition}
               onResize={updateWidgetSize}
               onUpdateData={updateWidgetData}
-              containerWidth={containerWidth}
-              containerHeight={containerHeight}
+              containerWidth={dimensions.width}
+              containerHeight={dimensions.height}
             />
           )
         })}

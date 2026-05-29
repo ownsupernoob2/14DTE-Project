@@ -47,16 +47,13 @@ func StartNoticeFetcher() {
 				needsFetch = true
 			} else {
 				today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-				if stat.ModTime().Before(today) {
-					// File is from a previous day
+				if stat.ModTime().Before(today) || firstRun {
 					if firstRun {
-						log.Println("[notices] Notices are from a previous day — fetching on startup.")
+						log.Println("[notices] Startup noticed - forcing fresh notices fetch on boot.")
 					} else {
 						log.Println("[notices] Notices are stale — refreshing.")
 					}
 					needsFetch = true
-				} else if firstRun {
-					log.Println("[notices] Notices are already up to date for today — skipping fetch.")
 				}
 			}
 
