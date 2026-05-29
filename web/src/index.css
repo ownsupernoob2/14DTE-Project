@@ -158,7 +158,7 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
-  font-size: 0.82rem;
+  font-size: 1em;
   gap: 8px;
 }
 
@@ -168,7 +168,7 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 0.8rem;
+  font-size: 0.9em;
   color: white;
   font-family: inherit;
   outline: none;
@@ -251,7 +251,7 @@ button {
 .notice-badge-category {
   padding: 2.5px 8px;
   border-radius: 6px;
-  font-size: 0.68rem;
+  font-size: 0.75em;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -287,7 +287,7 @@ button {
 .notice-badge-year {
   padding: 2px 6px;
   border-radius: 6px;
-  font-size: 0.65rem;
+  font-size: 0.7em;
   font-weight: 600;
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.75);
@@ -298,7 +298,7 @@ button {
 .notice-badge-urgent {
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 0.68rem;
+  font-size: 0.75em;
   font-weight: 700;
   background: rgba(6, 182, 212, 0.18);
   color: #22d3ee;
@@ -330,7 +330,7 @@ button {
 .notice-badge-class-warning {
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 0.68rem;
+  font-size: 0.75em;
   font-weight: 700;
   background: rgba(59, 130, 246, 0.18);
   color: #60a5fa;
@@ -365,7 +365,7 @@ button {
 }
 
 .notice-card-title {
-  font-size: 0.95rem;
+  font-size: 1.1em;
   font-weight: 600;
   color: white;
   margin: 2px 0 0 0;
@@ -388,7 +388,7 @@ button {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.76rem;
+  font-size: 0.85em;
   font-weight: 500;
   color: #93c5fd;
 }
@@ -399,7 +399,7 @@ button {
 
 /* Body and HTML element formatting */
 .notice-card-body {
-  font-size: 0.82rem;
+  font-size: 0.9em;
   color: rgba(255, 255, 255, 0.82);
   line-height: 1.5;
 }
@@ -733,7 +733,7 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   height: 100%;
-  font-size: 0.82rem;
+  font-size: 1em;
   gap: 8px;
 }
 
@@ -765,7 +765,7 @@ input:checked + .slider:before {
 }
 
 .timetable-time {
-  font-size: 0.75rem;
+  font-size: 0.8em;
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -776,7 +776,7 @@ input:checked + .slider:before {
   flex: 1;
   font-weight: 600;
   color: white;
-  font-size: 0.88rem;
+  font-size: 0.95em;
 }
 
 .timetable-period-card.is-done .timetable-subject {
@@ -785,7 +785,7 @@ input:checked + .slider:before {
 }
 
 .timetable-location {
-  font-size: 0.72rem;
+  font-size: 0.8em;
   color: #93c5fd;
   background: rgba(59,130,246,0.1);
   border: 1px solid rgba(59,130,246,0.2);
@@ -795,7 +795,7 @@ input:checked + .slider:before {
 }
 
 .timetable-now-badge {
-  font-size: 0.65rem;
+  font-size: 0.75em;
   font-weight: 700;
   color: #22d3ee;
   background: rgba(6,182,212,0.15);
@@ -826,7 +826,7 @@ input:checked + .slider:before {
 }
 
 .timetable-setup p {
-  font-size: 0.8rem;
+  font-size: 0.9em;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -838,7 +838,7 @@ input:checked + .slider:before {
   padding: 8px 12px;
   color: white;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: 0.9em;
   outline: none;
 }
 

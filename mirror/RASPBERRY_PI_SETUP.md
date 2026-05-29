@@ -1,104 +1,88 @@
 # Raspberry Pi Setup Guide
 
-This guide covers the complete setup process for the Smart Mirror on a Raspberry Pi running Raspberry Pi OS (Debian Bookworm or later).
+This guide covers the complete setup process for the Smart Mirror on a Raspberry Pi running Raspberry Pi OS. 
 
-## Requirements
+Because compiling heavy computer vision libraries like OpenCV and Mediapipe directly on the Raspberry Pi is slow and prone to Python version conflicts (especially on Python 3.6 or Python 3.13), we utilize precompiled, hardware-optimized system packages from the official repositories.
 
-- Raspberry Pi 4 (2GB RAM or more recommended)
-- Raspberry Pi OS (64-bit recommended)
-- Python 3.9 to 3.11 (3.13 is NOT supported by mediapipe)
-- Internet connection
-- Git
+---
 
-## Step 1: Check Python Version
+## Step 1: Update and Install System Dependencies
 
-Verify your Python version:
-```
-python3 --version
+We install OpenCV, Mediapipe, Pygame, NumPy, PIL, and PyAudio directly from the official Debian/Raspbian repositories. Run the following commands:
+
+```bash
+sudo apt update
+sudo apt install -y python3-dev python3-venv portaudio19-dev libspeex-dev libspeexdsp-dev ffmpeg v4l2loopback-dkms python3-pip python3-opencv python3-numpy python3-pil python3-pygame python3-mediapipe python3-pyaudio
 ```
 
-If Python is 3.13 or above, you must install an older version:
-```
-sudo apt install python3.11 python3.11-venv python3.11-dev -y
-sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-```
+This installs all binary compiled dependencies cleanly and rapidly without needing slow manual compilations.
+
+---
 
 ## Step 2: Clone the Repository
 
-```
-git clone https://github.com/ownsupernoob2/14DTE-Project.git
-cd 14DTE-Project/mirror
+Clone the project repository and checkout the `development` branch:
+
+```bash
+git clone https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
+cd ~/14DTE-Project/mirror
 git checkout development
 ```
 
+---
+
 ## Step 3: Run the Setup Script
 
-```
+Execute the unified setup script to configure the virtual environment and fetch model files:
+
+```bash
 bash setup.sh
 ```
 
-This script will:
-- Install system-level packages (OpenCV, Pygame, Mediapipe, PyAudio, NumPy, PIL) via apt
-- Create a Python virtual environment at `~/mirror-venv` with `--system-site-packages` so it can access apt-installed packages
-- Install remaining pip packages from requirements.txt
-- Download the gesture recognizer model
+This setup script:
+* Verifies system dependencies.
+* Creates a Python virtual environment at `~/mirror-venv` configured with `--system-site-packages` so that the venv cleanly inherits OpenCV (`cv2`), Mediapipe (`mediapipe`), and Pygame (`pygame`) from the system.
+* Upgrades pip/wheel and installs pure-Python requirements (like requests and dotenv).
+* Downloads the gesture recognizer model task automatically.
+* Sets execution permissions for all control scripts.
+
+---
 
 ## Step 4: Configure Environment Variables
 
-Copy the example env file and edit it:
-```
-cp .env.example .env
-nano .env
+Copy the example configuration file and edit it to insert your Gemini API Key:
+
+```bash
+cp ~/14DTE-Project/mirror/.env.example ~/14DTE-Project/mirror/.env
+nano ~/14DTE-Project/mirror/.env
 ```
 
-Fill in the following values:
-```
+Set the following variables inside the file:
+```ini
 API_URL=https://api.smartmirror.me
-GEMINI_API_KEY=your_gemini_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-## Step 5: Set up Face Recognition
+Press `CTRL+O` then `ENTER` to save, and `CTRL+X` to exit the nano editor.
 
-Capture face images:
-```
-~/mirror-venv/bin/python face_capture.py
-```
+---
 
-Train the model:
-```
-~/mirror-venv/bin/python face_train.py
-```
+## Step 5: Start the Smart Mirror
 
-## Step 6: Start the Mirror
+You can test the smart mirror directly by executing the boot script:
 
-```
-bash start_smart_mirror.sh
+```bash
+~/14DTE-Project/mirror/boot_mirror.sh
 ```
 
-Or to auto-start on boot:
-```
-bash boot_mirror.sh
-```
+This pulls any outstanding updates from GitHub and fires up the full Pygame interface along with face recognition and voice assistant processes in the background!
 
-## Troubleshooting
+### Useful CLI Controls
 
-### Pygame window freezes immediately
-- This usually means a dependency failed to install
-- Check that `python3-mediapipe` is installed: `python3 -c "import mediapipe; print(mediapipe.__version__)"`
-- If not, run: `sudo apt install python3-mediapipe -y`
-
-### libgl1-mesa-glx error
-- This package was deprecated in Debian Bookworm
-- The setup script no longer installs it — you can safely ignore this error on older logs
-
-### mediapipe not found in venv
-- The venv must be created with `--system-site-packages`
-- Delete the old venv and re-run setup: `rm -rf ~/mirror-venv && bash setup.sh`
-
-### google-genai import error
-- The notices fetcher supports both `google-genai` and `google-generativeai` SDKs
-- If you see import errors, run: `pip install google-genai`
-
-### Face not recognized
-- Re-capture images with better lighting: `~/mirror-venv/bin/python face_capture.py`
-- Re-train: `~/mirror-venv/bin/python face_train.py`
+| Command | What it does |
+|---|---|
+| `~/14DTE-Project/mirror/boot_mirror.sh` | Pull latest updates and Start/Restart the mirror |
+| `~/14DTE-Project/mirror/start_smart_mirror.sh` | Start/Restart the mirror WITHOUT pulling updates |
+| `pkill -f smart_mirror_pro.py` | Stop the Pygame mirror window |
+| `pkill -f python` | Stop all background python modules |
+| `tail -f ~/mirror_update.log` | View background auto-update details |
