@@ -65,7 +65,7 @@ func main() {
 	protected.POST("/notices/fetch", fetchNotices)
 
 	// Timetable routes
-	e.GET("/api/timetable", getTimetable)          // public – also accepts JWT
+	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT
 	protected.POST("/timetable/ics", setTimetableURL)
 	protected.GET("/timetable/ics", getMyTimetableURL)
 

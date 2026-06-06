@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [errorMsg, setErrorMsg] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 1280, height: 800 })
+  const [isEditMode, setIsEditMode] = useState(false)
   const containerRef = useRef(null)
   const { getAccessTokenSilently } = useAuth0()
   const { isServerUp } = useServerStatus()
@@ -93,16 +94,46 @@ export default function Dashboard() {
     const widgetWidth = size.w
     const widgetHeight = size.h
 
-    const cols = Math.max(1, Math.floor(containerWidth / widgetWidth))
-    const index = widgets.length
-    const x = Math.min((index % cols) * widgetWidth + 24, containerWidth - widgetWidth)
-    const y = Math.min(Math.floor(index / cols) * widgetHeight + 96, containerHeight - widgetHeight)
-
     // Store as percentages (0-100) immediately
-    const x_pct = (x / containerWidth) * 100
-    const y_pct = (y / containerHeight) * 100
     const w_pct = (widgetWidth / containerWidth) * 100
     const h_pct = (widgetHeight / containerHeight) * 100
+
+    // Search for a non-overlapping position
+    let x_pct = 2 // start at 2% x
+    let y_pct = 12 // start at 12% y (below navbar)
+    
+    const checkOverlapPct = (px, py, pw, ph) => {
+      return widgets.some(w => {
+        const margin = 0.05
+        return (
+          px + margin < w.x + w.w &&
+          px + pw - margin > w.x &&
+          py + margin < w.y + w.h &&
+          py + ph - margin > w.y
+        )
+      })
+    }
+
+    let found = false
+    for (let row = 0; row < 10 && !found; row++) {
+      for (let col = 0; col < 10 && !found; col++) {
+        const testX = 2 + col * (w_pct + 2)
+        const testY = 12 + row * (h_pct + 2)
+        
+        if (testX + w_pct <= 98 && testY + h_pct <= 98) {
+          if (!checkOverlapPct(testX, testY, w_pct, h_pct)) {
+            x_pct = testX
+            y_pct = testY
+            found = true
+          }
+        }
+      }
+    }
+    
+    if (!found) {
+      x_pct = 2 + Math.random() * 5
+      y_pct = 12 + Math.random() * 5
+    }
 
     const newWidget = {
       id: `new-${Date.now()}`,
@@ -126,6 +157,24 @@ export default function Dashboard() {
     const containerHeight = dimensions.height
     const x_pct = (x / containerWidth) * 100
     const y_pct = (y / containerHeight) * 100
+
+    const target = widgets.find((w) => w.id === id)
+    if (!target) return
+
+    // Check if moving to (x_pct, y_pct) would overlap with any other widget
+    const wouldOverlap = widgets.some((w) => {
+      if (w.id === id) return false
+      const margin = 0.05
+      return (
+        x_pct + margin < w.x + w.w &&
+        x_pct + target.w - margin > w.x &&
+        y_pct + margin < w.y + w.h &&
+        y_pct + target.h - margin > w.y
+      )
+    })
+
+    if (wouldOverlap) return
+
     setWidgets(
       widgets.map((w) => (w.id === id ? { ...w, x: x_pct, y: y_pct } : w))
     )
@@ -136,6 +185,24 @@ export default function Dashboard() {
     const containerHeight = dimensions.height
     const w_pct = (width / containerWidth) * 100
     const h_pct = (height / containerHeight) * 100
+
+    const target = widgets.find((w) => w.id === id)
+    if (!target) return
+
+    // Check if resizing would overlap with any other widget
+    const wouldOverlap = widgets.some((w) => {
+      if (w.id === id) return false
+      const margin = 0.05
+      return (
+        target.x + margin < w.x + w.w &&
+        target.x + w_pct - margin > w.x &&
+        target.y + margin < w.y + w.h &&
+        target.y + h_pct - margin > w.y
+      )
+    })
+
+    if (wouldOverlap) return
+
     setWidgets(
       widgets.map((w) => (w.id === id ? { ...w, w: w_pct, h: h_pct } : w))
     )
@@ -186,42 +253,6 @@ export default function Dashboard() {
 
 
 
-        {/* Action Bar */}
-        <AnimatePresence>
-          {hasUnsavedChanges && (
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              style={{
-                position: 'absolute',
-                bottom: 20,
-                left: 20,
-                zIndex: 100,
-                display: 'flex',
-                gap: '10px'
-              }}
-            >
-              <button 
-                className="modern-btn modern-btn-outline" 
-                onClick={undoLayout}
-                disabled={!isServerUp}
-                style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed', padding: '8px 16px', background: 'rgba(255,255,255,0.1)' }}
-              >
-                Undo
-              </button>
-              <button 
-                className="modern-btn" 
-                onClick={saveLayout}
-                disabled={isSaving || !isServerUp}
-                style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed', padding: '8px 16px', background: '#3b82f6', color: 'white', border: 'none' }}
-              >
-                {isSaving ? 'Saving...' : 'Save Layout'}
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {widgets.map((widget) => {
           return (
             <WidgetContainer
@@ -231,46 +262,146 @@ export default function Dashboard() {
               onMove={updateWidgetPosition}
               onResize={updateWidgetSize}
               onUpdateData={updateWidgetData}
+              readonly={!isEditMode}
               containerWidth={dimensions.width}
               containerHeight={dimensions.height}
             />
           )
         })}
 
-        <motion.button
-          onClick={() => isServerUp && setShowAddMenu(!showAddMenu)}
-          whileHover={isServerUp ? { scale: 1.05 } : {}}
-          whileTap={isServerUp ? { scale: 0.95 } : {}}
-          className="fab-btn"
-          style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed' }}
-        >
-          +
-        </motion.button>
-
-        <AnimatePresence>
-          {showAddMenu && (
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="glass-panel add-widget-menu"
-            >
-              {['clock', 'notices', 'timetable', 'note'].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => addWidget(type)}
-                  className="widget-menu-item"
-                >
-                  {type === 'clock' ? 'Clock' : ''}
-                  {type === 'notices' ? 'Daily Notices' : ''}
-                  {type === 'timetable' ? 'Timetable' : ''}
-                  {type === 'note' ? 'Note' : ''}
-                </button>
-              ))}
-            </motion.div>
+        {/* Modern Unified Customization Control Bar */}
+        <div style={{
+          position: 'absolute',
+          bottom: 24,
+          right: 24,
+          zIndex: 100,
+          display: 'flex',
+          gap: '12px',
+          alignItems: 'center'
+        }}>
+          {/* Unsaved changes indicators */}
+          {hasUnsavedChanges && (
+            <div className="glass-panel" style={{
+              display: 'flex',
+              gap: '8px',
+              padding: '6px 12px',
+              alignItems: 'center',
+              borderRadius: '9999px',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              background: 'rgba(245, 158, 11, 0.08)'
+            }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unsaved Layout</span>
+              <button 
+                className="notices-tab" 
+                onClick={undoLayout}
+                disabled={!isServerUp}
+                style={{ padding: '4px 10px', fontSize: '0.72rem', background: 'rgba(255,255,255,0.06)' }}
+              >
+                Undo
+              </button>
+              <button 
+                className="notices-tab active" 
+                onClick={saveLayout}
+                disabled={isSaving || !isServerUp}
+                style={{ padding: '4px 10px', fontSize: '0.72rem', background: '#3b82f6' }}
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
           )}
-        </AnimatePresence>
+
+          {/* Add Widget Button (only in edit mode) */}
+          {isEditMode && (
+            <div style={{ position: 'relative' }}>
+              <button
+                className="modern-btn"
+                onClick={() => isServerUp && setShowAddMenu(!showAddMenu)}
+                disabled={!isServerUp}
+                style={{
+                  background: 'var(--glass-bg)',
+                  color: 'white',
+                  border: '1px solid var(--glass-border)',
+                  padding: '10px 20px',
+                  borderRadius: '9999px',
+                  fontSize: '0.82rem',
+                  letterSpacing: '0.05em',
+                  boxShadow: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  width: 'auto'
+                }}
+              >
+                <span>+ Add Widget</span>
+              </button>
+              
+              {/* Add menu */}
+              <AnimatePresence>
+                {showAddMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                    transition={{ duration: 0.2 }}
+                    className="glass-panel add-widget-menu"
+                    style={{
+                      position: 'absolute',
+                      bottom: '50px',
+                      right: '0',
+                      width: '180px',
+                      background: 'rgba(10, 10, 15, 0.95)',
+                      padding: '8px',
+                      borderRadius: '16px',
+                      boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(255,255,255,0.08)'
+                    }}
+                  >
+                    {['clock', 'notices', 'timetable', 'note'].map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => addWidget(type)}
+                        className="widget-menu-item"
+                        style={{
+                          padding: '8px 12px',
+                          fontSize: '0.72rem',
+                          borderRadius: '8px'
+                        }}
+                      >
+                        {type === 'clock' ? 'Clock' : ''}
+                        {type === 'notices' ? 'Daily Notices' : ''}
+                        {type === 'timetable' ? 'Timetable' : ''}
+                        {type === 'note' ? 'Note' : ''}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {/* Toggle Edit Mode Button */}
+          <button
+            className="modern-btn"
+            onClick={() => setIsEditMode(!isEditMode)}
+            style={{
+              background: isEditMode ? 'var(--accent)' : 'rgba(255, 255, 255, 0.08)',
+              color: 'white',
+              border: isEditMode ? '1px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.15)',
+              padding: '10px 20px',
+              borderRadius: '9999px',
+              fontSize: '0.82rem',
+              letterSpacing: '0.05em',
+              fontWeight: 600,
+              boxShadow: isEditMode ? '0 0 15px var(--accent-glow)' : 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: 'auto'
+            }}
+          >
+            <span>{isEditMode ? '✓ Done Customizing' : '✎ Customize Layout'}</span>
+          </button>
+        </div>
       </div>
     </div>
   )

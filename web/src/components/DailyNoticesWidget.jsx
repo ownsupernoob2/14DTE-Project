@@ -259,8 +259,8 @@ export default function DailyNoticesWidget() {
     </div>
   );
 
-  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>[Error] {error}</div>;
-  if (notices.length === 0) return <div style={{ opacity: 0.5, padding: '8px', fontStyle: 'italic', fontSize: '0.85rem' }}>No notices today.</div>;
+  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8em' }}>[Error] {error}</div>;
+  if (notices.length === 0) return <div style={{ opacity: 0.5, padding: '8px', fontStyle: 'italic', fontSize: '0.85em' }}>No notices today.</div>;
 
   return (
     <div className="widget-notices">
@@ -278,7 +278,7 @@ export default function DailyNoticesWidget() {
           className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
           onClick={() => setShowSettings(!showSettings)}
           title="Notice settings"
-          style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+          style={{ fontSize: '0.75em', padding: '4px 8px' }}
         >
           Settings
         </button>
@@ -310,7 +310,7 @@ export default function DailyNoticesWidget() {
           </div>
 
           <div className="settings-toggle-row">
-            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+            <label style={{ fontSize: '0.75em', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
               Focus Mode
             </label>
             <label className="toggle-switch">
@@ -380,7 +380,7 @@ export default function DailyNoticesWidget() {
       {/* Discrete Card-based Scrolling List */}
       <div className="notices-scroll-area">
         {filteredNotices.length === 0 ? (
-          <div style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.85rem', padding: '16px 0', textAlign: 'center' }}>
+          <div style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.85em', padding: '16px 0', textAlign: 'center' }}>
             No matches found.
           </div>
         ) : (
@@ -427,7 +427,7 @@ export default function DailyNoticesWidget() {
                       }
                     }}
                     title={isPinned ? "Unpin notice" : "Pin notice"}
-                    style={{ fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
+                    style={{ fontSize: '0.75em', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
                   >
                     {isPinned ? 'Unpin' : 'Pin'}
                   </button>

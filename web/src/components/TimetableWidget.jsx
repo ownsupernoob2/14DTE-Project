@@ -43,6 +43,30 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
     }
   }, [widget.data?.viewMode]);
 
+  // Auto-sync timetable ICS URL from server if not configured locally
+  useEffect(() => {
+    const fetchSavedUrl = async () => {
+      if (icsUrl) return;
+      try {
+        const token = await getAccessTokenSilently();
+        const res = await fetch(`${API_URL}/api/timetable/ics`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ics_url) {
+            localStorage.setItem('timetable_ics_url', data.ics_url);
+            setIcsUrl(data.ics_url);
+            setShowSetup(false);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch saved ICS URL:", err);
+      }
+    };
+    fetchSavedUrl();
+  }, [icsUrl, getAccessTokenSilently]);
+
   // ── Timetable data ─────────────────────────────────────────────────────────
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -178,7 +202,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
     return (
       <div className="widget-timetable">
         <div className="timetable-header">
-          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Timetable Setup</span>
+          <span style={{ fontWeight: 600, fontSize: '0.9em' }}>Timetable Setup</span>
         </div>
         <div className="timetable-setup">
           <p>
@@ -194,7 +218,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
             autoFocus
           />
           {saveError && (
-            <div style={{ color: '#f87171', fontSize: '0.78rem' }}>[Error] {saveError}</div>
+            <div style={{ color: '#f87171', fontSize: '0.78em' }}>[Error] {saveError}</div>
           )}
           <button
             className="timetable-save-btn"
@@ -225,12 +249,12 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
   if (error) {
     return (
       <div className="widget-timetable">
-        <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8rem' }}>
+        <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8em' }}>
           [Error] {error}
         </div>
         <button
           className="timetable-save-btn"
-          style={{ fontSize: '0.78rem', padding: '6px 12px', width: 'fit-content' }}
+          style={{ fontSize: '0.78em', padding: '6px 12px', width: 'fit-content' }}
           onClick={fetchTimetable}
         >
           Retry
@@ -255,7 +279,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
               key={m.id}
               className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
               onClick={() => handleViewModeChange(m.id)}
-              style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+              style={{ padding: '4px 10px', fontSize: '0.75em' }}
             >
               {m.label}
             </button>
@@ -265,7 +289,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
           className="timetable-settings-btn"
           onClick={handleClearUrl}
           title="Change ICS URL"
-          style={{ fontSize: '0.7rem', padding: '2px 6px', width: 'auto', height: 'auto' }}
+          style={{ fontSize: '0.7em', padding: '2px 6px', width: 'auto', height: 'auto' }}
         >
           Settings
         </button>
@@ -277,7 +301,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
           <div style={{
             opacity: 0.5,
             fontStyle: 'italic',
-            fontSize: '0.85rem',
+            fontSize: '0.85em',
             padding: '16px 0',
             textAlign: 'center',
           }}>
