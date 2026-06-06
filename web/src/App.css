@@ -318,7 +318,7 @@
 /* === Widget Container === */
 .widget-container {
   position: absolute;
-  padding: 20px;
+  padding: 0;
   cursor: grab;
   background: rgba(20, 20, 25, 0.4);
 }
@@ -335,8 +335,9 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--glass-border);
+  padding: 12px 14px;
   padding-bottom: 12px;
-  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .widget-close {
@@ -354,6 +355,7 @@
 .widget-content {
   font-size: 1em;
   color: rgba(255, 255, 255, 0.9);
+  padding: 12px 14px;
 }
 
 .widget-clock {
@@ -364,9 +366,10 @@
   text-align: center;
   height: 100%;
   width: 100%;
-  font-size: 1.8em;
+  /* font-size is set inline based on widgetScale */
   font-weight: 300;
   letter-spacing: -0.05em;
+  overflow: hidden;
 }
 
 .widget-textarea {

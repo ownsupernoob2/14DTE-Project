@@ -1,518 +1,450 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
-// Helper to extract clean summary details from raw HTML/text
-const extractDetails = (html) => {
+// Category colour palette
+const CATEGORY_COLORS = {
+  'General':       { bg: 'rgba(148,163,184,0.15)', accent: '#94a3b8', text: '#cbd5e1' },
+  'Sports':        { bg: 'rgba(34,197,94,0.12)',   accent: '#22c55e', text: '#86efac' },
+  'Meetings':      { bg: 'rgba(139,92,246,0.12)',  accent: '#8b5cf6', text: '#c4b5fd' },
+  'Academic':      { bg: 'rgba(59,130,246,0.12)',  accent: '#3b82f6', text: '#93c5fd' },
+  'Careers':       { bg: 'rgba(251,191,36,0.12)',  accent: '#fbbf24', text: '#fde68a' },
+  'Arts & Culture':{ bg: 'rgba(244,63,94,0.12)',   accent: '#f43f5e', text: '#fda4af' },
+  'Service':       { bg: 'rgba(20,184,166,0.12)',  accent: '#14b8a6', text: '#5eead4' },
+};
+
+// Category emoji icons
+const CATEGORY_ICONS = {
+  'General': '📢',
+  'Sports': '🏆',
+  'Meetings': '📅',
+  'Academic': '📚',
+  'Careers': '💼',
+  'Arts & Culture': '🎭',
+  'Service': '🤝',
+};
+
+const ALL_CATEGORIES = ['General', 'Sports', 'Meetings', 'Academic', 'Careers', 'Arts & Culture', 'Service'];
+const YEAR_TABS = ['All', '9', '10', '11', '12', '13'];
+
+/** Extract key details (date, time, location, contact) from raw HTML */
+function extractDetails(html) {
   const details = {};
   if (!html) return details;
-  
-  // Clean HTML tags first to scan pure text
-  const text = html.replace(/<[^>]*>/g, ' ');
-  
-  // Date: e.g. "21 May", "Monday 21st", "Friday 4th June"
-  const dateMatch = text.match(/\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/i) ||
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const dateMatch = text.match(/\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(\s+\d{4})?\b/i) ||
                     text.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
-  
-  // Time: e.g. "12:30pm", "9.00am", "14:00"
-  const timeMatch = text.match(/\b\d{1,2}([:.]\d{2})?\s*(am|pm)\b/i) || 
-                    text.match(/\b\d{1,2}[:.]\d{2}\b/);
-  
-  // Room/Location: e.g. "Room 4", "Rm 12", "Library", "Gym", "Main Field"
-  const roomMatch = text.match(/\b(Room|Rm|Classroom)\s+([A-Za-z0-9-]+)\b/i) || 
-                    text.match(/\b(Library|Auditorium|Hall|Gym|Field|Pool|Music Suite|Performing Arts Centre)\b/i);
-  
+  const timeMatch = text.match(/\b\d{1,2}([:.]\d{2})?\s*(am|pm)\b/i) ||
+                    text.match(/\b\d{1,2}:\d{2}\b/);
+  const roomMatch = text.match(/\b(Room|Rm|Classroom)\s+([A-Za-z0-9-]+)\b/i) ||
+                    text.match(/\b(Library|Auditorium|Hall|Gymnasium|Gym|Main Field|Pool|Music Suite|Performing Arts Centre|PAC)\b/i);
+  const deadlineMatch = text.match(/\b(by|before|deadline[:\s]+)\s*([A-Za-z0-9\s,]+?\d{4}|\d{1,2}\s+\w+)\b/i);
+
   if (dateMatch) details.date = dateMatch[0].trim();
   if (timeMatch) details.time = timeMatch[0].trim();
   if (roomMatch) details.location = roomMatch[0].trim();
-  
+  if (deadlineMatch) details.deadline = deadlineMatch[0].trim();
   return details;
-};
+}
+
+/** Build a clean text preview from HTML */
+function buildPreview(html, maxLen = 120) {
+  if (!html) return '';
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + '…' : text;
+}
 
 export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly = false }) {
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  // Local filter search query
-  const [filterQuery, setFilterQuery] = useState(localStorage.getItem('notices_filter') || '');
 
-  // User Preferences loaded from widget data or localStorage
-  const [yearLevel, setYearLevel] = useState(() => widget.data?.yearLevel || localStorage.getItem('notices_year_level') || 'All');
-  const [classCodes, setClassCodes] = useState(() => widget.data?.classCodes || localStorage.getItem('notices_class_codes') || '');
-  const [focusMode, setFocusMode] = useState(() => {
-    if (widget.data?.focusMode !== undefined) return widget.data.focusMode;
-    return localStorage.getItem('notices_focus_mode') === 'true';
-  });
-  const [visibleCategories, setVisibleCategories] = useState(() => {
-    if (widget.data?.visibleCategories) return widget.data.visibleCategories;
-    const cached = localStorage.getItem('notices_visible_categories');
-    return cached ? JSON.parse(cached) : ['General', 'Sports', 'Meetings', 'Careers', 'Academic'];
-  });
-  
-  // Pinned Notice state
-  const [pinnedIds, setPinnedIds] = useState(() => {
-    const cached = localStorage.getItem('notices_pinned');
-    return cached ? JSON.parse(cached) : [];
-  });
-
+  // Edit mode controls
+  const [searchQuery, setSearchQuery] = useState('');
+  const [yearFilter, setYearFilter] = useState(widget.data?.yearFilter || 'All');
+  const [catFilters, setCatFilters] = useState(() => widget.data?.catFilters ?? ALL_CATEGORIES);
   const [showSettings, setShowSettings] = useState(false);
-  const [activeTab, setActiveTab] = useState('All');
+  const [expandedIds, setExpandedIds] = useState(new Set());
 
-  // Load notices from API
+  // Mirror auto-scroll
+  const scrollRef = useRef(null);
+  const scrollState = useRef({ scrollInterval: null, holdTimer: null });
+
+  // ─── Load notices ───────────────────────────────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
     const fetchNotices = async () => {
       try {
         const today = new Date().toDateString();
         const cachedDate = localStorage.getItem('notices_date');
         const cachedData = localStorage.getItem('notices_data');
-
         if (cachedDate === today && cachedData) {
-          setNotices(JSON.parse(cachedData));
-          setLoading(false);
+          if (!cancelled) { setNotices(JSON.parse(cachedData)); setLoading(false); }
           return;
         }
-
         const res = await fetch(`${API_URL}/api/notices`);
-        if (!res.ok) throw new Error('Notices not found/failed to load');
+        if (!res.ok) throw new Error('Failed to load notices');
         const data = await res.json();
-
-        if (Array.isArray(data)) {
-          setNotices(data);
-          localStorage.setItem('notices_date', today);
-          localStorage.setItem('notices_data', JSON.stringify(data));
-        } else {
-          setNotices([]);
+        if (!cancelled) {
+          if (Array.isArray(data)) {
+            setNotices(data);
+            localStorage.setItem('notices_date', today);
+            localStorage.setItem('notices_data', JSON.stringify(data));
+          } else {
+            setNotices([]);
+          }
+          setLoading(false);
         }
       } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+        if (!cancelled) { setError(err.message); setLoading(false); }
       }
     };
-
     fetchNotices();
+    return () => { cancelled = true; };
   }, []);
 
-  // Sync state with widget.data changes (e.g. Server updates, Undo layout actions)
+  // ─── Sync widget.data ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (widget.data) {
-      if (widget.data.yearLevel !== undefined) setYearLevel(widget.data.yearLevel);
-      if (widget.data.classCodes !== undefined) setClassCodes(widget.data.classCodes);
-      if (widget.data.focusMode !== undefined) setFocusMode(widget.data.focusMode);
-      if (widget.data.visibleCategories !== undefined) setVisibleCategories(widget.data.visibleCategories);
-    }
+    if (widget.data?.yearFilter !== undefined) setYearFilter(widget.data.yearFilter);
+    if (widget.data?.catFilters !== undefined) setCatFilters(widget.data.catFilters);
   }, [widget.data]);
 
-  // Keep pinned state saved in local storage
-  useEffect(() => {
-    localStorage.setItem('notices_pinned', JSON.stringify(pinnedIds));
-  }, [pinnedIds]);
-
-  const handleYearLevelChange = (val) => {
-    setYearLevel(val);
-    localStorage.setItem('notices_year_level', val);
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, yearLevel: val });
-    }
+  // ─── Persist settings ───────────────────────────────────────────────────────
+  const saveSettings = (nextYearFilter, nextCatFilters) => {
+    if (onUpdateData) onUpdateData({ ...widget.data, yearFilter: nextYearFilter, catFilters: nextCatFilters });
   };
 
-  const handleClassCodesChange = (val) => {
-    setClassCodes(val);
-    localStorage.setItem('notices_class_codes', val);
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, classCodes: val });
-    }
-  };
-
-  const handleFocusModeChange = (val) => {
-    setFocusMode(val);
-    localStorage.setItem('notices_focus_mode', String(val));
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, focusMode: val });
-    }
-  };
-
-  const handleCategoryToggle = (cat) => {
-    const nextCats = visibleCategories.includes(cat)
-      ? visibleCategories.filter(c => c !== cat)
-      : [...visibleCategories, cat];
-    setVisibleCategories(nextCats);
-    localStorage.setItem('notices_visible_categories', JSON.stringify(nextCats));
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, visibleCategories: nextCats });
-    }
-  };
-
-  const handleFilterChange = (e) => {
-    const val = e.target.value;
-    setFilterQuery(val);
-    localStorage.setItem('notices_filter', val);
-  };
-
-  // Get dynamic categories list from notices
-  const defaultCategories = ['General', 'Sports', 'Meetings', 'Careers', 'Academic'];
-  const parsedCategories = Array.from(new Set(notices.map(n => n.category || 'General')));
-  const allCategories = Array.from(new Set([...defaultCategories, ...parsedCategories]));
-
-  // Parse & Enrich Notices for backward compatibility
-  const enrichedNotices = notices.map((n, idx) => {
-    const id = n.id || `notice-${idx}-${(n.title || '').substring(0, 10)}-${(n.notice || '').substring(0, 10)}`;
-    const category = n.category || 'General';
-    
-    const cleanText = n.notice ? n.notice.replace(/<[^>]*>/g, ' ') : '';
-    const firstSentence = cleanText.split(/[.!?\n]/)[0] || '';
-    const title = n.title || (firstSentence.length > 5 && firstSentence.length < 60 ? firstSentence.trim() : `${category} Update`);
-
-    let targetYears = [];
-    if (n.targetYears && Array.isArray(n.targetYears)) {
-      targetYears = n.targetYears;
-    } else {
-      const textToScan = ((n.title || '') + ' ' + (n.notice || '')).toLowerCase();
-      if (textToScan.includes('all years') || textToScan.includes('every year')) {
-        targetYears = ['All'];
-      } else {
-        for (let y = 9; y <= 13; y++) {
-          if (new RegExp(`\\b(year|yr|y)\\s*${y}\\b`, 'i').test(textToScan)) {
-            targetYears.push(String(y));
-          }
-        }
-        if (targetYears.length === 0) {
-          targetYears = ['All'];
-        }
-      }
-    }
-
-    let importance = n.importance || 'normal';
-    if (!n.importance && n.notice) {
-      const textToScan = ((n.title || '') + ' ' + (n.notice || '')).toLowerCase();
-      if (textToScan.includes('urgent') || textToScan.includes('room change') || textToScan.includes('cancelled') || textToScan.includes('important')) {
-        importance = 'high';
-      }
-    }
-
-    let contact = n.contact || '';
-    if (!n.contact && n.notice) {
-      const match = n.notice.match(/\b(Mr|Mrs|Ms|Miss|Dr|Msr)\s+[A-Z][a-zA-Z]+/);
-      if (match) {
-        contact = match[0];
-      }
-    }
-
-    return {
-      ...n,
-      id,
-      title,
-      category,
-      targetYears,
-      importance,
-      contact
-    };
+  // ─── Enrich notices ──────────────────────────────────────────────────────────
+  const enriched = notices.map((n, idx) => {
+    const id = n.id || `n-${idx}-${(n.title || '').substring(0, 8)}`;
+    const category = ALL_CATEGORIES.includes(n.category) ? n.category : 'General';
+    const importance = n.importance || 'normal';
+    const targetYears = Array.isArray(n.targetYears) && n.targetYears.length > 0 ? n.targetYears : ['All'];
+    const contact = n.contact || '';
+    const title = n.title || buildPreview(n.notice, 60) || `${category} Notice`;
+    const details = extractDetails(n.notice);
+    return { ...n, id, category, importance, targetYears, contact, title, details };
   });
 
-  const userClasses = classCodes
-    .split(',')
-    .map(c => c.trim())
-    .filter(c => c.length > 0);
-
-  const isClassMatched = (notice) => {
-    if (userClasses.length === 0) return false;
-    const textToScan = ((notice.title || '') + ' ' + (notice.notice || '')).toLowerCase();
-    return userClasses.some(cls => new RegExp(`\\b${cls.toLowerCase()}\\b`).test(textToScan));
-  };
-
-  const isForMe = (notice) => {
-    const matchesYear = yearLevel === 'All' || notice.targetYears.includes('All') || notice.targetYears.includes(yearLevel);
-    const matchesClass = isClassMatched(notice);
-    return matchesYear || matchesClass;
-  };
-
-  const filteredNotices = enrichedNotices.filter(n => {
-    if (filterQuery) {
-      const lowerQuery = filterQuery.toLowerCase();
-      const matchesSearch = 
-        (n.title && n.title.toLowerCase().includes(lowerQuery)) ||
-        (n.category && n.category.toLowerCase().includes(lowerQuery)) ||
-        (n.contact && n.contact.toLowerCase().includes(lowerQuery)) ||
-        (n.notice && n.notice.toLowerCase().includes(lowerQuery));
-      if (!matchesSearch) return false;
+  // ─── Filter ──────────────────────────────────────────────────────────────────
+  const filtered = enriched.filter(n => {
+    if (yearFilter !== 'All') {
+      const matchesYear = n.targetYears.includes('All') || n.targetYears.includes(yearFilter);
+      if (!matchesYear) return false;
     }
-
-    if (activeTab === 'Pinned') {
-      return pinnedIds.includes(n.id);
+    if (!catFilters.includes(n.category)) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
     }
-
-    if (!visibleCategories.includes(n.category)) {
-      return false;
-    }
-
-    if (activeTab === 'For Me') {
-      if (!isForMe(n)) return false;
-    } else if (activeTab === 'Sports') {
-      if (n.category.toLowerCase() !== 'sports') return false;
-    } else if (activeTab === 'Meetings') {
-      if (n.category.toLowerCase() !== 'meetings') return false;
-    }
-
-    if (focusMode && activeTab !== 'For Me') {
-      if (!isForMe(n)) return false;
-    }
-
     return true;
   });
 
-  // Auto-scrolling effect for notices in readonly mode
+  // Sort: urgent first
+  const sorted = [...filtered].sort((a, b) => {
+    if (a.importance === 'high' && b.importance !== 'high') return -1;
+    if (b.importance === 'high' && a.importance !== 'high') return 1;
+    return 0;
+  });
+
+  // ─── Mirror auto-scroll ──────────────────────────────────────────────────────
   useEffect(() => {
-    if (!readonly || loading || error || filteredNotices.length === 0) return;
+    const { current: state } = scrollState;
+    const cleanup = () => {
+      if (state.scrollInterval) { clearInterval(state.scrollInterval); state.scrollInterval = null; }
+      if (state.holdTimer) { clearTimeout(state.holdTimer); state.holdTimer = null; }
+    };
 
-    // Use a small timeout to let the DOM render completely
-    const startScrollTimer = setTimeout(() => {
-      const container = document.querySelector('.notices-scroll-area');
-      if (!container) return;
+    if (!readonly || loading || error || sorted.length === 0) { cleanup(); return; }
 
-      const scrollSpeed = 0.4; // pixels per step
-      const intervalTime = 30; // ms
-      const holdTime = 3000; // time to hold at top/bottom (ms)
-      let holdTimer = null;
-      let scrollInterval = null;
+    const SPEED = 0.5;      // px per tick
+    const INTERVAL = 25;    // ms
+    const HOLD_TOP = 4000;  // ms pause at top
+    const HOLD_BTM = 2000;  // ms pause at bottom
 
-      const scroll = () => {
-        if (!container) return;
-        const maxScroll = container.scrollHeight - container.clientHeight;
-        if (maxScroll <= 0) return;
+    const startScroll = () => {
+      cleanup();
+      state.holdTimer = setTimeout(() => {
+        state.scrollInterval = setInterval(() => {
+          const el = scrollRef.current;
+          if (!el) return;
+          const max = el.scrollHeight - el.clientHeight;
+          if (max <= 0) { cleanup(); return; }
+          if (el.scrollTop >= max - 1) {
+            cleanup();
+            state.holdTimer = setTimeout(() => {
+              if (scrollRef.current) scrollRef.current.scrollTop = 0;
+              startScroll();
+            }, HOLD_BTM);
+          } else {
+            el.scrollTop += SPEED;
+          }
+        }, INTERVAL);
+      }, HOLD_TOP);
+    };
 
-        if (container.scrollTop >= maxScroll - 1) {
-          clearInterval(scrollInterval);
-          holdTimer = setTimeout(() => {
-            // Smoothly slide back to top
-            container.scrollTo({ top: 0, behavior: 'smooth' });
-            holdTimer = setTimeout(() => {
-              scrollInterval = setInterval(scroll, intervalTime);
-            }, holdTime);
-          }, holdTime);
-        } else {
-          container.scrollTop += scrollSpeed;
-        }
-      };
+    // Wait for DOM
+    const init = setTimeout(startScroll, 300);
+    return () => { clearTimeout(init); cleanup(); };
+  }, [readonly, loading, error, sorted.length]);
 
-      // Start the scrolling cycle after initial delay
-      holdTimer = setTimeout(() => {
-        scrollInterval = setInterval(scroll, intervalTime);
-      }, holdTime);
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  const toggleExpand = (id) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
-      // Clean up variables inside callback context
-      return () => {
-        if (scrollInterval) clearInterval(scrollInterval);
-        if (holdTimer) clearTimeout(holdTimer);
-      };
-    }, 100);
+  const toggleCat = (cat) => {
+    const next = catFilters.includes(cat)
+      ? catFilters.filter(c => c !== cat)
+      : [...catFilters, cat];
+    setCatFilters(next);
+    saveSettings(yearFilter, next);
+  };
 
-    return () => clearTimeout(startScrollTimer);
-  }, [readonly, loading, error, filteredNotices.length]);
-
+  // ─── States ──────────────────────────────────────────────────────────────────
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.7, padding: '8px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '16px', opacity: 0.7, height: '100%' }}>
       <div className="notices-spinner" />
-      <span>Loading notices...</span>
+      <span style={{ fontSize: '0.9em' }}>Loading notices…</span>
     </div>
   );
 
-  if (error) return <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8em' }}>[Error] {error}</div>;
-  if (notices.length === 0) return <div style={{ opacity: 0.5, padding: '8px', fontStyle: 'italic', fontSize: '0.85em' }}>No notices today.</div>;
+  if (error) return (
+    <div style={{ padding: '16px', color: '#f87171', fontSize: '0.85em', lineHeight: 1.5 }}>
+      <div style={{ fontWeight: 700, marginBottom: '4px' }}>⚠ Could not load notices</div>
+      <div style={{ opacity: 0.7 }}>{error}</div>
+    </div>
+  );
 
+  if (notices.length === 0) return (
+    <div style={{ padding: '16px', opacity: 0.5, fontStyle: 'italic', fontSize: '0.85em', textAlign: 'center', paddingTop: '32px' }}>
+      No notices available today.
+    </div>
+  );
+
+  // ─── MIRROR MODE ─────────────────────────────────────────────────────────────
+  if (readonly) {
+    return (
+      <div className="notices-mirror-root">
+        {/* Header strip */}
+        <div className="notices-mirror-header">
+          <span className="notices-mirror-title">📢 Daily Notices</span>
+          <span className="notices-mirror-count">{sorted.length} notice{sorted.length !== 1 ? 's' : ''}</span>
+        </div>
+
+        {/* Scrolling list */}
+        <div className="notices-mirror-scroll" ref={scrollRef}>
+          {sorted.length === 0 ? (
+            <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px' }}>
+              No notices match your settings.
+            </div>
+          ) : (
+            sorted.map(n => {
+              const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
+              const isUrgent = n.importance === 'high';
+              return (
+                <div
+                  key={n.id}
+                  className={`notices-mirror-card ${isUrgent ? 'urgent' : ''}`}
+                  style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
+                >
+                  {/* Top row: category + year badges */}
+                  <div className="notices-mirror-card-top">
+                    <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
+                      {CATEGORY_ICONS[n.category] || '📢'} {n.category}
+                    </span>
+                    {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
+                    <div style={{ flex: 1 }} />
+                    {n.targetYears.map(yr => (
+                      <span key={yr} className="notices-mirror-year-badge">Y{yr}</span>
+                    ))}
+                  </div>
+
+                  {/* Title */}
+                  <div className="notices-mirror-card-title">{n.title}</div>
+
+                  {/* Key details chips (date, time, location) */}
+                  {(n.details.date || n.details.time || n.details.location) && (
+                    <div className="notices-mirror-details">
+                      {n.details.date     && <span className="notices-detail-chip">📅 {n.details.date}</span>}
+                      {n.details.time     && <span className="notices-detail-chip">⏰ {n.details.time}</span>}
+                      {n.details.location && <span className="notices-detail-chip">📍 {n.details.location}</span>}
+                    </div>
+                  )}
+
+                  {/* Body text */}
+                  <div
+                    className="notices-mirror-card-body"
+                    dangerouslySetInnerHTML={{ __html: n.notice }}
+                  />
+
+                  {/* Contact */}
+                  {n.contact && (
+                    <div className="notices-mirror-contact">👤 {n.contact}</div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── EDIT MODE ────────────────────────────────────────────────────────────────
   return (
-    <div className="widget-notices">
-      {/* Top Search & Settings Toggle Row - only in Edit Mode */}
-      {!readonly && (
-        <div className="notices-search-row">
+    <div className="notices-edit-root">
+      {/* Search + Settings toggle */}
+      <div className="notices-edit-topbar">
+        <div className="notices-edit-search-wrap">
+          <svg className="notices-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
           <input
             type="text"
-            placeholder="Filter notices..."
-            value={filterQuery}
-            onChange={handleFilterChange}
-            className="notices-filter-input"
-            style={{ flex: 1 }}
+            placeholder="Search notices…"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="notices-edit-search"
           />
-          <button
-            className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
-            onClick={() => setShowSettings(!showSettings)}
-            title="Notice settings"
-            style={{ fontSize: '0.75em', padding: '4px 8px' }}
-          >
-            Settings
-          </button>
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="notices-clear-btn" title="Clear">×</button>
+          )}
         </div>
-      )}
+        <button
+          className={`notices-settings-btn ${showSettings ? 'active' : ''}`}
+          onClick={() => setShowSettings(s => !s)}
+          title="Filter settings"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/>
+          </svg>
+          Filters
+        </button>
+      </div>
 
-      {/* Settings Drawer - only in Edit Mode */}
-      {!readonly && showSettings && (
-        <div className="settings-drawer">
-          <div className="settings-group">
-            <label>Year Level</label>
-            <select value={yearLevel} onChange={(e) => handleYearLevelChange(e.target.value)}>
-              <option value="All">All Years</option>
-              <option value="9">Year 9</option>
-              <option value="10">Year 10</option>
-              <option value="11">Year 11</option>
-              <option value="12">Year 12</option>
-              <option value="13">Year 13</option>
-            </select>
-          </div>
-
-          <div className="settings-group">
-            <label>Form Class / Class Codes</label>
-            <input
-              type="text"
-              placeholder="e.g. 9SR, 9CR"
-              value={classCodes}
-              onChange={(e) => handleClassCodesChange(e.target.value)}
-            />
-          </div>
-
-          <div className="settings-toggle-row">
-            <label style={{ fontSize: '0.75em', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Focus Mode
-            </label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={focusMode}
-                onChange={(e) => handleFocusModeChange(e.target.checked)}
-              />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          <div className="settings-group">
-            <label>Visible Categories</label>
-            <div className="categories-checklist">
-              {allCategories.map(cat => (
-                <label key={cat}>
-                  <input
-                    type="checkbox"
-                    checked={visibleCategories.includes(cat)}
-                    onChange={() => handleCategoryToggle(cat)}
-                  />
-                  <span>{cat}</span>
-                </label>
+      {/* Settings panel */}
+      {showSettings && (
+        <div className="notices-settings-panel">
+          {/* Year tabs */}
+          <div className="notices-setting-row">
+            <span className="notices-setting-label">Year Level</span>
+            <div className="notices-year-tabs">
+              {YEAR_TABS.map(yr => (
+                <button
+                  key={yr}
+                  className={`notices-year-tab ${yearFilter === yr ? 'active' : ''}`}
+                  onClick={() => { setYearFilter(yr); saveSettings(yr, catFilters); }}
+                >
+                  {yr === 'All' ? 'All' : `Y${yr}`}
+                </button>
               ))}
+            </div>
+          </div>
+
+          {/* Category toggles */}
+          <div className="notices-setting-row" style={{ alignItems: 'flex-start' }}>
+            <span className="notices-setting-label" style={{ paddingTop: '4px' }}>Categories</span>
+            <div className="notices-cat-toggles">
+              {ALL_CATEGORIES.map(cat => {
+                const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
+                const active = catFilters.includes(cat);
+                return (
+                  <button
+                    key={cat}
+                    className={`notices-cat-chip ${active ? 'active' : ''}`}
+                    style={active ? { background: colors.bg, borderColor: colors.accent, color: colors.text } : {}}
+                    onClick={() => toggleCat(cat)}
+                  >
+                    {CATEGORY_ICONS[cat]} {cat}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* Sleek Category Navigation Tabs - only in Edit Mode */}
-      {!readonly && (
-        <div className="notices-tabs-row">
-          <div className="notices-tabs">
-            {['All', 'Pinned', 'For Me', 'Sports', 'Meetings'].map(tab => (
-              <button
-                key={tab}
-                className={`notices-tab ${activeTab === tab ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab)}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Result count */}
+      <div className="notices-edit-count">
+        {sorted.length} of {enriched.length} notices
+        {yearFilter !== 'All' && <span className="notices-filter-pill">Year {yearFilter}</span>}
+        {searchQuery && <span className="notices-filter-pill">"{searchQuery}"</span>}
+      </div>
 
-      {/* Discrete Card-based Scrolling List */}
-      <div className="notices-scroll-area">
-        {filteredNotices.length === 0 ? (
-          <div style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.85em', padding: '16px 0', textAlign: 'center' }}>
-            No matches found.
+      {/* Notice list */}
+      <div className="notices-edit-list">
+        {sorted.length === 0 ? (
+          <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px', fontSize: '0.85em' }}>
+            No notices match your filters.
           </div>
         ) : (
-          filteredNotices.map((n) => {
-            const isPinned = pinnedIds.includes(n.id);
-            const isMatched = isClassMatched(n);
-            const details = extractDetails(n.notice || '');
+          sorted.map(n => {
+            const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
+            const isUrgent = n.importance === 'high';
+            const isExpanded = expandedIds.has(n.id);
+            const preview = buildPreview(n.notice, 110);
+            const hasMore = (n.notice || '').replace(/<[^>]*>/g, ' ').trim().length > 110;
 
             return (
               <div
                 key={n.id}
-                className={`notice-card ${n.importance === 'high' ? 'urgent' : ''} ${isMatched ? 'class-matched' : ''}`}
+                className={`notices-edit-card ${isUrgent ? 'urgent' : ''}`}
+                style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
               >
-                {/* Header elements: badges and pin */}
-                <div className="notice-card-header">
-                  <div className="notice-badges">
-                    <span className={`notice-badge-category category-${n.category.toLowerCase()}`}>
-                      {n.category}
+                {/* Card header */}
+                <div className="notices-edit-card-header">
+                  <div className="notices-edit-badges">
+                    <span className="notices-edit-badge-cat" style={{ background: colors.bg, color: colors.text }}>
+                      {CATEGORY_ICONS[n.category]} {n.category}
                     </span>
-                    {n.targetYears && n.targetYears.map(year => (
-                      <span key={year} className="notice-badge-year">
-                        Y{year}
-                      </span>
+                    {isUrgent && <span className="notices-edit-badge-urgent">URGENT</span>}
+                    {n.targetYears.map(yr => (
+                      <span key={yr} className="notices-edit-badge-year">Y{yr}</span>
                     ))}
-                    {n.importance === 'high' && (
-                      <span className="notice-badge-urgent">
-                        URGENT
-                      </span>
-                    )}
-                    {isMatched && (
-                      <span className="notice-badge-class-warning">
-                        Class Update
-                      </span>
-                    )}
                   </div>
-
-                  {!readonly && (
-                    <button
-                      className={`notice-pin-btn ${isPinned ? 'pinned' : ''}`}
-                      onClick={() => {
-                        if (isPinned) {
-                          setPinnedIds(pinnedIds.filter(id => id !== n.id));
-                        } else {
-                          setPinnedIds([...pinnedIds, n.id]);
-                        }
-                      }}
-                      title={isPinned ? "Unpin notice" : "Pin notice"}
-                      style={{ fontSize: '0.75em', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
-                    >
-                      {isPinned ? 'Unpin' : 'Pin'}
-                    </button>
+                  {n.contact && (
+                    <span className="notices-edit-contact">👤 {n.contact}</span>
                   )}
                 </div>
 
                 {/* Title */}
-                <h3 className="notice-card-title">{n.title}</h3>
+                <div className="notices-edit-card-title">{n.title}</div>
 
-                {/* Pinned Shelf details callout */}
-                {isPinned && (details.date || details.time || details.location) && (
-                  <div className="pinned-summary-shelf">
-                    {details.date && (
-                      <div className="summary-item">
-                        <span className="summary-text">Date: {details.date}</span>
-                      </div>
-                    )}
-                    {details.time && (
-                      <div className="summary-item">
-                        <span className="summary-text">Time: {details.time}</span>
-                      </div>
-                    )}
-                    {details.location && (
-                      <div className="summary-item">
-                        <span className="summary-text">Room: {details.location}</span>
-                      </div>
-                    )}
+                {/* Detail chips */}
+                {(n.details.date || n.details.time || n.details.location || n.details.deadline) && (
+                  <div className="notices-edit-details">
+                    {n.details.date     && <span className="notices-detail-chip">📅 {n.details.date}</span>}
+                    {n.details.time     && <span className="notices-detail-chip">⏰ {n.details.time}</span>}
+                    {n.details.location && <span className="notices-detail-chip">📍 {n.details.location}</span>}
+                    {n.details.deadline && <span className="notices-detail-chip deadline">🔔 {n.details.deadline}</span>}
                   </div>
                 )}
 
-                {/* Content */}
-                <div
-                  className="notice-card-body"
-                  dangerouslySetInnerHTML={{ __html: n.notice }}
-                />
+                {/* Body / expand */}
+                {isExpanded ? (
+                  <div
+                    className="notices-edit-card-body expanded"
+                    dangerouslySetInnerHTML={{ __html: n.notice }}
+                  />
+                ) : (
+                  <div className="notices-edit-card-preview">{preview}</div>
+                )}
 
-                {/* Contact person badge */}
-                {n.contact && (
-                  <div className="notice-card-footer">
-                    <span className="notice-contact">
-                      Contact: {n.contact}
-                    </span>
-                  </div>
+                {/* Expand toggle */}
+                {hasMore && (
+                  <button
+                    className="notices-expand-btn"
+                    onClick={() => toggleExpand(n.id)}
+                  >
+                    {isExpanded ? '↑ Show less' : '↓ Read more'}
+                  </button>
                 )}
               </div>
             );
