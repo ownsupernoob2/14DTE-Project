@@ -23,10 +23,11 @@ CARD_RADIUS = 8
 class TimetableWidget(Widget):
     """Widget displaying today's class timetable as period cards."""
 
-    def __init__(self, x, y, w, h, user_id='', api_url='https://api.smartmirror.me'):
+    def __init__(self, x, y, w, h, user_id='', api_url='https://api.smartmirror.me', view_mode='today'):
         super().__init__(x, y, w, h, "Timetable")
         self.api_url = api_url
         self.user_id = user_id
+        self.view_mode = view_mode
         self.periods = []          # list of period dicts
         self.error_msg = ""
         self.last_update = 0
@@ -76,16 +77,14 @@ class TimetableWidget(Widget):
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
-            # Expect a list of period dicts or {'periods': [...]}
-            periods = data if isinstance(data, list) else data.get('periods', [])
-            # Filter to today's periods if a 'date' field is present
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            today_periods = [
-                p for p in periods
-                if p.get('date', today_str) == today_str
-            ]
+            
+            # Extract periods and viewMode dynamically from response
+            periods = data.get('periods', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            view_mode = data.get('viewMode', self.view_mode) if isinstance(data, dict) else self.view_mode
+            
             with self._lock:
-                self.periods = today_periods if today_periods else periods
+                self.periods = periods
+                self.view_mode = view_mode
                 self.error_msg = ""
                 self.needs_redraw = True
         except Exception as e:
@@ -112,9 +111,10 @@ class TimetableWidget(Widget):
             surface.blit(self.content_surface, (self.rect.x + 20, draw_y + 50))
 
     def _render_content(self):
-        """Build the content surface from today's periods."""
+        """Build the content surface from periods based on view_mode."""
         with self._lock:
             periods = list(self.periods)
+            view_mode = self.view_mode
             error_msg = self.error_msg
 
         content_w = self.rect.w - 40
@@ -122,7 +122,25 @@ class TimetableWidget(Widget):
 
         self.content_surface = pygame.Surface((content_w, content_h), pygame.SRCALPHA)
 
-        if not periods:
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_periods = [p for p in periods if p.get('date', today_str) == today_str]
+
+        visible_periods = []
+        if view_mode == 'week':
+            visible_periods = periods
+        elif view_mode == 'next':
+            now_period = next((p for p in today_periods if p.get('isNow')), None)
+            if now_period:
+                visible_periods = [now_period]
+            else:
+                next_period = next((p for p in today_periods if not p.get('isDone')), None)
+                visible_periods = [next_period] if next_period else []
+        elif view_mode == 'remaining':
+            visible_periods = [p for p in today_periods if not p.get('isDone')]
+        else: # 'today'
+            visible_periods = today_periods
+
+        if not visible_periods:
             msg = error_msg if error_msg else "No classes today"
             msg_surf = self.font_subject.render(msg, True, COLOR_TEXT_DIM)
             tx = (content_w - msg_surf.get_width()) // 2
@@ -131,7 +149,7 @@ class TimetableWidget(Widget):
             return
 
         y = 0
-        for period in periods:
+        for period in visible_periods:
             if y + CARD_HEIGHT > content_h:
                 break  # No more space
 
@@ -145,10 +163,11 @@ class TimetableWidget(Widget):
                 card_w=content_w,
                 is_now=is_now,
                 is_done=is_done,
+                show_day_prefix=(view_mode == 'week')
             )
             y += CARD_HEIGHT + CARD_GAP
 
-    def _draw_period_card(self, surf, period, y, card_w, is_now, is_done):
+    def _draw_period_card(self, surf, period, y, card_w, is_now, is_done, show_day_prefix=False):
         """Draw a single period card onto surf at vertical position y."""
 
         # --- Card background ---
@@ -176,13 +195,23 @@ class TimetableWidget(Widget):
             time_str = start_time
         else:
             time_str = ""
+
+        # Prefix day name if week view
+        if show_day_prefix and period.get('date'):
+            try:
+                dt = datetime.strptime(period.get('date'), '%Y-%m-%d')
+                day_name = dt.strftime('%a') # "Mon", "Tue", etc.
+                time_str = f"{day_name} {time_str}"
+            except:
+                pass
+
         if time_str:
             time_surf = self.font_time.render(time_str, True, COLOR_TEXT_DIM)
             time_x = 10 if not is_now else 14
             card_surf.blit(time_surf, (time_x, 8))
 
         # --- Subject name (center) ---
-        subject = period.get('subject', period.get('title', period.get('name', 'Unknown')))
+        subject = period.get('subject', period.get('summary', period.get('title', period.get('name', 'Unknown'))))
         subj_surf = self.font_subject.render(subject, True, COLOR_WHITE)
         # Center vertically at bottom half of card
         subj_y = CARD_HEIGHT // 2

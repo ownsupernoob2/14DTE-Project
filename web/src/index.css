@@ -818,6 +818,30 @@ input:checked + .slider:before {
 .timetable-scroll-area::-webkit-scrollbar-track { background: transparent; }
 .timetable-scroll-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
 
+.timetable-day-header {
+  font-size: 0.75em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #60a5fa;
+  margin: 14px 0 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.85;
+}
+
+.timetable-day-header::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.timetable-day-header:first-of-type {
+  margin-top: 4px;
+}
+
 .timetable-setup {
   display: flex;
   flex-direction: column;
