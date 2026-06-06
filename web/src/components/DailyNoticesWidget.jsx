@@ -29,7 +29,7 @@ const extractDetails = (html) => {
   return details;
 };
 
-export default function DailyNoticesWidget() {
+export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly = false }) {
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -37,11 +37,15 @@ export default function DailyNoticesWidget() {
   // Local filter search query
   const [filterQuery, setFilterQuery] = useState(localStorage.getItem('notices_filter') || '');
 
-  // User Preferences
-  const [yearLevel, setYearLevel] = useState(() => localStorage.getItem('notices_year_level') || 'All');
-  const [classCodes, setClassCodes] = useState(() => localStorage.getItem('notices_class_codes') || '');
-  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('notices_focus_mode') === 'true');
+  // User Preferences loaded from widget data or localStorage
+  const [yearLevel, setYearLevel] = useState(() => widget.data?.yearLevel || localStorage.getItem('notices_year_level') || 'All');
+  const [classCodes, setClassCodes] = useState(() => widget.data?.classCodes || localStorage.getItem('notices_class_codes') || '');
+  const [focusMode, setFocusMode] = useState(() => {
+    if (widget.data?.focusMode !== undefined) return widget.data.focusMode;
+    return localStorage.getItem('notices_focus_mode') === 'true';
+  });
   const [visibleCategories, setVisibleCategories] = useState(() => {
+    if (widget.data?.visibleCategories) return widget.data.visibleCategories;
     const cached = localStorage.getItem('notices_visible_categories');
     return cached ? JSON.parse(cached) : ['General', 'Sports', 'Meetings', 'Careers', 'Academic'];
   });
@@ -90,26 +94,55 @@ export default function DailyNoticesWidget() {
     fetchNotices();
   }, []);
 
-  // Save Preferences to localStorage
+  // Sync state with widget.data changes (e.g. Server updates, Undo layout actions)
   useEffect(() => {
-    localStorage.setItem('notices_year_level', yearLevel);
-  }, [yearLevel]);
+    if (widget.data) {
+      if (widget.data.yearLevel !== undefined) setYearLevel(widget.data.yearLevel);
+      if (widget.data.classCodes !== undefined) setClassCodes(widget.data.classCodes);
+      if (widget.data.focusMode !== undefined) setFocusMode(widget.data.focusMode);
+      if (widget.data.visibleCategories !== undefined) setVisibleCategories(widget.data.visibleCategories);
+    }
+  }, [widget.data]);
 
-  useEffect(() => {
-    localStorage.setItem('notices_class_codes', classCodes);
-  }, [classCodes]);
-
-  useEffect(() => {
-    localStorage.setItem('notices_focus_mode', String(focusMode));
-  }, [focusMode]);
-
-  useEffect(() => {
-    localStorage.setItem('notices_visible_categories', JSON.stringify(visibleCategories));
-  }, [visibleCategories]);
-
+  // Keep pinned state saved in local storage
   useEffect(() => {
     localStorage.setItem('notices_pinned', JSON.stringify(pinnedIds));
   }, [pinnedIds]);
+
+  const handleYearLevelChange = (val) => {
+    setYearLevel(val);
+    localStorage.setItem('notices_year_level', val);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, yearLevel: val });
+    }
+  };
+
+  const handleClassCodesChange = (val) => {
+    setClassCodes(val);
+    localStorage.setItem('notices_class_codes', val);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, classCodes: val });
+    }
+  };
+
+  const handleFocusModeChange = (val) => {
+    setFocusMode(val);
+    localStorage.setItem('notices_focus_mode', String(val));
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, focusMode: val });
+    }
+  };
+
+  const handleCategoryToggle = (cat) => {
+    const nextCats = visibleCategories.includes(cat)
+      ? visibleCategories.filter(c => c !== cat)
+      : [...visibleCategories, cat];
+    setVisibleCategories(nextCats);
+    localStorage.setItem('notices_visible_categories', JSON.stringify(nextCats));
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, visibleCategories: nextCats });
+    }
+  };
 
   const handleFilterChange = (e) => {
     const val = e.target.value;
@@ -117,7 +150,7 @@ export default function DailyNoticesWidget() {
     localStorage.setItem('notices_filter', val);
   };
 
-  // Get dynamic categories list from fetched data
+  // Get dynamic categories list from notices
   const defaultCategories = ['General', 'Sports', 'Meetings', 'Careers', 'Academic'];
   const parsedCategories = Array.from(new Set(notices.map(n => n.category || 'General')));
   const allCategories = Array.from(new Set([...defaultCategories, ...parsedCategories]));
@@ -127,12 +160,10 @@ export default function DailyNoticesWidget() {
     const id = n.id || `notice-${idx}-${(n.title || '').substring(0, 10)}-${(n.notice || '').substring(0, 10)}`;
     const category = n.category || 'General';
     
-    // Fallback title: extract first sentence from the notice text if title not present
     const cleanText = n.notice ? n.notice.replace(/<[^>]*>/g, ' ') : '';
     const firstSentence = cleanText.split(/[.!?\n]/)[0] || '';
     const title = n.title || (firstSentence.length > 5 && firstSentence.length < 60 ? firstSentence.trim() : `${category} Update`);
 
-    // Target Year levels parsing if missing
     let targetYears = [];
     if (n.targetYears && Array.isArray(n.targetYears)) {
       targetYears = n.targetYears;
@@ -152,7 +183,6 @@ export default function DailyNoticesWidget() {
       }
     }
 
-    // Importance parsing
     let importance = n.importance || 'normal';
     if (!n.importance && n.notice) {
       const textToScan = ((n.title || '') + ' ' + (n.notice || '')).toLowerCase();
@@ -161,7 +191,6 @@ export default function DailyNoticesWidget() {
       }
     }
 
-    // Contact extraction
     let contact = n.contact || '';
     if (!n.contact && n.notice) {
       const match = n.notice.match(/\b(Mr|Mrs|Ms|Miss|Dr|Msr)\s+[A-Z][a-zA-Z]+/);
@@ -181,40 +210,24 @@ export default function DailyNoticesWidget() {
     };
   });
 
-  // Split and clean user input class codes
   const userClasses = classCodes
     .split(',')
     .map(c => c.trim())
     .filter(c => c.length > 0);
 
-  // Match class codes inside a notice
   const isClassMatched = (notice) => {
     if (userClasses.length === 0) return false;
     const textToScan = ((notice.title || '') + ' ' + (notice.notice || '')).toLowerCase();
     return userClasses.some(cls => new RegExp(`\\b${cls.toLowerCase()}\\b`).test(textToScan));
   };
 
-  // Check if a notice is "For Me"
   const isForMe = (notice) => {
     const matchesYear = yearLevel === 'All' || notice.targetYears.includes('All') || notice.targetYears.includes(yearLevel);
     const matchesClass = isClassMatched(notice);
-    
-    // Notice is for me if it matches my year level OR specifically mentions my class code
     return matchesYear || matchesClass;
   };
 
-  // Toggle Category Checkbox helper
-  const handleCategoryToggle = (cat) => {
-    if (visibleCategories.includes(cat)) {
-      setVisibleCategories(visibleCategories.filter(c => c !== cat));
-    } else {
-      setVisibleCategories([...visibleCategories, cat]);
-    }
-  };
-
-  // Filtering notices
   const filteredNotices = enrichedNotices.filter(n => {
-    // 1. Search Query filter
     if (filterQuery) {
       const lowerQuery = filterQuery.toLowerCase();
       const matchesSearch = 
@@ -225,17 +238,14 @@ export default function DailyNoticesWidget() {
       if (!matchesSearch) return false;
     }
 
-    // 2. Tab Filter
     if (activeTab === 'Pinned') {
       return pinnedIds.includes(n.id);
     }
 
-    // 3. Category Checklist filter (pinned notices bypass category hiding)
     if (!visibleCategories.includes(n.category)) {
       return false;
     }
 
-    // 4. Tab Specific criteria
     if (activeTab === 'For Me') {
       if (!isForMe(n)) return false;
     } else if (activeTab === 'Sports') {
@@ -244,13 +254,61 @@ export default function DailyNoticesWidget() {
       if (n.category.toLowerCase() !== 'meetings') return false;
     }
 
-    // 5. Focus Mode Filter (applies to other tabs when enabled)
     if (focusMode && activeTab !== 'For Me') {
       if (!isForMe(n)) return false;
     }
 
     return true;
   });
+
+  // Auto-scrolling effect for notices in readonly mode
+  useEffect(() => {
+    if (!readonly || loading || error || filteredNotices.length === 0) return;
+
+    // Use a small timeout to let the DOM render completely
+    const startScrollTimer = setTimeout(() => {
+      const container = document.querySelector('.notices-scroll-area');
+      if (!container) return;
+
+      const scrollSpeed = 0.4; // pixels per step
+      const intervalTime = 30; // ms
+      const holdTime = 3000; // time to hold at top/bottom (ms)
+      let holdTimer = null;
+      let scrollInterval = null;
+
+      const scroll = () => {
+        if (!container) return;
+        const maxScroll = container.scrollHeight - container.clientHeight;
+        if (maxScroll <= 0) return;
+
+        if (container.scrollTop >= maxScroll - 1) {
+          clearInterval(scrollInterval);
+          holdTimer = setTimeout(() => {
+            // Smoothly slide back to top
+            container.scrollTo({ top: 0, behavior: 'smooth' });
+            holdTimer = setTimeout(() => {
+              scrollInterval = setInterval(scroll, intervalTime);
+            }, holdTime);
+          }, holdTime);
+        } else {
+          container.scrollTop += scrollSpeed;
+        }
+      };
+
+      // Start the scrolling cycle after initial delay
+      holdTimer = setTimeout(() => {
+        scrollInterval = setInterval(scroll, intervalTime);
+      }, holdTime);
+
+      // Clean up variables inside callback context
+      return () => {
+        if (scrollInterval) clearInterval(scrollInterval);
+        if (holdTimer) clearTimeout(holdTimer);
+      };
+    }, 100);
+
+    return () => clearTimeout(startScrollTimer);
+  }, [readonly, loading, error, filteredNotices.length]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.7, padding: '8px' }}>
@@ -264,32 +322,34 @@ export default function DailyNoticesWidget() {
 
   return (
     <div className="widget-notices">
-      {/* Top Search & Settings Toggle Row */}
-      <div className="notices-search-row">
-        <input
-          type="text"
-          placeholder="Filter notices..."
-          value={filterQuery}
-          onChange={handleFilterChange}
-          className="notices-filter-input"
-          style={{ flex: 1 }}
-        />
-        <button
-          className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
-          onClick={() => setShowSettings(!showSettings)}
-          title="Notice settings"
-          style={{ fontSize: '0.75em', padding: '4px 8px' }}
-        >
-          Settings
-        </button>
-      </div>
+      {/* Top Search & Settings Toggle Row - only in Edit Mode */}
+      {!readonly && (
+        <div className="notices-search-row">
+          <input
+            type="text"
+            placeholder="Filter notices..."
+            value={filterQuery}
+            onChange={handleFilterChange}
+            className="notices-filter-input"
+            style={{ flex: 1 }}
+          />
+          <button
+            className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
+            onClick={() => setShowSettings(!showSettings)}
+            title="Notice settings"
+            style={{ fontSize: '0.75em', padding: '4px 8px' }}
+          >
+            Settings
+          </button>
+        </div>
+      )}
 
-      {/* Settings Drawer */}
-      {showSettings && (
+      {/* Settings Drawer - only in Edit Mode */}
+      {!readonly && showSettings && (
         <div className="settings-drawer">
           <div className="settings-group">
             <label>Year Level</label>
-            <select value={yearLevel} onChange={(e) => setYearLevel(e.target.value)}>
+            <select value={yearLevel} onChange={(e) => handleYearLevelChange(e.target.value)}>
               <option value="All">All Years</option>
               <option value="9">Year 9</option>
               <option value="10">Year 10</option>
@@ -305,7 +365,7 @@ export default function DailyNoticesWidget() {
               type="text"
               placeholder="e.g. 9SR, 9CR"
               value={classCodes}
-              onChange={(e) => setClassCodes(e.target.value)}
+              onChange={(e) => handleClassCodesChange(e.target.value)}
             />
           </div>
 
@@ -317,7 +377,7 @@ export default function DailyNoticesWidget() {
               <input
                 type="checkbox"
                 checked={focusMode}
-                onChange={(e) => setFocusMode(e.target.checked)}
+                onChange={(e) => handleFocusModeChange(e.target.checked)}
               />
               <span className="slider"></span>
             </label>
@@ -341,41 +401,22 @@ export default function DailyNoticesWidget() {
         </div>
       )}
 
-      {/* Sleek Category Navigation Tabs */}
-      <div className="notices-tabs-row">
-        <div className="notices-tabs">
-          <button
-            className={`notices-tab ${activeTab === 'All' ? 'active' : ''}`}
-            onClick={() => setActiveTab('All')}
-          >
-            All
-          </button>
-          <button
-            className={`notices-tab ${activeTab === 'Pinned' ? 'active' : ''}`}
-            onClick={() => setActiveTab('Pinned')}
-          >
-            Pinned
-          </button>
-          <button
-            className={`notices-tab ${activeTab === 'For Me' ? 'active' : ''}`}
-            onClick={() => setActiveTab('For Me')}
-          >
-            For Me
-          </button>
-          <button
-            className={`notices-tab ${activeTab === 'Sports' ? 'active' : ''}`}
-            onClick={() => setActiveTab('Sports')}
-          >
-            Sports
-          </button>
-          <button
-            className={`notices-tab ${activeTab === 'Meetings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('Meetings')}
-          >
-            Meetings
-          </button>
+      {/* Sleek Category Navigation Tabs - only in Edit Mode */}
+      {!readonly && (
+        <div className="notices-tabs-row">
+          <div className="notices-tabs">
+            {['All', 'Pinned', 'For Me', 'Sports', 'Meetings'].map(tab => (
+              <button
+                key={tab}
+                className={`notices-tab ${activeTab === tab ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Discrete Card-based Scrolling List */}
       <div className="notices-scroll-area">
@@ -417,20 +458,22 @@ export default function DailyNoticesWidget() {
                     )}
                   </div>
 
-                  <button
-                    className={`notice-pin-btn ${isPinned ? 'pinned' : ''}`}
-                    onClick={() => {
-                      if (isPinned) {
-                        setPinnedIds(pinnedIds.filter(id => id !== n.id));
-                      } else {
-                        setPinnedIds([...pinnedIds, n.id]);
-                      }
-                    }}
-                    title={isPinned ? "Unpin notice" : "Pin notice"}
-                    style={{ fontSize: '0.75em', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
-                  >
-                    {isPinned ? 'Unpin' : 'Pin'}
-                  </button>
+                  {!readonly && (
+                    <button
+                      className={`notice-pin-btn ${isPinned ? 'pinned' : ''}`}
+                      onClick={() => {
+                        if (isPinned) {
+                          setPinnedIds(pinnedIds.filter(id => id !== n.id));
+                        } else {
+                          setPinnedIds([...pinnedIds, n.id]);
+                        }
+                      }}
+                      title={isPinned ? "Unpin notice" : "Pin notice"}
+                      style={{ fontSize: '0.75em', padding: '2px 6px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}
+                    >
+                      {isPinned ? 'Unpin' : 'Pin'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Title */}

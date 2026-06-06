@@ -21,7 +21,7 @@ function timeRange(start, end) {
   return '';
 }
 
-export default function TimetableWidget({ widget = {}, onUpdateData }) {
+export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
   const { getAccessTokenSilently } = useAuth0();
 
   // ── ICS URL state ──────────────────────────────────────────────────────────
@@ -185,6 +185,13 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
 
     const todayPeriods = periods.filter(p => p.date === todayStr || !p.date);
 
+    if (viewMode === 'tomorrow') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+      return periods.filter(p => p.date === tomorrowStr);
+    }
+
     if (viewMode === 'next') {
       const now = todayPeriods.find(p => p.isNow);
       if (now) return [now];
@@ -197,8 +204,60 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
     return todayPeriods;
   })();
 
+  // Auto-scrolling effect for timetable periods in readonly mode
+  useEffect(() => {
+    if (!readonly || loading || error || visiblePeriods.length === 0) return;
+
+    const startScrollTimer = setTimeout(() => {
+      const container = document.querySelector('.timetable-scroll-area');
+      if (!container) return;
+
+      const scrollSpeed = 0.4; // pixels per step
+      const intervalTime = 30; // ms
+      const holdTime = 3000; // time to hold at top/bottom (ms)
+      let holdTimer = null;
+      let scrollInterval = null;
+
+      const scroll = () => {
+        if (!container) return;
+        const maxScroll = container.scrollHeight - container.clientHeight;
+        if (maxScroll <= 0) return;
+
+        if (container.scrollTop >= maxScroll - 1) {
+          clearInterval(scrollInterval);
+          holdTimer = setTimeout(() => {
+            container.scrollTo({ top: 0, behavior: 'smooth' });
+            holdTimer = setTimeout(() => {
+              scrollInterval = setInterval(scroll, intervalTime);
+            }, holdTime);
+          }, holdTime);
+        } else {
+          container.scrollTop += scrollSpeed;
+        }
+      };
+
+      holdTimer = setTimeout(() => {
+        scrollInterval = setInterval(scroll, intervalTime);
+      }, holdTime);
+
+      return () => {
+        if (scrollInterval) clearInterval(scrollInterval);
+        if (holdTimer) clearTimeout(holdTimer);
+      };
+    }, 100);
+
+    return () => clearTimeout(startScrollTimer);
+  }, [readonly, loading, error, visiblePeriods.length]);
+
   // ── Setup form ─────────────────────────────────────────────────────────────
   if (showSetup) {
+    if (readonly) {
+      return (
+        <div className="widget-timetable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '16px' }}>
+          <span>No timetable configured</span>
+        </div>
+      );
+    }
     return (
       <div className="widget-timetable">
         <div className="timetable-header">
@@ -267,33 +326,36 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
   return (
     <div className="widget-timetable">
       {/* Header row: mode pills + gear */}
-      <div className="timetable-header">
-        <div className="timetable-modes">
-          {[
-            { id: 'today',     label: 'Today' },
-            { id: 'next',      label: 'Next' },
-            { id: 'remaining', label: 'Left' },
-            { id: 'week',      label: 'Week' },
-          ].map(m => (
-            <button
-              key={m.id}
-              className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
-              onClick={() => handleViewModeChange(m.id)}
-              style={{ padding: '4px 10px', fontSize: '0.75em' }}
-            >
-              {m.label}
-            </button>
-          ))}
+      {!readonly && (
+        <div className="timetable-header">
+          <div className="timetable-modes">
+            {[
+              { id: 'today',     label: 'Today' },
+              { id: 'tomorrow',  label: 'Tomorrow' },
+              { id: 'next',      label: 'Next' },
+              { id: 'remaining', label: 'Left' },
+              { id: 'week',      label: 'Week' },
+            ].map(m => (
+              <button
+                key={m.id}
+                className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
+                onClick={() => handleViewModeChange(m.id)}
+                style={{ padding: '4px 10px', fontSize: '0.75em' }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="timetable-settings-btn"
+            onClick={handleClearUrl}
+            title="Change ICS URL"
+            style={{ fontSize: '0.7em', padding: '2px 6px', width: 'auto', height: 'auto' }}
+          >
+            Settings
+          </button>
         </div>
-        <button
-          className="timetable-settings-btn"
-          onClick={handleClearUrl}
-          title="Change ICS URL"
-          style={{ fontSize: '0.7em', padding: '2px 6px', width: 'auto', height: 'auto' }}
-        >
-          Settings
-        </button>
-      </div>
+      )}
 
       {/* Period list */}
       <div className="timetable-scroll-area">
@@ -309,6 +371,8 @@ export default function TimetableWidget({ widget = {}, onUpdateData }) {
               ? 'No upcoming periods today.'
               : viewMode === 'remaining'
               ? 'All periods done for today!'
+              : viewMode === 'tomorrow'
+              ? 'No periods scheduled tomorrow.'
               : 'No periods scheduled today.'}
           </div>
         ) : viewMode === 'week' ? (
