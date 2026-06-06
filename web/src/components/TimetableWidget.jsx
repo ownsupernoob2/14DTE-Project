@@ -21,7 +21,7 @@ function timeRange(start, end) {
   return '';
 }
 
-export default function TimetableWidget() {
+export default function TimetableWidget({ widget = {}, onUpdateData }) {
   const { getAccessTokenSilently } = useAuth0();
 
   // ── ICS URL state ──────────────────────────────────────────────────────────
@@ -33,8 +33,15 @@ export default function TimetableWidget() {
 
   // ── View mode ──────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState(
-    () => localStorage.getItem('timetable_view_mode') || 'today'
+    () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
   );
+
+  // Keep viewMode synced if changed from parent props
+  useEffect(() => {
+    if (widget.data?.viewMode && widget.data.viewMode !== viewMode) {
+      setViewMode(widget.data.viewMode);
+    }
+  }, [widget.data?.viewMode]);
 
   // ── Timetable data ─────────────────────────────────────────────────────────
   const [periods, setPeriods] = useState([]);
@@ -42,9 +49,13 @@ export default function TimetableWidget() {
   const [error, setError] = useState(null);
 
   // ── Persist view mode ──────────────────────────────────────────────────────
-  useEffect(() => {
-    localStorage.setItem('timetable_view_mode', viewMode);
-  }, [viewMode]);
+  const handleViewModeChange = (newMode) => {
+    setViewMode(newMode);
+    localStorage.setItem('timetable_view_mode', newMode);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, viewMode: newMode });
+    }
+  };
 
   // ── Fetch timetable ────────────────────────────────────────────────────────
   const fetchTimetable = useCallback(async () => {
@@ -56,7 +67,15 @@ export default function TimetableWidget() {
       const cachedDate = localStorage.getItem('timetable_cache_date');
       const cachedData = localStorage.getItem('timetable_cache_data');
       if (cachedDate === today && cachedData) {
-        setPeriods(JSON.parse(cachedDate === today && cachedData ? cachedData : '[]'));
+        const cached = JSON.parse(cachedData);
+        if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
+          setPeriods(cached.periods || []);
+          if (cached.viewMode && cached.viewMode !== viewMode) {
+            setViewMode(cached.viewMode);
+          }
+        } else {
+          setPeriods(Array.isArray(cached) ? cached : []);
+        }
         setLoading(false);
         return;
       }
@@ -67,10 +86,16 @@ export default function TimetableWidget() {
       });
       if (!res.ok) throw new Error(`Failed to load timetable (${res.status})`);
       const data = await res.json();
+      
       const list = Array.isArray(data) ? data : (data.periods || data.events || []);
       setPeriods(list);
+      
+      if (data.viewMode && data.viewMode !== viewMode) {
+        setViewMode(data.viewMode);
+      }
+
       localStorage.setItem('timetable_cache_date', today);
-      localStorage.setItem('timetable_cache_data', JSON.stringify(list));
+      localStorage.setItem('timetable_cache_data', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -127,18 +152,25 @@ export default function TimetableWidget() {
 
   // ── Filter periods by view mode ────────────────────────────────────────────
   const visiblePeriods = (() => {
+    // NZ Time date YYYY-MM-DD
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+
+    if (viewMode === 'week') {
+      return periods;
+    }
+
+    const todayPeriods = periods.filter(p => p.date === todayStr || !p.date);
+
     if (viewMode === 'next') {
-      // Show only the current or next upcoming period
-      const now = periods.find(p => p.isNow);
+      const now = todayPeriods.find(p => p.isNow);
       if (now) return [now];
-      const next = periods.find(p => !p.isDone);
+      const next = todayPeriods.find(p => !p.isDone);
       return next ? [next] : [];
     }
     if (viewMode === 'remaining') {
-      return periods.filter(p => !p.isDone);
+      return todayPeriods.filter(p => !p.isDone);
     }
-    // 'today' — show all
-    return periods;
+    return todayPeriods;
   })();
 
   // ── Setup form ─────────────────────────────────────────────────────────────
@@ -217,11 +249,12 @@ export default function TimetableWidget() {
             { id: 'today',     label: 'Today' },
             { id: 'next',      label: 'Next' },
             { id: 'remaining', label: 'Left' },
+            { id: 'week',      label: 'Week' },
           ].map(m => (
             <button
               key={m.id}
               className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
-              onClick={() => setViewMode(m.id)}
+              onClick={() => handleViewModeChange(m.id)}
               style={{ padding: '4px 10px', fontSize: '0.75rem' }}
             >
               {m.label}
@@ -254,6 +287,34 @@ export default function TimetableWidget() {
               ? 'All periods done for today!'
               : 'No periods scheduled today.'}
           </div>
+        ) : viewMode === 'week' ? (
+          (() => {
+            const groups = {};
+            visiblePeriods.forEach(p => {
+              const d = p.date || 'Unknown';
+              if (!groups[d]) groups[d] = [];
+              groups[d].push(p);
+            });
+            const sortedDates = Object.keys(groups).sort();
+            return sortedDates.map(dStr => {
+              let formattedDate = dStr;
+              try {
+                const [year, month, day] = dStr.split('-').map(Number);
+                const dateObj = new Date(year, month - 1, day);
+                formattedDate = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+              } catch (e) {
+                formattedDate = dStr;
+              }
+              return (
+                <div key={dStr} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div className="timetable-day-header">{formattedDate}</div>
+                  {groups[dStr].map((period, idx) => (
+                    <PeriodCard key={period.uid || period.id || idx} period={period} />
+                  ))}
+                </div>
+              );
+            });
+          })()
         ) : (
           visiblePeriods.map((period, idx) => (
             <PeriodCard key={period.uid || period.id || idx} period={period} />

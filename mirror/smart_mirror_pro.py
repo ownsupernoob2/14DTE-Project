@@ -139,7 +139,13 @@ class SmartMirrorPro:
                 elif wtype == 'notices' or wd.get('type') == 'DailyNoticesWidget':
                     self.widgets.append(NoticesWidget(real_x, real_y, real_w, real_h, API_URL))
                 elif wtype == 'timetable' or wd.get('type') == 'TimetableWidget':
-                    tw = TimetableWidget(real_x, real_y, real_w, real_h, self.current_user_id or '', API_URL)
+                    data = wd.get('data', {}) or {}
+                    view_mode = 'today'
+                    if isinstance(data, dict):
+                        view_mode = data.get('viewMode', 'today')
+                    elif isinstance(data, str) and data:
+                        view_mode = data
+                    tw = TimetableWidget(real_x, real_y, real_w, real_h, self.current_user_id or '', API_URL, view_mode=view_mode)
                     self.widgets.append(tw)
                 elif wtype == 'note':
                     note_data = wd.get('data', '') or ''
@@ -189,7 +195,7 @@ class SmartMirrorPro:
         elif widget_type == "notices":
             self.widgets.append(NoticesWidget(x, y, real_w, real_h, API_URL))
         elif widget_type == "timetable":
-            self.widgets.append(TimetableWidget(x, y, real_w, real_h, self.current_user_id or '', API_URL))
+            self.widgets.append(TimetableWidget(x, y, real_w, real_h, self.current_user_id or '', API_URL, view_mode='today'))
         elif widget_type == "note":
             self.widgets.append(NoteWidget(x, y, real_w, real_h))
 

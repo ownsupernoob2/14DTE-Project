@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/labstack/echo/v4"
 )
@@ -22,6 +23,7 @@ type TimetableEvent struct {
 	Description string `json:"description"`
 	IsNow       bool   `json:"isNow"`  // currently in progress
 	IsDone      bool   `json:"isDone"` // already finished
+	Date        string `json:"date"`        // "2026-06-05"
 }
 
 // nzLocation loads the Pacific/Auckland timezone, falling back to UTC on error.
@@ -33,14 +35,28 @@ func nzLocation() *time.Location {
 	return loc
 }
 
+// currentWeekBoundaries returns the start (Monday 00:00:00) and end (Sunday 23:59:59) of the current week.
+func currentWeekBoundaries(t time.Time) (time.Time, time.Time) {
+	wd := t.Weekday()
+	daysSinceMonday := int(wd) - 1
+	if wd == time.Sunday {
+		daysSinceMonday = 6
+	}
+
+	monday := t.AddDate(0, 0, -daysSinceMonday)
+	startOfWeek := time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, t.Location())
+	endOfWeek := startOfWeek.AddDate(0, 0, 7).Add(-time.Second)
+
+	return startOfWeek, endOfWeek
+}
+
 // parseICSTime parses an ICS DTSTART/DTEND value (with optional TZID parameter).
 // Handles:
 //   - DTSTART;TZID=Pacific/Auckland:20260524T090000
 //   - DTSTART:20260524T090000Z  (UTC)
 //   - DTSTART:20260524T090000   (local/floating – treated as NZ local)
+//   - DTSTART;VALUE=DATE:20260524 (date-only)
 func parseICSTime(propLine string) (time.Time, error) {
-	// propLine is the full property line, e.g. "DTSTART;TZID=Pacific/Auckland:20260524T090000"
-	// Split at the first colon to separate key (with params) from value.
 	colonIdx := strings.Index(propLine, ":")
 	if colonIdx < 0 {
 		return time.Time{}, fmt.Errorf("no colon in ICS property: %s", propLine)
@@ -57,38 +73,44 @@ func parseICSTime(propLine string) (time.Time, error) {
 	}
 
 	const layout = "20060102T150405"
+	const layoutDate = "20060102"
 
 	if strings.HasSuffix(value, "Z") {
 		// UTC time
 		t, err := time.Parse(layout+"Z", value)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("parsing UTC time %q: %w", value, err)
+			// Try parsing date-only
+			t, err = time.Parse(layoutDate+"Z", value)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("parsing UTC time %q: %w", value, err)
+			}
 		}
 		return t.In(nzLocation()), nil
 	}
 
+	var loc *time.Location
 	if tzid != "" {
-		loc, err := time.LoadLocation(tzid)
+		var err error
+		loc, err = time.LoadLocation(tzid)
 		if err != nil {
-			// Fall back to NZ local if TZID is unrecognised
 			loc = nzLocation()
 		}
-		t, err := time.ParseInLocation(layout, value, loc)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("parsing TZID time %q: %w", value, err)
-		}
-		return t.In(nzLocation()), nil
+	} else {
+		loc = nzLocation()
 	}
 
-	// Floating / no timezone — treat as NZ local
-	t, err := time.ParseInLocation(layout, value, nzLocation())
+	t, err := time.ParseInLocation(layout, value, loc)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("parsing local time %q: %w", value, err)
+		// Try parsing date-only layout
+		t, err = time.ParseInLocation(layoutDate, value, loc)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parsing local time %q: %w", value, err)
+		}
 	}
-	return t, nil
+	return t.In(nzLocation()), nil
 }
 
-// parseTimetable fetches an ICS file from icsURL and returns today's events sorted by start time.
+// parseTimetable fetches an ICS file from icsURL and returns the current week's events sorted by date and start time.
 func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	resp, err := http.Get(icsURL) //nolint:noctx
 	if err != nil {
@@ -107,7 +129,7 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 
 	loc := nzLocation()
 	now := time.Now().In(loc)
-	todayDate := now.Format("2006-01-02")
+	startOfWeek, endOfWeek := currentWeekBoundaries(now)
 
 	var events []TimetableEvent
 
@@ -138,8 +160,9 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 
 		case line == "END:VEVENT":
 			if inEvent && hasStart {
-				// Only include events that fall on today (NZ time)
-				if startTime.Format("2006-01-02") == todayDate {
+				// Only include events that fall within the current week (NZ local time)
+				if startTime.After(startOfWeek) && startTime.Before(endOfWeek) {
+					cur.Date = startTime.Format("2006-01-02")
 					cur.StartTime = startTime.Format("15:04")
 					if hasEnd {
 						cur.EndTime = endTime.Format("15:04")
@@ -183,8 +206,11 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 		}
 	}
 
-	// Sort by start time
+	// Sort by date, then start time
 	sort.Slice(events, func(i, j int) bool {
+		if events[i].Date != events[j].Date {
+			return events[i].Date < events[j].Date
+		}
 		return events[i].StartTime < events[j].StartTime
 	})
 
@@ -198,6 +224,7 @@ func unfoldICSLines(body string) []string {
 	var lines []string
 	for scanner.Scan() {
 		line := scanner.Text()
+		line = strings.TrimRight(line, "\r\n")
 		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
 			// Continuation — append to previous line (sans leading whitespace)
 			if len(lines) > 0 {
@@ -245,7 +272,25 @@ func getTimetable(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch timetable: " + err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, events)
+	// Read viewMode from saved widgets
+	viewMode := "today"
+	widgets := getWidgetsForUser(userID)
+	for _, w := range widgets {
+		if w.Type == "timetable" {
+			if dataMap, ok := w.Data.(map[string]interface{}); ok {
+				if vm, exists := dataMap["viewMode"]; exists {
+					if vmStr, isStr := vm.(string); isStr {
+						viewMode = vmStr
+					}
+				}
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"viewMode": viewMode,
+		"periods":  events,
+	})
 }
 
 // setTimetableURL saves the user's ICS calendar URL.

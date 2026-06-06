@@ -148,7 +148,12 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
       <div className="widget-content" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {widget.type === 'clock'     && <ClockWidget />}
         {widget.type === 'notices'   && <DailyNoticesWidget />}
-        {widget.type === 'timetable' && <TimetableWidget />}
+        {widget.type === 'timetable' && (
+          <TimetableWidget 
+            widget={widget} 
+            onUpdateData={(data) => onUpdateData && onUpdateData(widget.id, data)} 
+          />
+        )}
         {widget.type === 'note'      && (
           <textarea
             className="widget-textarea"
