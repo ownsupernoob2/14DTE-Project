@@ -154,20 +154,45 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
 
       <div className="widget-content" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {widget.type === 'clock'     && <ClockWidget />}
-        {widget.type === 'notices'   && <DailyNoticesWidget />}
+        {widget.type === 'notices'   && (
+          <DailyNoticesWidget 
+            widget={widget}
+            onUpdateData={(data) => onUpdateData && onUpdateData(widget.id, data)}
+            readonly={readonly}
+          />
+        )}
         {widget.type === 'timetable' && (
           <TimetableWidget 
             widget={widget} 
             onUpdateData={(data) => onUpdateData && onUpdateData(widget.id, data)} 
+            readonly={readonly}
           />
         )}
         {widget.type === 'note'      && (
-          <textarea
-            className="widget-textarea"
-            placeholder="Type your note..."
-            value={widget.data || ''}
-            onChange={(e) => onUpdateData && onUpdateData(widget.id, e.target.value)}
-          />
+          readonly ? (
+            <div 
+              className="widget-note-view" 
+              style={{ 
+                whiteSpace: 'pre-wrap', 
+                wordBreak: 'break-word', 
+                height: '100%', 
+                width: '100%',
+                overflowY: 'auto',
+                fontSize: '0.95em',
+                lineHeight: 1.5,
+                padding: '4px'
+              }}
+            >
+              {widget.data || 'No note written.'}
+            </div>
+          ) : (
+            <textarea
+              className="widget-textarea"
+              placeholder="Type your note..."
+              value={widget.data || ''}
+              onChange={(e) => onUpdateData && onUpdateData(widget.id, e.target.value)}
+            />
+          )
         )}
       </div>
 
