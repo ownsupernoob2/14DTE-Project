@@ -26,10 +26,10 @@ function ClockWidget() {
   }, [])
   return (
     <div className="widget-clock">
-      <div style={{ fontSize: '2.2em', fontWeight: 700, letterSpacing: '-0.02em' }}>
+      <div style={{ fontSize: '2.4em', fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1 }}>
         {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
-      <div style={{ fontSize: '0.85em', opacity: 0.6, marginTop: '4px' }}>
+      <div style={{ fontSize: '0.8em', opacity: 0.6, marginTop: '0.3em', letterSpacing: '0.02em' }}>
         {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
       </div>
     </div>
@@ -59,7 +59,10 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
   const widgetY = widget.y !== undefined ? (widget.y > 100 ? widget.y : (widget.y / 100) * containerHeight) : 96
 
   // Calculate dynamic scale factor based on widget dimensions vs default size
-  const widgetScale = Math.max(0.4, Math.min(3.0, Math.min(widgetW / defaults.w, widgetH / defaults.h)))
+  // Use a gentler scale that prevents text from overflowing the container
+  const scaleW = widgetW / defaults.w
+  const scaleH = widgetH / defaults.h
+  const widgetScale = Math.max(0.5, Math.min(2.5, Math.min(scaleW, scaleH) * 0.9))
 
   const handleMouseDown = (e) => {
     if (readonly) return
@@ -152,7 +155,16 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
         </div>
       )}
 
-      <div className="widget-content" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      {/* widget-content: no extra padding for clock/notices/timetable — they self-manage */}
+      <div 
+        className="widget-content" 
+        style={{ 
+          flex: 1, 
+          overflowY: widget.type === 'clock' ? 'hidden' : 'auto', 
+          minHeight: 0,
+          padding: widget.type === 'note' ? '12px 14px' : (widget.type === 'clock' ? '0' : undefined)
+        }}
+      >
         {widget.type === 'clock'     && <ClockWidget />}
         {widget.type === 'notices'   && (
           <DailyNoticesWidget 
@@ -180,7 +192,6 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
                 overflowY: 'auto',
                 fontSize: '0.95em',
                 lineHeight: 1.5,
-                padding: '4px'
               }}
             >
               {widget.data || 'No note written.'}
