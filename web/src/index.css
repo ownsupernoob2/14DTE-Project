@@ -972,3 +972,234 @@ button {
   -webkit-backdrop-filter: none !important;
   cursor: default !important;
 }
+
+/* ── Keyword filter input (shared by notices + timetable) ── */
+.notices-keyword-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.notices-keyword-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.8em;
+  color: white;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.notices-keyword-input:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+.notices-keyword-input::placeholder { color: rgba(255, 255, 255, 0.3); }
+
+/* ── Scroll speed control ── */
+.notices-speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.notices-speed-btn {
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 0.75em;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.notices-speed-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.85);
+}
+.notices-speed-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+
+.notices-speed-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.notices-speed-label {
+  font-size: 0.72em;
+  color: rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+}
+
+.notices-speed-slider {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.notices-speed-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+}
+
+.notices-speed-value {
+  font-size: 0.72em;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+  min-width: 32px;
+}
+
+/* ── Timetable filter panel ── */
+.timetable-filter-panel {
+  background: rgba(10, 12, 18, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  flex-shrink: 0;
+  margin-bottom: 4px;
+  animation: fadeSlideDown 0.2s ease;
+}
+
+/* ── Note expiry picker ── */
+.note-expiry-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 4px 0 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.note-expiry-label {
+  font-size: 0.7em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.note-expiry-btns {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.note-expiry-btn {
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.7em;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.note-expiry-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+.note-expiry-btn.active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #93c5fd;
+}
+
+.note-expiry-status {
+  font-size: 0.68em;
+  color: rgba(255, 255, 255, 0.4);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.note-expiry-status.expired {
+  color: #f87171;
+  font-weight: 600;
+}
+
+/* ── notices-tab (shared pill button) ── */
+.notices-tab {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75em;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.notices-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.85);
+}
+.notices-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+
+/* ── Dashboard / Add widget menu item ── */
+.widget-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  font-family: inherit;
+}
+.widget-menu-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: white;
+}
+
+/* ── Dashboard canvas ── */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.dashboard-canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+.dashboard-bg-gradient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}

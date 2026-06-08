@@ -36,12 +36,19 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
   );
 
+  // ── Subject filter ────────────────────────────────────────────────────────
+  const [subjectFilter, setSubjectFilter] = useState(() => widget.data?.subjectFilter || '');
+  const [showTimetableSettings, setShowTimetableSettings] = useState(false);
+
   // Keep viewMode synced if changed from parent props
   useEffect(() => {
     if (widget.data?.viewMode && widget.data.viewMode !== viewMode) {
       setViewMode(widget.data.viewMode);
     }
-  }, [widget.data?.viewMode]);
+    if (widget.data?.subjectFilter !== undefined) {
+      setSubjectFilter(widget.data.subjectFilter);
+    }
+  }, [widget.data?.viewMode, widget.data?.subjectFilter]);
 
   // Auto-sync timetable ICS URL from server if not configured locally
   useEffect(() => {
@@ -78,6 +85,13 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     localStorage.setItem('timetable_view_mode', newMode);
     if (onUpdateData) {
       onUpdateData({ ...widget.data, viewMode: newMode });
+    }
+  };
+
+  const handleSubjectFilterChange = (val) => {
+    setSubjectFilter(val);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, subjectFilter: val });
     }
   };
 
@@ -174,34 +188,47 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     setShowSetup(true);
   };
 
+  // ── Filter visible periods by subject keyword ──────────────────────────────
+  const filterPeriods = (list) => {
+    if (!subjectFilter || !subjectFilter.trim()) return list;
+    const kw = subjectFilter.trim().toLowerCase();
+    return list.filter(p => {
+      const subject = (p.summary || p.SUMMARY || p.title || p.subject || '').toLowerCase();
+      const location = (p.location || p.LOCATION || '').toLowerCase();
+      return subject.includes(kw) || location.includes(kw);
+    });
+  };
+
   // ── Filter periods by view mode ────────────────────────────────────────────
   const visiblePeriods = (() => {
     // NZ Time date YYYY-MM-DD
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
 
+    let list;
     if (viewMode === 'week') {
-      return periods;
-    }
+      list = periods;
+    } else {
+      const todayPeriods = periods.filter(p => p.date === todayStr || !p.date);
 
-    const todayPeriods = periods.filter(p => p.date === todayStr || !p.date);
-
-    if (viewMode === 'tomorrow') {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-      return periods.filter(p => p.date === tomorrowStr);
+      if (viewMode === 'tomorrow') {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+        list = periods.filter(p => p.date === tomorrowStr);
+      } else if (viewMode === 'next') {
+        const now = todayPeriods.find(p => p.isNow);
+        if (now) list = [now];
+        else {
+          const next = todayPeriods.find(p => !p.isDone);
+          list = next ? [next] : [];
+        }
+      } else if (viewMode === 'remaining') {
+        list = todayPeriods.filter(p => !p.isDone);
+      } else {
+        list = todayPeriods;
+      }
     }
-
-    if (viewMode === 'next') {
-      const now = todayPeriods.find(p => p.isNow);
-      if (now) return [now];
-      const next = todayPeriods.find(p => !p.isDone);
-      return next ? [next] : [];
-    }
-    if (viewMode === 'remaining') {
-      return todayPeriods.filter(p => !p.isDone);
-    }
-    return todayPeriods;
+    return filterPeriods(list);
   })();
 
   // Auto-scrolling effect for timetable periods in readonly mode
@@ -325,9 +352,9 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   // ── Main view ──────────────────────────────────────────────────────────────
   return (
     <div className="widget-timetable">
-      {/* Header row: mode pills + gear */}
+      {/* Header row: mode pills + filter */}
       {!readonly && (
-        <div className="timetable-header">
+        <div className="timetable-header" style={{ flexWrap: 'wrap', gap: '6px' }}>
           <div className="timetable-modes">
             {[
               { id: 'today',     label: 'Today' },
@@ -347,13 +374,50 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             ))}
           </div>
           <button
-            className="timetable-settings-btn"
+            className={`notices-settings-btn ${showTimetableSettings ? 'active' : ''}`}
+            onClick={() => setShowTimetableSettings(s => !s)}
+            style={{ fontSize: '0.75em', padding: '4px 8px' }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/>
+            </svg>
+            Filter
+          </button>
+          <button
+            className="notices-settings-btn"
             onClick={handleClearUrl}
             title="Change ICS URL"
-            style={{ fontSize: '0.7em', padding: '2px 6px', width: 'auto', height: 'auto' }}
+            style={{ fontSize: '0.75em', padding: '4px 8px' }}
           >
-            Settings
+            ICS URL
           </button>
+        </div>
+      )}
+
+      {/* Subject filter panel */}
+      {!readonly && showTimetableSettings && (
+        <div className="timetable-filter-panel">
+          <div className="notices-setting-row">
+            <span className="notices-setting-label">Subject</span>
+            <div className="notices-keyword-wrap" style={{ flex: 1 }}>
+              <input
+                type="text"
+                className="notices-keyword-input"
+                placeholder="Filter by subject or room (applies on mirror)..."
+                value={subjectFilter}
+                onChange={e => handleSubjectFilterChange(e.target.value)}
+              />
+              {subjectFilter && (
+                <button
+                  className="notices-clear-btn"
+                  style={{ position: 'relative', right: 'auto', marginLeft: '4px' }}
+                  onClick={() => handleSubjectFilterChange('')}
+                >
+                  x
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
