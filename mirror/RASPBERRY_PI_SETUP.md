@@ -1,88 +1,23 @@
-# Raspberry Pi Setup Guide
+0 q=-0.0 q=-0.0 size=N/A time=00:00:02.46 bitrate=N/A speed=0.frame=   90 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:03.00 bitrate=N/A speed=  frame=  104 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:03.46 bitrate=N/A speed=0.frame=  119 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:03.96 bitrate=N/A speed=0.Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/face_recognize.py", line 1, in <module>
+    import cv2
+ModuleNotFoundError: No module named 'cv2'
+Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/recognize.py", line 23, in <module>
+    import cv2
+ModuleNotFoundError: No module named 'cv2'
+frame=  134 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:04.46 bitrate=N/A speed=0.frame=  150 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:05.00 bitrate=N/A speed=  frame=  164 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:05.46 bitrate=N/A speed=0.frame=  179 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:05.96 bitrate=N/A speed=0.Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 1, in <module>
+    import pygame
+ModuleNotFoundError: No module named 'pygame'
+raspi@raspi:~/14DTE-Project/mirror $ frame=  194 fps= 30 q=-0.0 q=-0.0 size=N/A frame=  210 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:07.00 bitrate=N/A speed=  frame=  224 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:07.46 bitrate=N/A speed=0.Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/ai_service.py", line 10, in <module>
+    from gtts import gTTS
+ModuleNotFoundError: No module named 'gtts'
+frame=  239 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:07.96 bitrate=N/A speed=0.frame=  254 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:08.46 bitrate=N/A speed=0.frame=  270 fps= 30 q=-0.0 q=-0.0 size=N/A time=00:00:09
 
-This guide covers the complete setup process for the Smart Mirror on a Raspberry Pi running Raspberry Pi OS. 
 
-Because compiling heavy computer vision libraries like OpenCV and Mediapipe directly on the Raspberry Pi is slow and prone to Python version conflicts (especially on Python 3.6 or Python 3.13), we utilize precompiled, hardware-optimized system packages from the official repositories.
+mediapipe: This is the real Python package. You install it using pip install mediapipe.python3-mediapipe: This name does not exist. It is an incorrect format that happens when mixing up Ubuntu/Debian system commands (apt) with Python commands (pip).
 
----
 
-## Step 1: Update and Install System Dependencies
-
-We install OpenCV, Mediapipe, Pygame, NumPy, PIL, and PyAudio directly from the official Debian/Raspbian repositories. Run the following commands:
-
-```bash
-sudo apt update
-sudo apt install -y python3-dev python3-venv portaudio19-dev libspeex-dev libspeexdsp-dev ffmpeg v4l2loopback-dkms python3-pip python3-opencv python3-numpy python3-pil python3-pygame python3-mediapipe python3-pyaudio
-```
-
-This installs all binary compiled dependencies cleanly and rapidly without needing slow manual compilations.
-
----
-
-## Step 2: Clone the Repository
-
-Clone the project repository and checkout the `development` branch:
-
-```bash
-git clone https://github.com/ownsupernoob2/14DTE-Project.git ~/14DTE-Project
-cd ~/14DTE-Project/mirror
-git checkout development
-```
-
----
-
-## Step 3: Run the Setup Script
-
-Execute the unified setup script to configure the virtual environment and fetch model files:
-
-```bash
-bash setup.sh
-```
-
-This setup script:
-* Verifies system dependencies.
-* Creates a Python virtual environment at `~/mirror-venv` configured with `--system-site-packages` so that the venv cleanly inherits OpenCV (`cv2`), Mediapipe (`mediapipe`), and Pygame (`pygame`) from the system.
-* Upgrades pip/wheel and installs pure-Python requirements (like requests and dotenv).
-* Downloads the gesture recognizer model task automatically.
-* Sets execution permissions for all control scripts.
-
----
-
-## Step 4: Configure Environment Variables
-
-Copy the example configuration file and edit it to insert your Gemini API Key:
-
-```bash
-cp ~/14DTE-Project/mirror/.env.example ~/14DTE-Project/mirror/.env
-nano ~/14DTE-Project/mirror/.env
-```
-
-Set the following variables inside the file:
-```ini
-API_URL=https://api.smartmirror.me
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-Press `CTRL+O` then `ENTER` to save, and `CTRL+X` to exit the nano editor.
-
----
-
-## Step 5: Start the Smart Mirror
-
-You can test the smart mirror directly by executing the boot script:
-
-```bash
-~/14DTE-Project/mirror/boot_mirror.sh
-```
-
-This pulls any outstanding updates from GitHub and fires up the full Pygame interface along with face recognition and voice assistant processes in the background!
-
-### Useful CLI Controls
-
-| Command | What it does |
-|---|---|
-| `~/14DTE-Project/mirror/boot_mirror.sh` | Pull latest updates and Start/Restart the mirror |
-| `~/14DTE-Project/mirror/start_smart_mirror.sh` | Start/Restart the mirror WITHOUT pulling updates |
-| `pkill -f smart_mirror_pro.py` | Stop the Pygame mirror window |
-| `pkill -f python` | Stop all background python modules |
-| `tail -f ~/mirror_update.log` | View background auto-update details |
+Error: Unable to locate package python3-mediapipe
