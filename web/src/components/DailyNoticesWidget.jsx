@@ -13,19 +13,26 @@ const CATEGORY_COLORS = {
   'Service':       { bg: 'rgba(20,184,166,0.12)',  accent: '#14b8a6', text: '#5eead4' },
 };
 
-// Category emoji icons
-const CATEGORY_ICONS = {
-  'General': '📢',
-  'Sports': '🏆',
-  'Meetings': '📅',
-  'Academic': '📚',
-  'Careers': '💼',
-  'Arts & Culture': '🎭',
-  'Service': '🤝',
+// Category text labels (no emojis)
+const CATEGORY_LABELS = {
+  'General':       'General',
+  'Sports':        'Sports',
+  'Meetings':      'Meetings',
+  'Academic':      'Academic',
+  'Careers':       'Careers',
+  'Arts & Culture':'Arts & Culture',
+  'Service':       'Service',
 };
 
 const ALL_CATEGORIES = ['General', 'Sports', 'Meetings', 'Academic', 'Careers', 'Arts & Culture', 'Service'];
 const YEAR_TABS = ['All', '9', '10', '11', '12', '13'];
+
+// Speed presets: px per tick (tick = 25ms)
+const SPEED_PRESETS = [
+  { label: 'Slow',   value: 0.25 },
+  { label: 'Normal', value: 0.5  },
+  { label: 'Fast',   value: 1.0  },
+];
 
 /** Extract key details (date, time, location, contact) from raw HTML */
 function extractDetails(html) {
@@ -35,7 +42,7 @@ function extractDetails(html) {
 
   const dateMatch = text.match(/\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(\s+\d{4})?\b/i) ||
                     text.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
-  const timeMatch = text.match(/\b\d{1,2}([:.]\d{2})?\s*(am|pm)\b/i) ||
+  const timeMatch = text.match(/\b\d{1,2}([:.]?\d{2})?\s*(am|pm)\b/i) ||
                     text.match(/\b\d{1,2}:\d{2}\b/);
   const roomMatch = text.match(/\b(Room|Rm|Classroom)\s+([A-Za-z0-9-]+)\b/i) ||
                     text.match(/\b(Library|Auditorium|Hall|Gymnasium|Gym|Main Field|Pool|Music Suite|Performing Arts Centre|PAC)\b/i);
@@ -64,6 +71,8 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const [searchQuery, setSearchQuery] = useState('');
   const [yearFilter, setYearFilter] = useState(widget.data?.yearFilter || 'All');
   const [catFilters, setCatFilters] = useState(() => widget.data?.catFilters ?? ALL_CATEGORIES);
+  const [keywordFilter, setKeywordFilter] = useState(() => widget.data?.keywordFilter || '');
+  const [scrollSpeed, setScrollSpeed] = useState(() => widget.data?.scrollSpeed ?? 0.5);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
 
@@ -108,11 +117,13 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   useEffect(() => {
     if (widget.data?.yearFilter !== undefined) setYearFilter(widget.data.yearFilter);
     if (widget.data?.catFilters !== undefined) setCatFilters(widget.data.catFilters);
+    if (widget.data?.keywordFilter !== undefined) setKeywordFilter(widget.data.keywordFilter);
+    if (widget.data?.scrollSpeed !== undefined) setScrollSpeed(widget.data.scrollSpeed);
   }, [widget.data]);
 
   // ─── Persist settings ───────────────────────────────────────────────────────
-  const saveSettings = (nextYearFilter, nextCatFilters) => {
-    if (onUpdateData) onUpdateData({ ...widget.data, yearFilter: nextYearFilter, catFilters: nextCatFilters });
+  const saveSettings = (updates) => {
+    if (onUpdateData) onUpdateData({ ...widget.data, ...updates });
   };
 
   // ─── Enrich notices ──────────────────────────────────────────────────────────
@@ -139,6 +150,12 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
       if (!haystack.includes(q)) return false;
     }
+    // Keyword filter — applies in both edit and mirror mode
+    if (keywordFilter && keywordFilter.trim()) {
+      const kw = keywordFilter.trim().toLowerCase();
+      const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
+      if (!haystack.includes(kw)) return false;
+    }
     return true;
   });
 
@@ -159,10 +176,10 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
 
     if (!readonly || loading || error || sorted.length === 0) { cleanup(); return; }
 
-    const SPEED = 0.5;      // px per tick
-    const INTERVAL = 25;    // ms
-    const HOLD_TOP = 4000;  // ms pause at top
-    const HOLD_BTM = 2000;  // ms pause at bottom
+    const SPEED = scrollSpeed;  // px per tick (persisted)
+    const INTERVAL = 25;        // ms
+    const HOLD_TOP = 4000;      // ms pause at top
+    const HOLD_BTM = 2000;      // ms pause at bottom
 
     const startScroll = () => {
       cleanup();
@@ -185,10 +202,9 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       }, HOLD_TOP);
     };
 
-    // Wait for DOM
     const init = setTimeout(startScroll, 300);
     return () => { clearTimeout(init); cleanup(); };
-  }, [readonly, loading, error, sorted.length]);
+  }, [readonly, loading, error, sorted.length, scrollSpeed]);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   const toggleExpand = (id) => {
@@ -204,20 +220,20 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       ? catFilters.filter(c => c !== cat)
       : [...catFilters, cat];
     setCatFilters(next);
-    saveSettings(yearFilter, next);
+    saveSettings({ catFilters: next });
   };
 
   // ─── States ──────────────────────────────────────────────────────────────────
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '16px', opacity: 0.7, height: '100%' }}>
       <div className="notices-spinner" />
-      <span style={{ fontSize: '0.9em' }}>Loading notices…</span>
+      <span style={{ fontSize: '0.9em' }}>Loading notices...</span>
     </div>
   );
 
   if (error) return (
     <div style={{ padding: '16px', color: '#f87171', fontSize: '0.85em', lineHeight: 1.5 }}>
-      <div style={{ fontWeight: 700, marginBottom: '4px' }}>⚠ Could not load notices</div>
+      <div style={{ fontWeight: 700, marginBottom: '4px' }}>Could not load notices</div>
       <div style={{ opacity: 0.7 }}>{error}</div>
     </div>
   );
@@ -234,8 +250,11 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       <div className="notices-mirror-root">
         {/* Header strip */}
         <div className="notices-mirror-header">
-          <span className="notices-mirror-title">📢 Daily Notices</span>
-          <span className="notices-mirror-count">{sorted.length} notice{sorted.length !== 1 ? 's' : ''}</span>
+          <span className="notices-mirror-title">Daily Notices</span>
+          <span className="notices-mirror-count">
+            {sorted.length} notice{sorted.length !== 1 ? 's' : ''}
+            {keywordFilter && <span className="notices-filter-pill" style={{ marginLeft: '6px' }}>"{keywordFilter}"</span>}
+          </span>
         </div>
 
         {/* Scrolling list */}
@@ -257,7 +276,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                   {/* Top row: category + year badges */}
                   <div className="notices-mirror-card-top">
                     <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
-                      {CATEGORY_ICONS[n.category] || '📢'} {n.category}
+                      {n.category}
                     </span>
                     {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
                     <div style={{ flex: 1 }} />
@@ -272,9 +291,9 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                   {/* Key details chips (date, time, location) */}
                   {(n.details.date || n.details.time || n.details.location) && (
                     <div className="notices-mirror-details">
-                      {n.details.date     && <span className="notices-detail-chip">📅 {n.details.date}</span>}
-                      {n.details.time     && <span className="notices-detail-chip">⏰ {n.details.time}</span>}
-                      {n.details.location && <span className="notices-detail-chip">📍 {n.details.location}</span>}
+                      {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
+                      {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
+                      {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
                     </div>
                   )}
 
@@ -286,7 +305,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
 
                   {/* Contact */}
                   {n.contact && (
-                    <div className="notices-mirror-contact">👤 {n.contact}</div>
+                    <div className="notices-mirror-contact">Contact: {n.contact}</div>
                   )}
                 </div>
               );
@@ -308,13 +327,13 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
           </svg>
           <input
             type="text"
-            placeholder="Search notices…"
+            placeholder="Search notices..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="notices-edit-search"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="notices-clear-btn" title="Clear">×</button>
+            <button onClick={() => setSearchQuery('')} className="notices-clear-btn" title="Clear">x</button>
           )}
         </div>
         <button
@@ -334,13 +353,13 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         <div className="notices-settings-panel">
           {/* Year tabs */}
           <div className="notices-setting-row">
-            <span className="notices-setting-label">Year Level</span>
+            <span className="notices-setting-label">Year</span>
             <div className="notices-year-tabs">
               {YEAR_TABS.map(yr => (
                 <button
                   key={yr}
                   className={`notices-year-tab ${yearFilter === yr ? 'active' : ''}`}
-                  onClick={() => { setYearFilter(yr); saveSettings(yr, catFilters); }}
+                  onClick={() => { setYearFilter(yr); saveSettings({ yearFilter: yr }); }}
                 >
                   {yr === 'All' ? 'All' : `Y${yr}`}
                 </button>
@@ -362,10 +381,69 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                     style={active ? { background: colors.bg, borderColor: colors.accent, color: colors.text } : {}}
                     onClick={() => toggleCat(cat)}
                   >
-                    {CATEGORY_ICONS[cat]} {cat}
+                    {CATEGORY_LABELS[cat]}
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Keyword filter — applies on mirror */}
+          <div className="notices-setting-row">
+            <span className="notices-setting-label">Keyword</span>
+            <div className="notices-keyword-wrap">
+              <input
+                type="text"
+                className="notices-keyword-input"
+                placeholder="Filter by word (applies on mirror)..."
+                value={keywordFilter}
+                onChange={e => {
+                  setKeywordFilter(e.target.value);
+                  saveSettings({ keywordFilter: e.target.value });
+                }}
+              />
+              {keywordFilter && (
+                <button
+                  className="notices-clear-btn"
+                  style={{ position: 'relative', right: 'auto', marginLeft: '4px' }}
+                  onClick={() => { setKeywordFilter(''); saveSettings({ keywordFilter: '' }); }}
+                >
+                  x
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Scroll speed — mirror only */}
+          <div className="notices-setting-row">
+            <span className="notices-setting-label">Speed</span>
+            <div className="notices-speed-control">
+              {SPEED_PRESETS.map(p => (
+                <button
+                  key={p.label}
+                  className={`notices-speed-btn ${scrollSpeed === p.value ? 'active' : ''}`}
+                  onClick={() => { setScrollSpeed(p.value); saveSettings({ scrollSpeed: p.value }); }}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <div className="notices-speed-slider-wrap">
+                <span className="notices-speed-label">Custom:</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="2.5"
+                  step="0.05"
+                  value={scrollSpeed}
+                  className="notices-speed-slider"
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    setScrollSpeed(v);
+                    saveSettings({ scrollSpeed: v });
+                  }}
+                />
+                <span className="notices-speed-value">{scrollSpeed.toFixed(2)}x</span>
+              </div>
             </div>
           </div>
         </div>
@@ -376,6 +454,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         {sorted.length} of {enriched.length} notices
         {yearFilter !== 'All' && <span className="notices-filter-pill">Year {yearFilter}</span>}
         {searchQuery && <span className="notices-filter-pill">"{searchQuery}"</span>}
+        {keywordFilter && <span className="notices-filter-pill">kw: "{keywordFilter}"</span>}
       </div>
 
       {/* Notice list */}
@@ -402,7 +481,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                 <div className="notices-edit-card-header">
                   <div className="notices-edit-badges">
                     <span className="notices-edit-badge-cat" style={{ background: colors.bg, color: colors.text }}>
-                      {CATEGORY_ICONS[n.category]} {n.category}
+                      {n.category}
                     </span>
                     {isUrgent && <span className="notices-edit-badge-urgent">URGENT</span>}
                     {n.targetYears.map(yr => (
@@ -410,7 +489,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                     ))}
                   </div>
                   {n.contact && (
-                    <span className="notices-edit-contact">👤 {n.contact}</span>
+                    <span className="notices-edit-contact">{n.contact}</span>
                   )}
                 </div>
 
@@ -420,10 +499,10 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                 {/* Detail chips */}
                 {(n.details.date || n.details.time || n.details.location || n.details.deadline) && (
                   <div className="notices-edit-details">
-                    {n.details.date     && <span className="notices-detail-chip">📅 {n.details.date}</span>}
-                    {n.details.time     && <span className="notices-detail-chip">⏰ {n.details.time}</span>}
-                    {n.details.location && <span className="notices-detail-chip">📍 {n.details.location}</span>}
-                    {n.details.deadline && <span className="notices-detail-chip deadline">🔔 {n.details.deadline}</span>}
+                    {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
+                    {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
+                    {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
+                    {n.details.deadline && <span className="notices-detail-chip deadline">Deadline: {n.details.deadline}</span>}
                   </div>
                 )}
 
@@ -443,7 +522,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
                     className="notices-expand-btn"
                     onClick={() => toggleExpand(n.id)}
                   >
-                    {isExpanded ? '↑ Show less' : '↓ Read more'}
+                    {isExpanded ? 'Show less' : 'Read more'}
                   </button>
                 )}
               </div>

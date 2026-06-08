@@ -8,14 +8,46 @@ const DEFAULT_SIZES = {
   clock:     { w: 220, h: 100 },
   notices:   { w: 420, h: 340 },
   timetable: { w: 360, h: 320 },
-  note:      { w: 220, h: 180 },
+  note:      { w: 220, h: 200 },
 }
 
 const WIDGET_LIMITS = {
   clock:     { minW: 160, minH: 80,  maxW: 600, maxH: 300 },
   notices:   { minW: 300, minH: 200, maxW: 900, maxH: 700 },
   timetable: { minW: 250, minH: 200, maxW: 900, maxH: 750 },
-  note:      { minW: 160, minH: 100, maxW: 600, maxH: 500 },
+  note:      { minW: 160, minH: 120, maxW: 600, maxH: 500 },
+}
+
+// Note expiry duration options
+const EXPIRY_OPTIONS = [
+  { label: 'No expiry', value: 0 },
+  { label: '1 hour',    value: 60 * 60 * 1000 },
+  { label: '4 hours',   value: 4 * 60 * 60 * 1000 },
+  { label: '1 day',     value: 24 * 60 * 60 * 1000 },
+];
+
+function useNoteExpiry(expireAt) {
+  const [expired, setExpired] = useState(false);
+  const [minutesLeft, setMinutesLeft] = useState(null);
+
+  useEffect(() => {
+    if (!expireAt) { setExpired(false); setMinutesLeft(null); return; }
+    const check = () => {
+      const diff = new Date(expireAt) - Date.now();
+      if (diff <= 0) {
+        setExpired(true);
+        setMinutesLeft(0);
+      } else {
+        setExpired(false);
+        setMinutesLeft(Math.ceil(diff / 60000));
+      }
+    };
+    check();
+    const id = setInterval(check, 30000);
+    return () => clearInterval(id);
+  }, [expireAt]);
+
+  return { expired, minutesLeft };
 }
 
 function ClockWidget() {
@@ -43,6 +75,9 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
   const resizeStart = useRef(null)
   const widgetRef = useRef(null)
   const { isServerUp } = useServerStatus()
+  const { expired, minutesLeft } = useNoteExpiry(
+    widget.type === 'note' ? widget.data?.expireAt : null
+  )
 
   const defaults = DEFAULT_SIZES[widget.type] || { w: 220, h: 160 }
   const limits = WIDGET_LIMITS[widget.type] || { minW: 160, minH: 80, maxW: 800, maxH: 600 }
@@ -117,6 +152,11 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
     window.addEventListener('mouseup', onMouseUp)
   }, [readonly, widgetW, widgetH, widget.id, onResize, limits])
 
+  // Hide expired notes on mirror
+  if (readonly && widget.type === 'note' && expired) {
+    return null;
+  }
+
   return (
     <motion.div
       ref={widgetRef}
@@ -182,27 +222,84 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
         )}
         {widget.type === 'note'      && (
           readonly ? (
-            <div 
-              className="widget-note-view" 
-              style={{ 
-                whiteSpace: 'pre-wrap', 
-                wordBreak: 'break-word', 
-                height: '100%', 
+            <div
+              className="widget-note-view"
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                height: '100%',
                 width: '100%',
                 overflowY: 'auto',
                 fontSize: '0.95em',
                 lineHeight: 1.5,
               }}
             >
-              {widget.data || 'No note written.'}
+              {widget.data?.text || widget.data || 'No note written.'}
+              {minutesLeft !== null && minutesLeft <= 10 && minutesLeft > 0 && (
+                <div style={{
+                  marginTop: '8px',
+                  fontSize: '0.72em',
+                  color: 'rgba(251,191,36,0.8)',
+                  borderTop: '1px solid rgba(255,255,255,0.08)',
+                  paddingTop: '6px',
+                  fontWeight: 600,
+                }}>
+                  Expires in {minutesLeft} min
+                </div>
+              )}
             </div>
           ) : (
-            <textarea
-              className="widget-textarea"
-              placeholder="Type your note..."
-              value={widget.data || ''}
-              onChange={(e) => onUpdateData && onUpdateData(widget.id, e.target.value)}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
+              <textarea
+                className="widget-textarea"
+                style={{ flex: 1 }}
+                placeholder="Type your note..."
+                value={(typeof widget.data === 'object' ? widget.data?.text : widget.data) || ''}
+                onChange={(e) => {
+                  const currentData = typeof widget.data === 'object' ? widget.data : {};
+                  onUpdateData && onUpdateData(widget.id, { ...currentData, text: e.target.value });
+                }}
+              />
+              {/* Expiry picker */}
+              <div className="note-expiry-row">
+                <span className="note-expiry-label">Expires:</span>
+                <div className="note-expiry-btns">
+                  {EXPIRY_OPTIONS.map(opt => {
+                    const currentData = typeof widget.data === 'object' ? widget.data : {};
+                    const currentExpiry = currentData.expireDuration || 0;
+                    const isActive = currentExpiry === opt.value;
+                    return (
+                      <button
+                        key={opt.label}
+                        className={`note-expiry-btn ${isActive ? 'active' : ''}`}
+                        onClick={() => {
+                          const expireAt = opt.value > 0
+                            ? new Date(Date.now() + opt.value).toISOString()
+                            : null;
+                          onUpdateData && onUpdateData(widget.id, {
+                            ...currentData,
+                            expireDuration: opt.value,
+                            expireAt,
+                          });
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(() => {
+                  const currentData = typeof widget.data === 'object' ? widget.data : {};
+                  if (!currentData.expireAt) return null;
+                  const diff = new Date(currentData.expireAt) - Date.now();
+                  if (diff <= 0) return <span className="note-expiry-status expired">Expired</span>;
+                  const mins = Math.ceil(diff / 60000);
+                  const hrs = Math.floor(mins / 60);
+                  const label = hrs >= 1 ? `${hrs}h ${mins % 60}m left` : `${mins}m left`;
+                  return <span className="note-expiry-status">{label}</span>;
+                })()}
+              </div>
+            </div>
           )
         )}
       </div>
