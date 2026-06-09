@@ -1,0 +1,5 @@
+cd mirror
+chmod +x setup.sh start_smart_mirror.sh
+./setup.sh          # installs python3.10 deps + mirror-venv
+export API_URL=https://api.smartmirror.me   # or your server URL
+./start_smart_mirror.sh
