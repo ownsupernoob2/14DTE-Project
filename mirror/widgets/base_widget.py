@@ -8,13 +8,6 @@ class Widget:
     """Base widget class providing common functionality for all widgets."""
 
     def __init__(self, x, y, w, h, title):
-        """Initialize a widget with position, size, and title.
-
-        Args:
-            x, y: Position coordinates
-            w, h: Width and height
-            title: Widget title (displayed in header)
-        """
         self.rect = pygame.Rect(x, y, w, h)
         self.target_pos = [x, y]
         self.title = title
@@ -26,7 +19,6 @@ class Widget:
         self.alpha = 0
 
     def update(self, scroll_y=0):
-        """Update widget animation and position smoothing."""
         if not self.dragging:
             dx = self.target_pos[0] - self.rect.x
             dy = self.target_pos[1] - self.rect.y
@@ -41,41 +33,33 @@ class Widget:
             self.alpha = min(255, self.alpha + 5)
 
     def draw(self, surface, font_title, font_content, scroll_y=0):
-        """Draw the widget with background, title, and content."""
         draw_y = self.rect.y - scroll_y
         if draw_y > surface.get_height() or draw_y + self.rect.h < 0:
             return
 
-        # Create widget surface with rounded corners
         s = pygame.Surface((self.rect.w, self.rect.h), pygame.SRCALPHA)
-        
-        # Transparent glass-like background (alpha ~15) for high visual excellence
+
         bg_alpha = int(15 * (self.alpha / 255))
         bg_color = (255, 255, 255, bg_alpha)
         pygame.draw.rect(s, bg_color, s.get_rect(), border_radius=24)
 
-        # Draw glass border outline (1px thin, white with low opacity)
         border_alpha = int(24 * (self.alpha / 255))
         border_color = (255, 255, 255, border_alpha)
         pygame.draw.rect(s, border_color, s.get_rect(), 1, border_radius=24)
 
-        # Draw drag highlight
         if self.dragging:
             pygame.draw.rect(s, (255, 255, 255, 80), s.get_rect(), 2, border_radius=24)
 
-        # Draw title
         if self.title:
             title_surf = font_title.render(self.title.upper(), True, COLOR_TEXT_DIM)
             s.blit(title_surf, (20, 15))
 
-        # Draw content
         if self.content_surface:
             s.blit(self.content_surface, (20, 50))
 
         surface.blit(s, (self.rect.x, draw_y))
 
     def handle_drag_start(self, x, y, scroll_y=0):
-        """Start dragging the widget if clicked."""
         adj_y = y + scroll_y
         if self.rect.collidepoint(x, adj_y):
             self.dragging = True
@@ -85,14 +69,12 @@ class Widget:
         return False
 
     def handle_drag_update(self, x, y, scroll_y=0):
-        """Update widget position during drag."""
         if self.dragging:
             self.rect.x = x - self.drag_offset_x
             self.rect.y = (y + scroll_y) - self.drag_offset_y
             self.target_pos = [self.rect.x, self.rect.y]
 
     def handle_drag_end(self, screen_w, screen_h):
-        """End dragging and snap to grid."""
         if self.dragging:
             self.dragging = False
             col_width = screen_w / GRID_COLS

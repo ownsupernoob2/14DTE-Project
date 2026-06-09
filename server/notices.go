@@ -362,10 +362,18 @@ Strict JSON format requirements:
 Each notice object in the array must have EXACTLY these fields:
 - "title": A clean, concise headline summarizing the notice (e.g. "Year 12 Geography Field Trip").
 - "category": Must be exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Choose the most appropriate category based on the content.
-- "notice": The body of the notice formatted as clean, well-spaced HTML paragraphs (<p>) and/or bullet lists (<ul><li>) for maximum readability. Bold critical details like Date, Time, Location, Cost, and Deadlines using <strong>. Correct any OCR/spelling/spacing errors (e.g., replace strange characters like "King?s" with "King's", "min utes" with "minutes").
-- "targetYears": An array of strings representing the target school year levels, e.g. ["9", "10"], ["12"], or ["All"] if it applies to everyone or isn't specified. Extract year level mentions like "Year 9", "Y10", "Juniors" (Year 9 and 10), "Seniors" (Year 11, 12, and 13).
+- "notice": The body of the notice formatted as clean, well-spaced HTML. Use <p> for paragraphs and <ul><li> for lists. Bold critical details like Date, Time, Location, Cost, and Deadlines using <strong>. Correct any OCR/spelling/spacing errors (e.g., replace "King?s" with "King's", "min utes" with "minutes"). Write complete, readable sentences.
+- "targetYears": An array of strings representing the target school year levels, e.g. ["9", "10"], ["12"], or ["All"] if it applies to everyone or is not specified. Extract year level mentions like "Year 9", "Y10", "Juniors" (Year 9 and 10), "Seniors" (Year 11, 12, and 13).
 - "importance": Either "high" (use for room changes, time-critical updates, urgent instructions, cancellations) or "normal" (general notices).
 - "contact": The name of the teacher, facilitator, or staff member in charge of the event/notice if mentioned (e.g. "Mr Smith"), otherwise an empty string "".
+
+CRITICAL RULES — you must follow these exactly:
+- Do NOT use any emoji characters anywhere in any field. Use plain descriptive text only.
+- Do NOT use bullet point symbols or dashes as list markers — use proper HTML <ul><li> tags.
+- Do NOT start titles or notice bodies with symbols, dashes, or decorative characters.
+- Only use these HTML tags: <p>, <ul>, <li>, <strong>. No other tags allowed.
+- No markdown formatting (no **, no #, no -) in the notice field — HTML only.
+- Respond with ONLY a valid JSON array. No explanation, no markdown code fences.
 
 Text to process:
 ` + text
@@ -408,23 +416,41 @@ Text to process:
 
 	respText := geminiResp.Candidates[0].Content.Parts[0].Text
 
-	// Extract JSON from markdown
+	// Extract JSON — handle markdown fences or bare JSON array
+	respText = strings.TrimSpace(respText)
 	jsonRe := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
-	matches := jsonRe.FindStringSubmatch(respText)
-	if len(matches) > 1 {
-		respText = matches[1]
+	if matches := jsonRe.FindStringSubmatch(respText); len(matches) > 1 {
+		respText = strings.TrimSpace(matches[1])
+	}
+	// Find the outermost JSON array
+	arrStart := strings.Index(respText, "[")
+	arrEnd := strings.LastIndex(respText, "]")
+	if arrStart >= 0 && arrEnd > arrStart {
+		respText = respText[arrStart : arrEnd+1]
 	}
 
 	var notices []NoticeItem
 	if err := json.Unmarshal([]byte(respText), &notices); err != nil {
-		log.Printf("Gemini JSON parse error: %v", err)
+		log.Printf("Gemini JSON parse error: %v\nResponse was: %.500s", err, respText)
 		return nil
 	}
 
 	return notices
 }
 
+// emojiRe matches Unicode emoji sequences (broad coverage)
+var emojiRe = regexp.MustCompile(`[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FEFF}\x{1F900}-\x{1F9FF}]`)
+
+func stripEmoji(s string) string {
+	return strings.TrimSpace(emojiRe.ReplaceAllString(s, ""))
+}
+
 func normalizeNoticeItem(item NoticeItem) NoticeItem {
+	// Strip emojis from text fields
+	item.Title = stripEmoji(item.Title)
+	item.Contact = stripEmoji(item.Contact)
+	item.Notice = emojiRe.ReplaceAllString(item.Notice, "")
+
 	// Normalize Category
 	item.Category = strings.TrimSpace(item.Category)
 	validCategories := map[string]bool{
