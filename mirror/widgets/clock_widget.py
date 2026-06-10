@@ -1,63 +1,53 @@
-# widgets/clock_widget.py
-# Clock widget displaying current time and date
-
 import pygame
 from datetime import datetime
 from .base_widget import Widget
 from utils.fonts import get_font
-from config import *
+from .style import font_size, COLOR_WHITE, COLOR_TEXT_DIM
+
+REF_W, REF_H = 220, 100
+
 
 class ClockWidget(Widget):
-    """Widget displaying current time and date in a clean, modern format."""
+    """Centered clock matching web .widget-clock (large time + dim date below)."""
 
     def __init__(self, x, y, w, h):
-        """Initialize the clock widget.
+        super().__init__(x, y, w, h, "", chromeless=True)
+        self.last_minute = ""
 
-        Args:
-            x, y: Position coordinates
-            w, h: Width and height
-        """
-        super().__init__(x, y, w, h, "")  # No title for clean look
-        self.last_time = ""
-        self.font_huge = get_font(100, bold=True)  # Large time display
-        self.font_med = get_font(40)               # AM/PM
-        self.font_small = get_font(24)             # Date
+    def _fonts(self):
+        s = font_size(14, self.rect.w, self.rect.h, REF_W, REF_H)
+        return (
+            get_font(int(s * 2.4), bold=True),
+            get_font(int(s * 0.8)),
+        )
 
     def update(self, scroll_y=0):
-        """Update the widget and check if time has changed."""
         super().update(scroll_y)
         now = datetime.now()
-        current_time = now.strftime("%H:%M")
-        if current_time != self.last_time:
-            self.last_time = current_time
+        minute_key = now.strftime("%H:%M")
+        if minute_key != self.last_minute:
+            self.last_minute = minute_key
             self.needs_redraw = True
 
     def draw(self, surface, font_title, font_content, scroll_y=0):
-        """Draw the clock with time, AM/PM, and date."""
-        # Create widget surface
-        s = pygame.Surface((self.rect.w, self.rect.h), pygame.SRCALPHA)
-
-        # Draw drag highlight if needed
-        if self.dragging:
-             pygame.draw.rect(s, (255, 255, 255, 50), s.get_rect(), 2, border_radius=15)
-
         now = datetime.now()
-        time_str = now.strftime("%I:%M")  # 12-hour format without leading zero
-        ampm_str = now.strftime("%p")     # AM/PM
-        date_str = now.strftime("%A, %B %d")  # "Monday, January 26"
+        time_part = now.strftime("%I:%M").lstrip("0")
+        ampm = now.strftime("%p").lower()
+        time_str = f"{time_part} {ampm}"
+        date_str = now.strftime("%A, %d %B")
 
-        # Render time (large, bold)
-        time_surf = self.font_huge.render(time_str, True, COLOR_WHITE)
-        s.blit(time_surf, (0, 0))
+        font_time, font_date = self._fonts()
+        time_surf = font_time.render(time_str, True, COLOR_WHITE)
+        date_surf = font_date.render(date_str, True, COLOR_TEXT_DIM)
 
-        # Render AM/PM (medium, offset from time)
-        ampm_surf = self.font_med.render(ampm_str, True, COLOR_TEXT_DIM)
-        s.blit(ampm_surf, (time_surf.get_width() + 15, 55))
+        rx = self.rect.x
+        ry = self.rect.y - scroll_y
+        cx = rx + self.rect.w // 2
+        cy = ry + self.rect.h // 2
 
-        # Render date (small, below time)
-        date_surf = self.font_small.render(date_str, True, COLOR_TEXT_DIM)
-        s.blit(date_surf, (10, 110))
-
-        # Blit to main surface
-        draw_y = self.rect.y - scroll_y
-        surface.blit(s, (self.rect.x, draw_y))
+        time_y = cy - (time_surf.get_height() + date_surf.get_height() + 6) // 2
+        surface.blit(time_surf, (cx - time_surf.get_width() // 2, time_y))
+        surface.blit(
+            date_surf,
+            (cx - date_surf.get_width() // 2, time_y + time_surf.get_height() + 6),
+        )

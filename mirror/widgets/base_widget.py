@@ -7,10 +7,11 @@ from config import *
 class Widget:
     """Base widget class providing common functionality for all widgets."""
 
-    def __init__(self, x, y, w, h, title):
+    def __init__(self, x, y, w, h, title, chromeless=False):
         self.rect = pygame.Rect(x, y, w, h)
         self.target_pos = [x, y]
         self.title = title
+        self.chromeless = chromeless
         self.dragging = False
         self.drag_offset_x = 0
         self.drag_offset_y = 0
@@ -33,6 +34,8 @@ class Widget:
             self.alpha = min(255, self.alpha + 5)
 
     def draw(self, surface, font_title, font_content, scroll_y=0):
+        if self.chromeless:
+            return
         draw_y = self.rect.y - scroll_y
         if draw_y > surface.get_height() or draw_y + self.rect.h < 0:
             return

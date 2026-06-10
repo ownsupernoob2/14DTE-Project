@@ -3,10 +3,9 @@ import time
 from datetime import datetime, timezone
 from .base_widget import Widget
 from utils.fonts import get_font
+from .style import font_size, COLOR_TEXT
 
-COLOR_WHITE = (255, 255, 255)
-COLOR_WARNING = (251, 191, 36)
-COLOR_EXPIRED = (239, 68, 68)
+REF_W, REF_H = 220, 200
 
 
 def _parse_iso(dt_str):
@@ -23,8 +22,10 @@ def _parse_iso(dt_str):
 
 
 class NoteWidget(Widget):
+    """Plain note text matching web readonly .widget-note-view."""
+
     def __init__(self, x, y, w, h, data=None):
-        super().__init__(x, y, w, h, "")
+        super().__init__(x, y, w, h, "", chromeless=True)
         if isinstance(data, dict):
             self.text = data.get('text', '') or ''
             self.expire_at = _parse_iso(data.get('expireAt'))
@@ -34,9 +35,6 @@ class NoteWidget(Widget):
         else:
             self.text = ''
             self.expire_at = None
-        self.font_title = get_font(13, bold=True)
-        self.font_body = get_font(14)
-        self.font_warn = get_font(11, bold=True)
 
     def _is_expired(self):
         return self.expire_at is not None and time.time() >= self.expire_at
@@ -53,44 +51,41 @@ class NoteWidget(Widget):
     def draw(self, surface, font_title, font_content, scroll_y=0):
         if self._is_expired():
             return
+
         rx = self.rect.x
         ry = self.rect.y - scroll_y
-        rw = self.rect.w
-        rh = self.rect.h
-        glass = pygame.Surface((rw, rh), pygame.SRCALPHA)
-        glass.fill((20, 20, 35, 210))
-        surface.blit(glass, (rx, ry))
-        pygame.draw.rect(surface, (255, 255, 255, 40), (rx, ry, rw, rh), 1, border_radius=12)
-        header_h = 28
-        header_surf = pygame.Surface((rw, header_h), pygame.SRCALPHA)
-        header_surf.fill((99, 102, 241, 60))
-        surface.blit(header_surf, (rx, ry))
-        label = self.font_title.render('Note', True, (200, 200, 220))
-        surface.blit(label, (rx + 12, ry + (header_h - label.get_height()) // 2))
-        pad = 12
-        text_x = rx + pad
-        text_y = ry + header_h + pad
-        max_w = rw - pad * 2
-        max_y = ry + rh - pad
+        pad = 4
+        max_w = self.rect.w - pad * 2
+        line_h = int(font_size(14, self.rect.w, self.rect.h, REF_W, REF_H) * 1.5)
+        font_body = get_font(font_size(14, self.rect.w, self.rect.h, REF_W, REF_H))
+        font_warn = get_font(font_size(11, self.rect.w, self.rect.h, REF_W, REF_H), bold=True)
+
+        text = self.text if self.text else 'No note written.'
+        y = ry + pad
+        max_y = ry + self.rect.h - pad
         mins_left = self._minutes_left()
         if mins_left is not None and mins_left <= 10:
-            max_y -= 20
-        text = self.text if self.text else 'No note written.'
-        line = ''
-        for word in text.split():
-            test_line = line + (' ' if line else '') + word
-            if self.font_body.size(test_line)[0] > max_w:
-                if text_y + self.font_body.get_height() > max_y:
-                    break
-                surface.blit(self.font_body.render(line, True, COLOR_WHITE), (text_x, text_y))
-                text_y += self.font_body.get_height() + 3
-                line = word
-            else:
-                line = test_line
-        if line and text_y + self.font_body.get_height() <= max_y:
-            surface.blit(self.font_body.render(line, True, COLOR_WHITE), (text_x, text_y))
+            max_y -= line_h
+
+        for paragraph in text.split('\n'):
+            line = ''
+            for word in paragraph.split():
+                test = (line + ' ' + word).strip()
+                if font_body.size(test)[0] > max_w:
+                    if line:
+                        if y + line_h > max_y:
+                            return
+                        surface.blit(font_body.render(line, True, COLOR_TEXT), (rx + pad, y))
+                        y += line_h
+                    line = word
+                else:
+                    line = test
+            if line and y + line_h <= max_y:
+                surface.blit(font_body.render(line, True, COLOR_TEXT), (rx + pad, y))
+                y += line_h
+
         if mins_left is not None and mins_left <= 10:
-            badge_color = COLOR_EXPIRED if mins_left <= 2 else COLOR_WARNING
+            badge_color = (239, 68, 68) if mins_left <= 2 else (251, 191, 36)
             badge_text = f"Expires in {mins_left} min" if mins_left > 0 else "Expired"
-            badge_surf = self.font_warn.render(badge_text, True, badge_color)
-            surface.blit(badge_surf, (rx + pad, ry + rh - pad - badge_surf.get_height()))
+            badge_surf = font_warn.render(badge_text, True, badge_color)
+            surface.blit(badge_surf, (rx + pad, ry + self.rect.h - pad - badge_surf.get_height()))
