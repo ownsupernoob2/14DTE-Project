@@ -54,23 +54,27 @@ class SmartMirrorPro:
         self.current_user_id = None
         self.current_user_name = ""
         self.face_detected = False
+        self.face_recognized = False
         self.face_confidence = 0.0
+        self._last_layout_sig = None
 
         self.widgets = []
-        self.load_idle_widgets()
         self.dragging_widget = None
 
     def setup_background(self):
         self.bg_image = pygame.Surface((self.width, self.height))
         self.bg_image.fill((0, 0, 0))
 
-    def load_idle_widgets(self):
+    def clear_widgets(self):
         self.widgets = []
-        w = int(0.25 * self.width)
-        h = int(0.18 * self.height)
-        x = int(0.04 * self.width)
-        y = int(0.04 * self.height)
-        self.widgets.append(ClockWidget(x, y, w, h))
+        self.dragging_widget = None
+
+    def _layout_signature(self, fdata):
+        return json.dumps({
+            'user_id': fdata.get('user_id'),
+            'recognized': fdata.get('recognized', False),
+            'widgets': fdata.get('widgets') or [],
+        }, sort_keys=True)
 
     def _pct_to_pixels(self, wd):
         x = wd.get('x', 5.0)
@@ -99,8 +103,8 @@ class SmartMirrorPro:
     def apply_remote_widgets(self, remote_widgets):
         try:
             self.widgets = []
+            self.dragging_widget = None
             if not remote_widgets:
-                self.load_idle_widgets()
                 return
 
             for wd in remote_widgets:
@@ -130,7 +134,7 @@ class SmartMirrorPro:
                     self.widgets.append(NoteWidget(real_x, real_y, real_w, real_h, note_data))
         except Exception as e:
             print(f"[ERROR] Failed to apply remote widgets: {e}")
-            self.load_idle_widgets()
+            self.clear_widgets()
 
     def toggle_bg(self):
         self.show_background = not self.show_background
@@ -217,21 +221,25 @@ class SmartMirrorPro:
             try:
                 with open(FACE_DATA_FILE) as f:
                     fdata = json.load(f)
-                    new_user_id = fdata.get('user_id')
+                    layout_sig = self._layout_signature(fdata)
+
                     self.face_detected = fdata.get('detected', False)
+                    self.face_recognized = fdata.get('recognized', False)
                     self.face_confidence = fdata.get('confidence', 0.0)
 
-                    if new_user_id != self.current_user_id:
+                    if layout_sig != self._last_layout_sig:
+                        self._last_layout_sig = layout_sig
+                        new_user_id = fdata.get('user_id')
                         self.current_user_id = new_user_id
                         self.current_user_name = fdata.get('user_name', '')
 
-                        if new_user_id and new_user_id != 'idle':
+                        if self.face_recognized and new_user_id and new_user_id != 'idle':
                             self.apply_remote_widgets(fdata.get('widgets', []))
                             for w in self.widgets:
                                 if hasattr(w, 'set_user_id'):
                                     w.set_user_id(new_user_id)
                         else:
-                            self.load_idle_widgets()
+                            self.clear_widgets()
             except Exception:
                 pass
 
@@ -281,7 +289,7 @@ class SmartMirrorPro:
 
         pygame.draw.circle(self.screen, dot_color, (self.width - 20, 20), 5)
 
-        if self.face_detected and self.face_confidence >= 0.5 and self.current_user_id and self.current_user_id != 'idle':
+        if self.face_recognized and self.current_user_id and self.current_user_id != 'idle':
             display_text = self.current_user_name or self.current_user_id
             name_lbl = self.font_title.render(display_text, True, dot_color)
             self.screen.blit(name_lbl, (self.width - 30 - name_lbl.get_width(), 12))
