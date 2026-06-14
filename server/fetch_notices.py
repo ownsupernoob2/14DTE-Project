@@ -131,7 +131,7 @@ def clean_messy_text(raw_text):
 def process_with_gemini(text):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return None
+        api_key = "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
         
     try:
         prompt = """You are an expert school notices parsing assistant.
