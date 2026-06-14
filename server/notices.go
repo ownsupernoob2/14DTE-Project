@@ -350,7 +350,7 @@ type geminiResponse struct {
 func processWithGemini(text string) []NoticeItem {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		return nil
+		apiKey = "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
 	}
 
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
