@@ -79,11 +79,14 @@ def extract_details(html):
 
 class NoticesWidget(Widget):
     def __init__(self, x, y, w, h, api_url='https://api.smartmirror.me',
-                 keyword_filter='', scroll_speed=DEFAULT_SCROLL_SPEED):
+                 keyword_filter='', scroll_speed=DEFAULT_SCROLL_SPEED,
+                 year_filter='All', cat_filters=None):
         super().__init__(x, y, w, h, "", chromeless=True)
         self.api_url = api_url
         self.keyword_filter = keyword_filter.strip().lower() if keyword_filter else ''
         self.scroll_speed = float(scroll_speed) if scroll_speed else DEFAULT_SCROLL_SPEED
+        self.year_filter = year_filter
+        self.cat_filters = cat_filters
         self.notices = []
         self.error_msg = ""
         self.scroll_offset = 0.0
@@ -121,7 +124,7 @@ class NoticesWidget(Widget):
             self._scroll_paused_until = now + HOLD_BOTTOM_MS / 1000.0
 
     def _header_h(self):
-        return max(28, int(font_size(12, self.rect.w, self.rect.h, REF_W, REF_H) * 2.2))
+        return max(28, int(font_size(15, self.rect.w, self.rect.h, REF_W, REF_H) * 2.2))
 
     def _start_fetch(self):
         threading.Thread(target=self._fetch_notices, daemon=True).start()
@@ -146,6 +149,22 @@ class NoticesWidget(Widget):
                 self.needs_redraw = True
 
     def _passes_filter(self, notice):
+        # 1. Year filter
+        if self.year_filter and self.year_filter != 'All':
+            target_years = notice.get('targetYears') or notice.get('target_years') or ['All']
+            if not isinstance(target_years, list):
+                target_years = [target_years]
+            target_years_str = [str(y) for y in target_years]
+            if 'All' not in target_years_str and self.year_filter not in target_years_str:
+                return False
+
+        # 2. Category filter
+        if self.cat_filters is not None:
+            category = notice.get('category', 'General')
+            if category not in self.cat_filters:
+                return False
+
+        # 3. Keyword filter
         if not self.keyword_filter:
             return True
         haystack = ' '.join([
@@ -166,18 +185,18 @@ class NoticesWidget(Widget):
         rh = self.rect.h
         sc = self._scale()
 
-        font_header = get_font(max(10, int(12 * sc)), bold=True)
-        font_count = get_font(max(8, int(10 * sc)))
-        font_badge = get_font(max(8, int(10 * sc)), bold=True)
-        font_title = get_font(max(11, int(13 * sc)), bold=True)
-        font_body = get_font(max(9, int(11 * sc)))
-        font_chip = get_font(max(8, int(10 * sc)), bold=True)
+        font_header = get_font(max(10, int(15 * sc)), bold=True)
+        font_count = get_font(max(8, int(12 * sc)))
+        font_badge = get_font(max(8, int(12 * sc)), bold=True)
+        font_title = get_font(max(11, int(17 * sc)), bold=True)
+        font_body = get_font(max(9, int(14 * sc)))
+        font_chip = get_font(max(8, int(12 * sc)), bold=True)
 
         header_h = self._header_h()
         pygame.draw.line(surface, (255, 255, 255, 18), (rx + 14, ry + header_h), (rx + rw - 14, ry + header_h))
 
         title_s = font_header.render("DAILY NOTICES", True, (230, 230, 230))
-        surface.blit(title_s, (rx + 14, ry + 10))
+        surface.blit(title_s, (rx + 14, ry + (header_h - title_s.get_height()) // 2))
 
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
@@ -186,14 +205,14 @@ class NoticesWidget(Widget):
 
         count_text = f"{len(filtered)} notice{'s' if len(filtered) != 1 else ''}"
         count_s = font_count.render(count_text, True, COLOR_TEXT_MUTED)
-        surface.blit(count_s, (rx + rw - 14 - count_s.get_width(), ry + 12))
+        surface.blit(count_s, (rx + rw - 14 - count_s.get_width(), ry + (header_h - count_s.get_height()) // 2))
 
         content_top = ry + header_h + 10
         content_h = rh - header_h - 24
         clip_w = rw - 28
 
         if self.needs_redraw or self.content_surface is None:
-            self._render_content(filtered, error_msg, clip_w, font_badge, font_title, font_body, font_chip)
+            self._render_content(filtered, error_msg, clip_w, font_badge, font_title, font_body, font_chip, sc)
             self.needs_redraw = False
 
         if self.content_surface:
@@ -201,7 +220,7 @@ class NoticesWidget(Widget):
             clip.blit(self.content_surface, (0, -int(self.scroll_offset)))
             surface.blit(clip, (rx + 14, content_top))
 
-    def _render_content(self, notices, error_msg, width, font_badge, font_title, font_body, font_chip):
+    def _render_content(self, notices, error_msg, width, font_badge, font_title, font_body, font_chip, sc):
         if not notices:
             msg = error_msg or "No notices available today."
             self.content_surface = pygame.Surface((width, 40), pygame.SRCALPHA)
@@ -226,18 +245,25 @@ class NoticesWidget(Widget):
             contact = notice.get('contact', '')
 
             lines = self._wrap(font_body, body, width - 24)
-            card_h = 10 + 18 + 20 + len(lines) * (font_body.get_height() + 3) + 8
+
+            # Calculate dynamic card height to prevent overflow
+            padding_top = int(12 * sc)
+            badge_h = font_badge.get_height()
+            title_h = font_title.get_height()
+            body_h = len(lines) * (font_body.get_height() + int(3 * sc))
+            
+            card_h = padding_top + badge_h + int(6 * sc) + title_h + int(6 * sc) + body_h + int(8 * sc)
             if details:
-                card_h += 22
+                card_h += font_chip.get_height() + int(10 * sc)
             if contact:
-                card_h += 18
+                card_h += font_body.get_height() + int(6 * sc)
 
             card = pygame.Surface((width, card_h), pygame.SRCALPHA)
             pygame.draw.rect(card, (255, 255, 255, 6), card.get_rect(), border_radius=10)
             pygame.draw.rect(card, (255, 255, 255, 18), card.get_rect(), 1, border_radius=10)
             pygame.draw.rect(card, accent, pygame.Rect(0, 0, 3, card_h), border_top_left_radius=10, border_bottom_left_radius=10)
 
-            y = 10
+            y = padding_top
             badge_txt = "URGENT" if is_urgent else category.upper()
             badge_s = font_badge.render(badge_txt, True, text_col if not is_urgent else (252, 165, 165))
             card.blit(badge_s, (12, y))
@@ -246,14 +272,15 @@ class NoticesWidget(Widget):
                 yr_s = font_badge.render(f"Y{yr}" if yr != 'All' else 'All', True, COLOR_TEXT_MUTED)
                 bx -= yr_s.get_width() + 4
                 card.blit(yr_s, (bx, y + 1))
-            y += 18
+            y += badge_h + int(6 * sc)
 
             title_color = (242, 242, 242) if not is_urgent else (252, 165, 165)
             card.blit(font_title.render(title[:70], True, title_color), (12, y))
-            y += 20
+            y += title_h + int(6 * sc)
 
-            if details.get('date') or details.get('time') or details.get('location'):
+            if details:
                 cx = 12
+                chip_h = font_chip.get_height()
                 for label, key in [('Date', 'date'), ('Time', 'time'), ('Where', 'location')]:
                     if details.get(key):
                         chip = f"{label}: {details[key]}"
@@ -261,14 +288,14 @@ class NoticesWidget(Widget):
                         pygame.draw.rect(card, (255, 255, 255, 15), pygame.Rect(cx, y, chip_s.get_width() + 12, chip_s.get_height() + 4), border_radius=10)
                         card.blit(chip_s, (cx + 6, y + 2))
                         cx += chip_s.get_width() + 18
-                y += 22
+                y += chip_h + int(10 * sc)
 
             for line in lines:
                 card.blit(font_body.render(line, True, (184, 184, 184)), (12, y))
-                y += font_body.get_height() + 3
+                y += font_body.get_height() + int(3 * sc)
 
             if contact:
-                y += 4
+                y += int(4 * sc)
                 card.blit(font_body.render(f"Contact: {contact}", True, COLOR_TEXT_MUTED), (12, y))
 
             card_surfs.append(card)

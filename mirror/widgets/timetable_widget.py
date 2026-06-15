@@ -155,71 +155,110 @@ class TimetableWidget(Widget):
             self.content_height = 60
             return
 
+        # Group periods by date
+        groups = {}
+        for p in periods:
+            d = p.get('date', 'Today')
+            if d not in groups:
+                groups[d] = []
+            groups[d].append(p)
+
+        sorted_dates = sorted(groups.keys())
+
+        # Font and color for the day header
+        font_day_header = get_font(max(10, int(11 * sc)), bold=True)
+        header_text_color = (96, 165, 250)  # #60a5fa
+
         total_h = 0
-        cards = []
-        for period in periods:
-            card = pygame.Surface((width, card_h), pygame.SRCALPHA)
-            is_now = bool(period.get('isNow', False))
-            is_done = bool(period.get('isDone', False))
+        elements = []  # List of ('header', friendly_date_str) or ('card', period_dict)
 
-            bg = (6, 182, 212, 13) if is_now else (255, 255, 255, 5)
-            border = COLOR_CYAN_BORDER if is_now else (255, 255, 255, 18)
-            pygame.draw.rect(card, bg, card.get_rect(), border_radius=12)
-            pygame.draw.rect(card, border, card.get_rect(), 1, border_radius=12)
-            if is_now:
-                glow = pygame.Surface((width, card_h), pygame.SRCALPHA)
-                pygame.draw.rect(glow, (6, 182, 212, 38), glow.get_rect(), border_radius=12)
-                card.blit(glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        for dStr in sorted_dates:
+            friendly_date = dStr
+            if dStr != 'Today':
+                try:
+                    dt = datetime.strptime(dStr, '%Y-%m-%d')
+                    friendly_date = dt.strftime('%A, %b %d')
+                except Exception:
+                    friendly_date = dStr
+            
+            elements.append(('header', friendly_date))
+            total_h += int(26 * sc)
 
-            start = period.get('startTime', period.get('start', ''))
-            end = period.get('endTime', period.get('end', ''))
-            time_str = f"{start} – {end}" if start and end else (start or '')
-            subject = period.get('subject', period.get('summary', period.get('title', period.get('name', 'Period'))))
-            location = period.get('location', period.get('room', ''))
-
-            x = 12
-            if time_str:
-                time_s = font_time.render(time_str, True, COLOR_TEXT_DIM)
-                card.blit(time_s, (x, (card_h - time_s.get_height()) // 2))
-                x += time_s.get_width() + 12
-
-            subj_color = (102, 102, 102) if is_done else COLOR_WHITE
-            max_subj_w = width - x - 120
-            subject_display = subject
-            subj_s = font_subject.render(subject_display, True, subj_color)
-            while subj_s.get_width() > max_subj_w and len(subject_display) > 3:
-                subject_display = subject_display[:-4] + '…'
-                subj_s = font_subject.render(subject_display, True, subj_color)
-            if is_done:
-                pygame.draw.line(card, subj_color, (x, card_h // 2), (x + subj_s.get_width(), card_h // 2), 1)
-            card.blit(subj_s, (x, (card_h - subj_s.get_height()) // 2))
-
-            right_x = width - 10
-            if is_now:
-                now_s = font_now.render("IN PROGRESS", True, COLOR_CYAN)
-                now_w = now_s.get_width() + 14
-                now_rect = pygame.Rect(right_x - now_w, (card_h - now_s.get_height() - 8) // 2, now_w, now_s.get_height() + 8)
-                pygame.draw.rect(card, (6, 182, 212, 38), now_rect, border_radius=6)
-                pygame.draw.rect(card, (6, 182, 212, 89), now_rect, 1, border_radius=6)
-                card.blit(now_s, (now_rect.x + 7, now_rect.y + 4))
-                right_x = now_rect.x - 8
-
-            if location:
-                loc_s = font_loc.render(location, True, COLOR_BLUE_LOC)
-                loc_w = loc_s.get_width() + 12
-                loc_rect = pygame.Rect(right_x - loc_w, (card_h - loc_s.get_height() - 8) // 2, loc_w, loc_s.get_height() + 8)
-                pygame.draw.rect(card, (59, 130, 246, 25), loc_rect, border_radius=6)
-                pygame.draw.rect(card, (59, 130, 246, 51), loc_rect, 1, border_radius=6)
-                card.blit(loc_s, (loc_rect.x + 6, loc_rect.y + 4))
-
-            if is_done:
-                card.set_alpha(102)
-            cards.append(card)
-            total_h += card_h + CARD_GAP
+            for p in groups[dStr]:
+                elements.append(('card', p))
+                total_h += card_h + CARD_GAP
 
         self.content_height = total_h
         self.content_surface = pygame.Surface((width, total_h), pygame.SRCALPHA)
         y = 0
-        for card in cards:
-            self.content_surface.blit(card, (0, y))
-            y += card.get_height() + CARD_GAP
+
+        for el_type, val in elements:
+            if el_type == 'header':
+                text_lbl = font_day_header.render(val.upper(), True, header_text_color)
+                text_h = text_lbl.get_height()
+                self.content_surface.blit(text_lbl, (12, y + (int(26 * sc) - text_h) // 2))
+                text_w = text_lbl.get_width()
+                line_y = y + int(26 * sc) // 2
+                pygame.draw.line(self.content_surface, (255, 255, 255, 15), (12 + text_w + 8, line_y), (width - 12, line_y))
+                y += int(26 * sc)
+            elif el_type == 'card':
+                period = val
+                card = pygame.Surface((width, card_h), pygame.SRCALPHA)
+                is_now = bool(period.get('isNow', False))
+                is_done = bool(period.get('isDone', False))
+
+                bg = (6, 182, 212, 13) if is_now else (255, 255, 255, 5)
+                border = COLOR_CYAN_BORDER if is_now else (255, 255, 255, 18)
+                pygame.draw.rect(card, bg, card.get_rect(), border_radius=12)
+                pygame.draw.rect(card, border, card.get_rect(), 1, border_radius=12)
+                if is_now:
+                    glow = pygame.Surface((width, card_h), pygame.SRCALPHA)
+                    pygame.draw.rect(glow, (6, 182, 212, 38), glow.get_rect(), border_radius=12)
+                    card.blit(glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
+                start = period.get('startTime', period.get('start', ''))
+                end = period.get('endTime', period.get('end', ''))
+                time_str = f"{start} – {end}" if start and end else (start or '')
+                subject = period.get('subject', period.get('summary', period.get('title', period.get('name', 'Period'))))
+                location = period.get('location', period.get('room', ''))
+
+                x = 12
+                if time_str:
+                    time_s = font_time.render(time_str, True, COLOR_TEXT_DIM)
+                    card.blit(time_s, (x, (card_h - time_s.get_height()) // 2))
+                    x += time_s.get_width() + 12
+
+                subj_color = (102, 102, 102) if is_done else COLOR_WHITE
+                max_subj_w = width - x - 120
+                subject_display = subject
+                subj_s = font_subject.render(subject_display, True, subj_color)
+                while subj_s.get_width() > max_subj_w and len(subject_display) > 3:
+                    subject_display = subject_display[:-4] + '…'
+                    subj_s = font_subject.render(subject_display, True, subj_color)
+                if is_done:
+                    pygame.draw.line(card, subj_color, (x, card_h // 2), (x + subj_s.get_width(), card_h // 2), 1)
+                card.blit(subj_s, (x, (card_h - subj_s.get_height()) // 2))
+
+                right_x = width - 10
+                if is_now:
+                    now_s = font_now.render("IN PROGRESS", True, COLOR_CYAN)
+                    now_w = now_s.get_width() + 14
+                    now_rect = pygame.Rect(right_x - now_w, (card_h - now_s.get_height() - 8) // 2, now_w, now_s.get_height() + 8)
+                    pygame.draw.rect(card, (6, 182, 212, 38), now_rect, border_radius=6)
+                    pygame.draw.rect(card, (6, 182, 212, 89), now_rect, 1, border_radius=6)
+                    card.blit(now_s, (now_rect.x + 7, now_rect.y + 4))
+                    right_x = now_rect.x - 8
+
+                if location:
+                    loc_s = font_loc.render(location, True, COLOR_BLUE_LOC)
+                    loc_w = loc_s.get_width() + 12
+                    loc_rect = pygame.Rect(right_x - loc_w, (card_h - loc_s.get_height() - 8) // 2, loc_w, loc_s.get_height() + 8)
+                    pygame.draw.rect(card, (59, 130, 246, 25), loc_rect, border_radius=6)
+                    pygame.draw.rect(card, (59, 130, 246, 51), loc_rect, 1, border_radius=6)
+                    card.blit(loc_s, (loc_rect.x + 6, loc_rect.y + 4))
+
+                if is_done:
+                    card.set_alpha(102)
+
+                self.content_surface.blit(card, (0, y))
+                y += card_h + CARD_GAP

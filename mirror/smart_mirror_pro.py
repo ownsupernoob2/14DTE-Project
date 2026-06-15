@@ -26,9 +26,13 @@ def _widget_data(wd):
 class SmartMirrorPro:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        windowed = os.environ.get('MIRROR_WINDOWED') == '1'
+        if windowed:
+            self.screen = pygame.display.set_mode((1280, 800))
+        else:
+            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        pygame.mouse.set_visible(True)
         self.width, self.height = self.screen.get_size()
-        pygame.mouse.set_visible(False)
         self.clock = pygame.time.Clock()
 
         self.font_title = get_font(16, bold=True)
@@ -56,10 +60,20 @@ class SmartMirrorPro:
         self.face_detected = False
         self.face_recognized = False
         self.face_confidence = 0.0
-        self._last_layout_sig = None
+        self._last_state = None        # tracks last mirror state string
+        self._last_user_id = None      # tracks last user_id to detect user switches
 
         self.widgets = []
         self.dragging_widget = None
+        self.guest_notices = None
+
+        # Transition and timing states
+        self.in_grace = False
+        self.guest_alpha = 0.0
+        self.widgets_alpha = 255.0
+        self.widgets_y_offset = 0.0
+        self.guest_img = None
+        self.guest_img_loaded = False
 
     def setup_background(self):
         self.bg_image = pygame.Surface((self.width, self.height))
@@ -71,8 +85,8 @@ class SmartMirrorPro:
 
     def _layout_signature(self, fdata):
         return json.dumps({
+            'state':   fdata.get('state', 'idle'),
             'user_id': fdata.get('user_id'),
-            'recognized': fdata.get('recognized', False),
             'widgets': fdata.get('widgets') or [],
         }, sort_keys=True)
 
@@ -119,7 +133,9 @@ class SmartMirrorPro:
                 elif wtype == 'notices':
                     kw = data.get('keyword_filter') or data.get('keywordFilter') or ''
                     speed = data.get('scroll_speed', data.get('scrollSpeed', 0.5))
-                    self.widgets.append(NoticesWidget(real_x, real_y, real_w, real_h, API_URL, kw, speed))
+                    year = data.get('year_filter') or data.get('yearFilter') or 'All'
+                    cats = data.get('cat_filters') or data.get('catFilters') or None
+                    self.widgets.append(NoticesWidget(real_x, real_y, real_w, real_h, API_URL, kw, speed, year, cats))
                 elif wtype == 'timetable':
                     view_mode = data.get('viewMode', 'today')
                     subject = data.get('subject_filter') or data.get('subjectFilter') or ''
@@ -171,19 +187,126 @@ class SmartMirrorPro:
 
     def run(self):
         while True:
+            now = time.time()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     return
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:
+                        self.thumb_index_touch = True
+                        self.handle_click()
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    if event.button == 1:
+                        self.thumb_index_touch = False
+                        if self.dragging_widget:
+                            self.dragging_widget.handle_drag_end(self.width, self.height)
+                            self.dragging_widget = None
+                elif event.type == pygame.MOUSEMOTION:
+                    self.target_hand_x, self.target_hand_y = event.pos
 
             self.update_inputs()
             self.screen.fill(COLOR_BLACK)
             if self.show_background and self.bg_image:
                 self.screen.blit(self.bg_image, (0, 0))
 
-            for w in self.widgets:
-                w.update(self.scroll_y)
-                w.draw(self.screen, self.font_title, self.font_content, self.scroll_y)
+            # ── Unrecognized Visitor Transition & Styling ─────────────────────
+            # Lazy-load guest image asset if available
+            if not self.guest_img_loaded:
+                self.guest_img_loaded = True
+                for ext in ['gif', 'png', 'jpg', 'jpeg']:
+                    p = f"assets/guest.{ext}"
+                    if os.path.exists(p):
+                        try:
+                            raw_img = pygame.image.load(p)
+                            iw, ih = raw_img.get_size()
+                            scale = min(260 / iw, 220 / ih)
+                            self.guest_img = pygame.transform.smoothscale(raw_img, (int(iw * scale), int(ih * scale)))
+                            break
+                        except Exception as e:
+                            print(f"[ERROR] Failed to load guest image: {e}")
+
+            # Guest screen is driven purely by the simulator's state field
+            show_guest = (self._last_state == 'guest')
+
+            # Fade transition for guest layout
+            if show_guest:
+                self.guest_alpha = min(255.0, self.guest_alpha + 15.0)
+            else:
+                self.guest_alpha = max(0.0, self.guest_alpha - 15.0)
+
+            if self.guest_alpha > 0:
+                guest_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+                
+                # Left notices
+                if self.guest_notices is None:
+                    w = self.width // 2 - 60
+                    h = self.height - 120
+                    self.guest_notices = NoticesWidget(40, 80, w, h, API_URL)
+                self.guest_notices.update(0)
+                self.guest_notices.draw(guest_surf, self.font_title, self.font_content, 0)
+
+                # Right advertisement (No white background, no blue button, just clean text)
+                rx = self.width // 2 + 20
+                ry = 80
+                rw = self.width // 2 - 60
+                rh = self.height - 120
+
+                card_rect = pygame.Rect(rx, ry, rw, rh)
+                pygame.draw.rect(guest_surf, (255, 255, 255, 6), card_rect, border_radius=16)
+                pygame.draw.rect(guest_surf, (255, 255, 255, 12), card_rect, 1, border_radius=16)
+
+                font_large = get_font(32, bold=True)
+                font_med = get_font(20)
+                font_url = get_font(42, bold=True)
+
+                title_lbl = font_large.render("New Visitor?", True, (240, 240, 240))
+                desc_lbl1 = font_med.render("Scan your face to configure your", True, (160, 160, 160))
+                desc_lbl2 = font_med.render("personalized smart mirror dashboard.", True, (160, 160, 160))
+
+                cy = ry + 60
+                guest_surf.blit(title_lbl, (rx + (rw - title_lbl.get_width()) // 2, cy))
+                cy += title_lbl.get_height() + 20
+                guest_surf.blit(desc_lbl1, (rx + (rw - desc_lbl1.get_width()) // 2, cy))
+                guest_surf.blit(desc_lbl2, (rx + (rw - desc_lbl2.get_width()) // 2, cy + desc_lbl1.get_height() + 4))
+
+                # Custom GIF/Image placeholder
+                if self.guest_img:
+                    ix = rx + (rw - self.guest_img.get_width()) // 2
+                    iy = cy + desc_lbl2.get_height() + 30
+                    guest_surf.blit(self.guest_img, (ix, iy))
+                    cy = iy + self.guest_img.get_height() - 50
+                else:
+                    cy += 60
+
+                # Big URL text
+                cy += 80
+                url_lbl = font_url.render("smartmirror.me", True, (96, 165, 250))
+                guest_surf.blit(url_lbl, (rx + (rw - url_lbl.get_width()) // 2, cy))
+
+                prompt_lbl = font_med.render("Sign up and register on the website", True, (120, 120, 120))
+                guest_surf.blit(prompt_lbl, (rx + (rw - prompt_lbl.get_width()) // 2, cy + url_lbl.get_height() + 10))
+
+                guest_surf.set_alpha(int(self.guest_alpha))
+                self.screen.blit(guest_surf, (0, 0))
+
+            # ── Normal User & Widget Transitions ──────────────────────────────
+            if self.face_recognized and not show_guest:
+                self.widgets_alpha = min(255.0, self.widgets_alpha + 18.0)
+                self.widgets_y_offset = max(0.0, self.widgets_y_offset - 2.0)
+
+                for w in self.widgets:
+                    w.update(self.scroll_y)
+                    if self.widgets_alpha < 255.0:
+                        w_surf = pygame.Surface((w.rect.w, w.rect.h), pygame.SRCALPHA)
+                        old_x, old_y = w.rect.x, w.rect.y
+                        w.rect.x, w.rect.y = 0, 0
+                        w.draw(w_surf, self.font_title, self.font_content, self.scroll_y)
+                        w.rect.x, w.rect.y = old_x, old_y
+                        w_surf.set_alpha(int(self.widgets_alpha))
+                        self.screen.blit(w_surf, (w.rect.x, w.rect.y + int(self.widgets_y_offset)))
+                    else:
+                        w.draw(self.screen, self.font_title, self.font_content, self.scroll_y)
 
             if self.menu.active:
                 self.menu.draw(self.screen, (self.hand_x, self.hand_y))
@@ -198,53 +321,53 @@ class SmartMirrorPro:
             self.clock.tick(60)
 
     def update_inputs(self):
-        if os.path.exists(HAND_DATA_FILE):
-            try:
-                with open(HAND_DATA_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.target_hand_x = int(data.get('hand_center_x', 320) * self.width / 640)
-                    self.target_hand_y = int(data.get('hand_center_y', 240) * self.height / 480)
-                    self.thumb_index_touch = data.get('thumb_index_touch', False)
-
-                    if self.thumb_index_touch and not self.prev_touch:
-                        self.handle_click()
-
-                    if not self.thumb_index_touch and self.prev_touch and self.dragging_widget:
-                        self.dragging_widget.handle_drag_end(self.width, self.height)
-                        self.dragging_widget = None
-
-                    self.prev_touch = self.thumb_index_touch
-            except Exception:
-                pass
-
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
                     fdata = json.load(f)
-                    layout_sig = self._layout_signature(fdata)
 
-                    self.face_detected = fdata.get('detected', False)
-                    self.face_recognized = fdata.get('recognized', False)
-                    self.face_confidence = fdata.get('confidence', 0.0)
+                self.face_detected   = fdata.get('detected', False)
+                self.face_recognized = fdata.get('recognized', False)
+                self.face_confidence = fdata.get('confidence', 0.0)
+                self.in_grace        = fdata.get('in_grace', False)
 
-                    if layout_sig != self._last_layout_sig:
-                        self._last_layout_sig = layout_sig
-                        new_user_id = fdata.get('user_id')
-                        self.current_user_id = new_user_id
-                        self.current_user_name = fdata.get('user_name', '')
+                new_state   = fdata.get('state', 'idle')
+                new_user_id = fdata.get('user_id', 'idle')
+                layout_sig  = self._layout_signature(fdata)
 
-                        if self.face_recognized and new_user_id and new_user_id != 'idle':
-                            self.apply_remote_widgets(fdata.get('widgets', []))
-                            for w in self.widgets:
-                                if hasattr(w, 'set_user_id'):
-                                    w.set_user_id(new_user_id)
-                        else:
-                            self.clear_widgets()
+                # Detect state changes OR user switches
+                state_changed = (new_state != self._last_state)
+                user_switched = (new_state == 'user' and new_user_id != self._last_user_id
+                                 and new_user_id not in ('', 'idle'))
+
+                if state_changed or user_switched:
+                    self._last_state   = new_state
+                    self._last_user_id = new_user_id
+                    self.current_user_id   = new_user_id
+                    self.current_user_name = fdata.get('user_name', '')
+
+                    if new_state == 'user' and new_user_id not in ('', 'idle'):
+                        self.apply_remote_widgets(fdata.get('widgets', []))
+                        for w in self.widgets:
+                            if hasattr(w, 'set_user_id'):
+                                w.set_user_id(new_user_id)
+                        # Smooth fade-in slide animation
+                        self.widgets_alpha    = 0.0
+                        self.widgets_y_offset = 30.0
+                        # Reset guest screen immediately
+                        self.guest_alpha = 0.0
+                    else:
+                        # idle or guest — clear user widgets
+                        self.clear_widgets()
+                        if new_state == 'guest':
+                            # Reset guest notices so it re-fetches fresh content
+                            self.guest_notices = None
             except Exception:
                 pass
 
-        self.hand_x += (self.target_hand_x - self.hand_x) * 0.3
-        self.hand_y += (self.target_hand_y - self.hand_y) * 0.3
+        # Align cursor instantly with mouse position
+        self.hand_x = self.target_hand_x
+        self.hand_y = self.target_hand_y
 
         if self.dragging_widget:
             self.dragging_widget.handle_drag_update(self.hand_x, self.hand_y, self.scroll_y)
@@ -276,23 +399,12 @@ class SmartMirrorPro:
                 break
 
     def draw_cursor(self):
-        color = COLOR_ACCENT if self.thumb_index_touch else COLOR_WHITE
-        pygame.draw.circle(self.screen, color, (int(self.hand_x), int(self.hand_y)), 10, 2)
-        pygame.draw.circle(self.screen, color, (int(self.hand_x), int(self.hand_y)), 4)
-
-        if not self.face_detected:
-            dot_color = (255, 0, 0)
-        elif self.face_confidence < 0.5:
-            dot_color = (255, 165, 0)
-        else:
-            dot_color = (0, 255, 0)
-
-        pygame.draw.circle(self.screen, dot_color, (self.width - 20, 20), 5)
-
-        if self.face_recognized and self.current_user_id and self.current_user_id != 'idle':
-            display_text = self.current_user_name or self.current_user_id
-            name_lbl = self.font_title.render(display_text, True, dot_color)
-            self.screen.blit(name_lbl, (self.width - 30 - name_lbl.get_width(), 12))
+        # Subtle status dot: green=user, orange=grace period checking, hidden otherwise
+        if self.face_recognized:
+            pygame.draw.circle(self.screen, (0, 200, 80), (self.width - 20, 20), 5)
+        elif self.in_grace:
+            # Orange dot = unrecognised face in grace period (checking if registered)
+            pygame.draw.circle(self.screen, (255, 150, 0), (self.width - 20, 20), 5)
 
 
 if __name__ == '__main__':

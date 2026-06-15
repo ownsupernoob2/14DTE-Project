@@ -5,7 +5,9 @@ import os
 import requests
 import base64
 
-FACE_STATUS_FILE = '/tmp/face_status.json'
+from config import FACE_DATA_FILE
+
+FACE_STATUS_FILE = FACE_DATA_FILE
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 # How often to ask the server to verify the face and fetch the latest layout
@@ -13,11 +15,12 @@ API_POLL_INTERVAL = float(os.environ.get('FACE_API_POLL_SEC', '1.0'))
 # Clear the session this many seconds after no face is visible
 IDLE_TIMEOUT_SEC = float(os.environ.get('FACE_IDLE_TIMEOUT_SEC', '5.0'))
 
-cap = cv2.VideoCapture(10)
+camera_id = int(os.environ.get('CAMERA_ID', '10'))
+cap = cv2.VideoCapture(camera_id)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 if not cap.isOpened():
-    print("[ERROR] Cannot open camera")
+    print(f"[ERROR] Cannot open camera {camera_id}")
     exit(1)
 
 print("[INFO] Starting remote face recognition...")
@@ -49,7 +52,7 @@ def write_status(detected, faces_count):
     try:
         with open(FACE_STATUS_FILE + '.tmp', 'w') as f:
             json.dump(data, f)
-        os.rename(FACE_STATUS_FILE + '.tmp', FACE_STATUS_FILE)
+        os.replace(FACE_STATUS_FILE + '.tmp', FACE_STATUS_FILE)
     except Exception as e:
         print(f"[ERROR] Writing JSON: {e}")
 

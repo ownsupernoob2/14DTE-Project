@@ -35,8 +35,7 @@ COUNTER, FPS = 0, 0
 START_TIME = time.time()
 TIMESTAMP_COUNTER = 0
 
-# Use Shared Memory for the image (Faster, no SD card wear)
-VISION_FILE = '/dev/shm/ai_view.jpg'
+from config import HAND_DATA_FILE, VISION_FILE
 
 def run(model: str, num_hands: int,
         min_hand_detection_confidence: float,
@@ -172,12 +171,12 @@ def run(model: str, num_hands: int,
             'timestamp': time.time()
         }
         
-        temp_file = '/tmp/hand_data.json.tmp'
-        target_file = '/tmp/hand_data.json'
+        temp_file = HAND_DATA_FILE + '.tmp'
+        target_file = HAND_DATA_FILE
         try:
             with open(temp_file, 'w') as f:
                 json.dump(data, f)
-            os.rename(temp_file, target_file)
+            os.replace(temp_file, target_file)
         except Exception:
             pass
 
