@@ -13,7 +13,8 @@ from config import FACE_DATA_FILE, VISION_FILE
 API_URL             = os.environ.get('API_URL', 'https://api.smartmirror.me')
 IDLE_TIMEOUT_SEC    = float(os.environ.get('FACE_IDLE_TIMEOUT_SEC', '15.0'))  # No face → IDLE after 15s
 GUEST_GRACE_SEC     = float(os.environ.get('FACE_GUEST_GRACE_SEC',   '4.0'))  # Unrecognised → GUEST after 4s
-API_POLL_INTERVAL   = float(os.environ.get('FACE_API_POLL_SEC',      '1.0'))  # Poll every 1s when face present
+API_POLL_INTERVAL   = float(os.environ.get('FACE_API_POLL_SEC',      '1.5'))  # Poll every 1.5s when face present (IDLE/grace)
+API_POLL_GUEST      = float(os.environ.get('FACE_API_POLL_GUEST_SEC','3.0'))  # Poll every 3s when in GUEST state
 API_POLL_RECOGNISED = float(os.environ.get('FACE_API_POLL_REC_SEC',  '5.0'))  # Poll every 5s when already recognised
 HEARTBEAT_INTERVAL  = float(os.environ.get('FACE_HEARTBEAT_SEC',     '3.0'))  # Heartbeat when no face
 
@@ -242,22 +243,23 @@ def main():
 
                 elif p_rec is False:
                     # ── Face found but NOT recognised ────────────────────
-                    if state == STATE_USER:
-                        # Registered user still present — hold the USER state.
-                        # The 401-unrecognised might be a bad frame angle.
-                        # We only leave USER when no face at all for IDLE_TIMEOUT.
-                        pass
-                    else:
-                        # In IDLE or GUEST: start (or continue) unrecognised streak.
-                        if unrecognised_since is None:
-                            unrecognised_since = now
+                    if unrecognised_since is None:
+                        unrecognised_since = now
+                        if state == STATE_USER:
+                            print(f"[STATE] Unrecognised face while USER — grace timer started")
+                        else:
                             print(f"[STATE] Unrecognised face detected — grace timer started")
 
                 # p_rec is None → no face / error → do nothing (timers handle cleanup)
 
             # ── Fire API call ─────────────────────────────────────────────
             should_call = False
-            poll = API_POLL_RECOGNISED if state == STATE_USER else API_POLL_INTERVAL
+            if state == STATE_USER:
+                poll = API_POLL_RECOGNISED
+            elif state == STATE_GUEST:
+                poll = API_POLL_GUEST
+            else:
+                poll = API_POLL_INTERVAL
             if detected and now - last_api_call >= poll:
                 should_call = True
             elif not detected and now - last_heartbeat >= HEARTBEAT_INTERVAL:
@@ -301,15 +303,17 @@ def main():
                 session_widgets    = []
                 unrecognised_since = None
 
-            # GUEST: unrecognised streak exceeds grace period
+            # GUEST: unrecognised streak exceeds grace period (IDLE or USER → GUEST)
             if (unrecognised_since is not None
                     and now - unrecognised_since >= GUEST_GRACE_SEC
-                    and state != STATE_USER   # registered user takes priority
-                    and state != STATE_IDLE   # no-face already handled above
                     and not mock_face_active):
                 if state != STATE_GUEST:
                     print(f"[STATE] {state.upper()} → GUEST  (unrecognised for {now - unrecognised_since:.1f}s)")
+                    session_user_id    = None
+                    session_user_name  = None
+                    session_widgets    = []
                 state = STATE_GUEST
+                unrecognised_since = None  # grace consumed; stay in GUEST via state
 
             # ── Build face_status.json ────────────────────────────────────
             is_recognised = (state == STATE_USER)
