@@ -3,9 +3,47 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import WidgetContainer from '../components/WidgetContainer'
+import FaceCaptureModal from '../components/FaceCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
+
+const overlapsPct = (ax, ay, aw, ah, bx, by, bw, bh, margin = 0.05) => (
+  ax + margin < bx + bw &&
+  ax + aw - margin > bx &&
+  ay + margin < by + bh &&
+  ay + ah - margin > by
+)
+
+function resolveOverlapPosition(widget, others) {
+  let { x, y, w, h } = widget
+  const margin = 0.05
+
+  for (let iter = 0; iter < 24; iter++) {
+    let moved = false
+    for (const other of others) {
+      if (!overlapsPct(x, y, w, h, other.x, other.y, other.w, other.h, margin)) continue
+
+      const pushRight  = (x + w) - other.x
+      const pushLeft   = (other.x + other.w) - x
+      const pushBottom = (y + h) - other.y
+      const pushTop    = (other.y + other.h) - y
+      const minPush = Math.min(pushRight, pushLeft, pushBottom, pushTop)
+
+      if (minPush === pushRight) x = other.x - w - margin
+      else if (minPush === pushLeft) x = other.x + other.w + margin
+      else if (minPush === pushTop) y = other.y + other.h + margin
+      else y = other.y - h - margin
+
+      x = Math.max(0, Math.min(x, 100 - w))
+      y = Math.max(0, Math.min(y, 100 - h))
+      moved = true
+    }
+    if (!moved) break
+  }
+
+  return { x, y }
+}
 
 export default function Dashboard() {
   const [widgets, setWidgets] = useState([])
@@ -13,8 +51,10 @@ export default function Dashboard() {
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [widgetsLoaded, setWidgetsLoaded] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 1280, height: 800 })
   const [isEditMode, setIsEditMode] = useState(false)
+  const [showFaceModal, setShowFaceModal] = useState(false)
   const containerRef = useRef(null)
   const { getAccessTokenSilently } = useAuth0()
   const { isServerUp } = useServerStatus()
@@ -69,12 +109,15 @@ export default function Dashboard() {
         
         setWidgets(normalized)
         setSavedWidgets(normalized)
+        setWidgetsLoaded(true)
         setErrorMsg('')
       } else {
+        setWidgetsLoaded(true)
         setErrorMsg('Failed to load dashboard.')
       }
     } catch (e) {
       console.error(e)
+      setWidgetsLoaded(true)
       setErrorMsg('The Smart Mirror server is offline, please try again later.')
     }
   }
@@ -152,32 +195,42 @@ export default function Dashboard() {
     setWidgets(widgets.filter((w) => w.id !== id))
   }
 
-  const updateWidgetPosition = (id, x, y) => {
+  const updateWidgetPosition = (id, x, y, allowOverlap = false) => {
     const containerWidth = dimensions.width
     const containerHeight = dimensions.height
     const x_pct = (x / containerWidth) * 100
     const y_pct = (y / containerHeight) * 100
 
-    const target = widgets.find((w) => w.id === id)
-    if (!target) return
+    setWidgets((current) => {
+      const target = current.find((w) => w.id === id)
+      if (!target) return current
 
-    // Check if moving to (x_pct, y_pct) would overlap with any other widget
-    const wouldOverlap = widgets.some((w) => {
-      if (w.id === id) return false
-      const margin = 0.05
-      return (
-        x_pct + margin < w.x + w.w &&
-        x_pct + target.w - margin > w.x &&
-        y_pct + margin < w.y + w.h &&
-        y_pct + target.h - margin > w.y
-      )
+      if (!allowOverlap) {
+        const wouldOverlap = current.some((w) => {
+          if (w.id === id) return false
+          return overlapsPct(x_pct, y_pct, target.w, target.h, w.x, w.y, w.w, w.h)
+        })
+        if (wouldOverlap) return current
+      }
+
+      return current.map((w) => (w.id === id ? { ...w, x: x_pct, y: y_pct } : w))
     })
+  }
 
-    if (wouldOverlap) return
+  const resolveWidgetOverlaps = (id) => {
+    setWidgets((current) => {
+      const target = current.find((w) => w.id === id)
+      if (!target) return current
 
-    setWidgets(
-      widgets.map((w) => (w.id === id ? { ...w, x: x_pct, y: y_pct } : w))
-    )
+      const others = current.filter((w) => w.id !== id)
+      const hasOverlap = others.some((w) =>
+        overlapsPct(target.x, target.y, target.w, target.h, w.x, w.y, w.w, w.h)
+      )
+      if (!hasOverlap) return current
+
+      const { x, y } = resolveOverlapPosition(target, others)
+      return current.map((w) => (w.id === id ? { ...w, x, y } : w))
+    })
   }
 
   const updateWidgetSize = (id, width, height) => {
@@ -228,15 +281,27 @@ export default function Dashboard() {
       })
       if (res.ok) {
         setSavedWidgets(widgets)
+        setErrorMsg('')
+        return true
       } else {
         setErrorMsg('Failed to save layout')
+        return false
       }
     } catch (e) {
       console.error(e)
       setErrorMsg('Failed to save layout')
+      return false
     } finally {
       setIsSaving(false)
     }
+  }
+
+  const handleDoneCustomizing = async () => {
+    if (hasUnsavedChanges) {
+      await saveLayout()
+    }
+    setIsEditMode(false)
+    setShowAddMenu(false)
   }
 
   const undoLayout = () => {
@@ -253,21 +318,82 @@ export default function Dashboard() {
 
 
 
-        {widgets.map((widget) => {
-          return (
-            <WidgetContainer
-              key={widget.id}
-              widget={widget}
-              onRemove={removeWidget}
-              onMove={updateWidgetPosition}
-              onResize={updateWidgetSize}
-              onUpdateData={updateWidgetData}
-              readonly={!isEditMode}
-              containerWidth={dimensions.width}
-              containerHeight={dimensions.height}
-            />
-          )
-        })}
+        {/* ── Empty state ─────────────────────────────────────────── */}
+        {widgetsLoaded && widgets.length === 0 && !errorMsg && !isEditMode && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            style={{
+              position: 'absolute',
+              top: '50%', left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: 'min(440px, 88vw)',
+              textAlign: 'center',
+              zIndex: 10,
+            }}
+          >
+            <p style={{
+              color: 'rgba(148,163,184,0.75)',
+              fontSize: '0.95rem',
+              lineHeight: 1.65,
+              marginBottom: '24px',
+            }}>
+              Your dashboard is empty. Register your face so the mirror can load your layout, or add widgets manually.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button
+                className="modern-btn"
+                onClick={() => isServerUp && setShowFaceModal(true)}
+                disabled={!isServerUp}
+                style={{
+                  background: 'var(--accent)',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px 22px',
+                  borderRadius: '9999px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: isServerUp ? 'pointer' : 'not-allowed',
+                  opacity: isServerUp ? 1 : 0.5,
+                }}
+              >
+                Register Face Scan
+              </button>
+              <button
+                className="modern-btn"
+                onClick={() => setIsEditMode(true)}
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'rgba(148,163,184,0.9)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  padding: '10px 22px',
+                  borderRadius: '9999px',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Add Widgets
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {widgets.map((widget) => (
+          <WidgetContainer
+            key={widget.id}
+            widget={widget}
+            onRemove={removeWidget}
+            onMove={updateWidgetPosition}
+            onDragEnd={resolveWidgetOverlaps}
+            onResize={updateWidgetSize}
+            onUpdateData={updateWidgetData}
+            readonly={!isEditMode}
+            containerWidth={dimensions.width}
+            containerHeight={dimensions.height}
+          />
+        ))}
 
         {/* Modern Unified Customization Control Bar */}
         <div style={{
@@ -382,7 +508,8 @@ export default function Dashboard() {
           {/* Toggle Edit Mode Button */}
           <button
             className="modern-btn"
-            onClick={() => setIsEditMode(!isEditMode)}
+            onClick={() => isEditMode ? handleDoneCustomizing() : setIsEditMode(true)}
+            disabled={isEditMode && isSaving}
             style={{
               background: isEditMode ? 'var(--accent)' : 'rgba(255, 255, 255, 0.08)',
               color: 'white',
@@ -396,13 +523,16 @@ export default function Dashboard() {
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              width: 'auto'
+              width: 'auto',
+              opacity: (isEditMode && isSaving) ? 0.6 : 1,
             }}
           >
-            <span>{isEditMode ? '✓ Done Customizing' : '✎ Customize Layout'}</span>
+            <span>{isEditMode ? (isSaving ? 'Saving...' : 'Done') : 'Customize Layout'}</span>
           </button>
         </div>
       </div>
+
+      <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
     </div>
   )
 }

@@ -3,12 +3,14 @@ train.py — Face encoding trainer
 Usage: python train.py <images_dir> <output_pickle>
 
 Loads all JPEG images from images_dir, computes face_recognition encodings,
+filters out outlier frames (distance > 0.40 from the median encoding),
 saves the list of encodings to output_pickle. Prints OK:<N> or ERROR:<msg>.
 """
 import sys
 import os
 import pickle
 import face_recognition
+import numpy as np
 
 
 def main():
@@ -52,15 +54,39 @@ def main():
         print("ERROR:No faces detected in any of the provided images")
         sys.exit(1)
 
+    # ── Outlier filtering ─────────────────────────────────────────────────
+    # Compute the median encoding and remove any frame whose distance from the
+    # median exceeds 0.40. This discards bad scans (side-profiles, blinks, or
+    # background faces) that would otherwise pollute the recognition model.
+    OUTLIER_THRESHOLD = 0.40
+    enc_array = np.array(encodings)
+    median_enc = np.median(enc_array, axis=0)
+
+    filtered = []
+    outlier_count = 0
+    for enc in encodings:
+        dist = float(np.linalg.norm(enc - median_enc))
+        if dist <= OUTLIER_THRESHOLD:
+            filtered.append(enc)
+        else:
+            outlier_count += 1
+
+    if not filtered:
+        # All frames were outliers — fall back to all encodings (better than nothing)
+        print(f"WARNING:All {len(encodings)} encodings were outliers; using unfiltered set")
+        filtered = encodings
+    else:
+        print(f"[train] Kept {len(filtered)} / {len(encodings)} frames (removed {outlier_count} outliers)")
+
     # Ensure output directory exists
     out_dir = os.path.dirname(output_pickle)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
     with open(output_pickle, 'wb') as f:
-        pickle.dump(encodings, f)
+        pickle.dump(filtered, f)
 
-    print(f"OK:{len(encodings)}")
+    print(f"OK:{len(filtered)}")
 
 
 if __name__ == "__main__":

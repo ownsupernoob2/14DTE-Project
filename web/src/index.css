@@ -1203,3 +1203,19 @@ button {
   pointer-events: none;
   z-index: 0;
 }
+
+/* ── Onboarding ping animation ─────────────────────────────────────── */
+@keyframes ping {
+  75%, 100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* ── Notices 2-column grid (mirror: ≥ 6 notices) ──────────────────── */
+.notices-mirror-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+.notices-mirror-grid .notices-mirror-card {
+  break-inside: avoid;
+}

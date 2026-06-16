@@ -2,8 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
-const API_URL = 'https://api.smartmirror.me'
-const TOTAL_PHOTOS = 10
+const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
+const TOTAL_PHOTOS = 20
 const BURST_INTERVAL_MS = 1000
 const BRIGHTNESS_THRESHOLD = 40
 const BRIGHTNESS_CHECK_MS = 200
@@ -25,7 +25,7 @@ Only the mathematical encoding derived from your face is stored. No raw photogra
 We do not sell, share, or disclose your facial data or encodings to any third party. Your data is used solely within this Smart Mirror system.
 
 5. Data Deletion
-You may request deletion of your facial encoding at any time through your account preferences. Upon deletion, you will no longer be recognised by the mirror system.
+You may request deletion of your facial encoding at any time through your account settings. Upon deletion, you will no longer be recognised by the mirror system.
 
 6. Security
 All data is transmitted over encrypted connections. Server access is restricted and protected by authentication controls.
@@ -206,7 +206,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
         localStorage.setItem('lastFaceScan', Date.now().toString())
       } else {
         const data = await res.json().catch(() => ({}))
-        setErrorMsg(data.error || 'Upload failed. Please try again.')
+        setErrorMsg(data.error || (res.status === 429 ? 'You can update your face scan again in 24 hours, or delete your data in Settings to register fresh.' : 'Upload failed. Please try again.'))
         setPhase('error')
       }
     } catch {
@@ -275,7 +275,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 <p className="fc-overline">Face Registration</p>
                 <h2 className="fc-title">Set Up Mirror Recognition</h2>
                 <p className="fc-sub">
-                  We will take 10 photos to train the mirror to recognise you. The process takes about 5 seconds. Raw images are deleted immediately after training — only a mathematical encoding is kept.
+                  We will take 20 photos to train the mirror to recognise you. The process takes about 20 seconds. Raw images are deleted immediately after training — only a mathematical encoding is kept.
                 </p>
                 <ul className="fc-list">
                   <li>Sit in a well-lit area</li>
@@ -399,7 +399,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                     onClick={handleStartCapture}
                     disabled={isTooDark}
                   >
-                    Start Capture (10 Photos)
+                    Start Capture (20 Photos)
                   </motion.button>
                 )}
 

@@ -68,9 +68,8 @@ function ClockWidget() {
   )
 }
 
-export default function WidgetContainer({ widget, onRemove, onMove, onResize, onUpdateData, readonly = false, containerWidth = 1280, containerHeight = 800 }) {
+export default function WidgetContainer({ widget, onRemove, onMove, onDragEnd, onResize, onUpdateData, readonly = false, containerWidth = 1280, containerHeight = 800 }) {
   const [isDragging, setIsDragging] = useState(false)
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [isResizing, setIsResizing] = useState(false)
   const resizeStart = useRef(null)
   const widgetRef = useRef(null)
@@ -99,32 +98,57 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
   const scaleH = widgetH / defaults.h
   const widgetScale = Math.max(0.5, Math.min(2.5, Math.min(scaleW, scaleH) * 0.9))
 
-  const handleMouseDown = (e) => {
+  const dragState = useRef({ active: false, offsetX: 0, offsetY: 0 })
+
+  const handleHeaderPointerDown = useCallback((e) => {
     if (readonly) return
     if (!isServerUp) return
-    if (e.target.closest('.widget-close') || e.target.closest('.widget-resize-handle')) return
+    if (e.button !== 0) return
+    if (e.target.closest('.widget-close')) return
+    e.preventDefault()
+    e.stopPropagation()
 
-    setIsDragging(true)
+    const header = e.currentTarget
     const rect = widgetRef.current.getBoundingClientRect()
-    setOffset({ x: e.clientX - rect.left, y: e.clientY - rect.top })
-  }
+    dragState.current = {
+      active:  true,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    }
+    setIsDragging(true)
+    header.setPointerCapture(e.pointerId)
 
-  const handleMouseMove = (e) => {
-    if (!isDragging) return
+    const onPointerMove = (moveE) => {
+      if (!dragState.current.active) return
+      const container = widgetRef.current?.parentElement
+      if (!container) return
 
-    const container = widgetRef.current.parentElement
-    const newX = e.clientX - container.getBoundingClientRect().left - offset.x
-    const newY = e.clientY - container.getBoundingClientRect().top - offset.y
+      const cr = container.getBoundingClientRect()
+      let nx = moveE.clientX - cr.left - dragState.current.offsetX
+      let ny = moveE.clientY - cr.top - dragState.current.offsetY
 
-    const maxX = Math.max(0, container.offsetWidth - widgetRef.current.offsetWidth)
-    const maxY = Math.max(0, container.offsetHeight - widgetRef.current.offsetHeight)
+      const maxX = Math.max(0, container.offsetWidth - widgetRef.current.offsetWidth)
+      const maxY = Math.max(0, container.offsetHeight - widgetRef.current.offsetHeight)
+      nx = Math.max(0, Math.min(nx, maxX))
+      ny = Math.max(0, Math.min(ny, maxY))
 
-    onMove(widget.id, Math.max(0, Math.min(newX, maxX)), Math.max(0, Math.min(newY, maxY)))
-  }
+      onMove(widget.id, nx, ny, true)
+    }
 
-  const handleMouseUp = () => {
-    setIsDragging(false)
-  }
+    const onPointerUp = (upE) => {
+      dragState.current.active = false
+      setIsDragging(false)
+      header.removeEventListener('pointermove', onPointerMove)
+      header.removeEventListener('pointerup', onPointerUp)
+      header.removeEventListener('pointercancel', onPointerUp)
+      try { header.releasePointerCapture(upE.pointerId) } catch { /* already released */ }
+      onDragEnd?.(widget.id)
+    }
+
+    header.addEventListener('pointermove', onPointerMove)
+    header.addEventListener('pointerup', onPointerUp)
+    header.addEventListener('pointercancel', onPointerUp)
+  }, [readonly, isServerUp, widget.id, onMove, onDragEnd])
 
   const handleResizeMouseDown = useCallback((e) => {
     if (readonly) return
@@ -161,12 +185,12 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
     <motion.div
       ref={widgetRef}
       initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.2 }}
+      animate={{ left: widgetX, top: widgetY, opacity: 1, scale: 1 }}
+      transition={isDragging
+        ? { duration: 0 }
+        : { left: { type: 'spring', stiffness: 420, damping: 34 }, top: { type: 'spring', stiffness: 420, damping: 34 }, opacity: { duration: 0.2 }, scale: { duration: 0.2 } }}
       className={`glass-panel widget-container ${isDragging ? 'dragging' : ''} ${isResizing ? 'resizing' : ''} ${readonly ? 'readonly' : ''}`}
       style={{
-        left: `${widgetX}px`,
-        top: `${widgetY}px`,
         width: `${widgetW}px`,
         height: `${widgetH}px`,
         position: 'absolute',
@@ -176,13 +200,13 @@ export default function WidgetContainer({ widget, onRemove, onMove, onResize, on
         fontSize: `${14 * widgetScale}px`,
         ...(readonly ? { background: 'none', border: 'none', boxShadow: 'none' } : {})
       }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
     >
       {!readonly && (
-        <div className="widget-header" style={{ cursor: isServerUp ? 'grab' : 'not-allowed' }}>
+        <div
+          className="widget-header"
+          style={{ cursor: isServerUp ? (isDragging ? 'grabbing' : 'grab') : 'not-allowed', touchAction: 'none' }}
+          onPointerDown={handleHeaderPointerDown}
+        >
           <span className="text-overline">{widget.type}</span>
           <button
             className="widget-close"

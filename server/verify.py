@@ -61,7 +61,7 @@ def main():
             distances = face_recognition.face_distance(known_encodings, target_encoding)
             min_distance = float(np.min(distances))
 
-            if min_distance < 0.55 and min_distance < best_distance:
+            if min_distance < 0.50 and min_distance < best_distance:
                 best_distance = min_distance
                 best_match_user = user_id
 

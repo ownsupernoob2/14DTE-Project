@@ -276,48 +276,108 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     return () => clearTimeout(startScrollTimer);
   }, [readonly, loading, error, visiblePeriods.length]);
 
-  // ── Setup form ─────────────────────────────────────────────────────────────
+  // ── Setup / Tutorial form ──────────────────────────────────────────────────
   if (showSetup) {
     if (readonly) {
       return (
-        <div className="widget-timetable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '16px' }}>
-          <span>No timetable configured</span>
+        <div className="widget-timetable" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', padding: '16px', textAlign: 'center' }}>
+          <span style={{ fontSize: '1.4rem' }}>📅</span>
+          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.82em' }}>No timetable configured</span>
+          <span style={{ opacity: 0.4, fontSize: '0.72em' }}>Add your ICS URL in the web dashboard</span>
         </div>
       );
     }
     return (
-      <div className="widget-timetable">
-        <div className="timetable-header">
-          <span style={{ fontWeight: 600, fontSize: '0.9em' }}>Timetable Setup</span>
+      <div className="widget-timetable" style={{ overflowY: 'auto', height: '100%' }}>
+        {/* Tutorial header */}
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1))',
+          borderBottom: '1px solid rgba(99,102,241,0.2)',
+          padding: '14px 16px 12px',
+          display: 'flex', alignItems: 'center', gap: '10px',
+        }}>
+          <span style={{ fontSize: '1.3rem' }}>📅</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.92em', color: '#e2e8f0' }}>Connect Your Timetable</div>
+            <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.7)', marginTop: '1px' }}>Follow 3 steps to set up your school schedule</div>
+          </div>
         </div>
-        <div className="timetable-setup">
-          <p>
-            Enter your school timetable ICS/iCal URL to display your daily schedule.
-            You can usually get this from your school's student portal.
-          </p>
-          <input
-            type="url"
-            placeholder="https://…/timetable.ics"
-            value={urlInput}
-            onChange={e => setUrlInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSaveUrl()}
-            autoFocus
-          />
-          {saveError && (
-            <div style={{ color: '#f87171', fontSize: '0.78em' }}>[Error] {saveError}</div>
-          )}
-          <button
-            className="timetable-save-btn"
-            onClick={handleSaveUrl}
-            disabled={saving || !urlInput.trim()}
-            style={{ opacity: saving ? 0.6 : 1 }}
-          >
-            {saving ? 'Saving…' : 'Save & Connect'}
-          </button>
+
+        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {/* Steps */}
+          {[
+            {
+              n: '1', title: 'Open your school portal',
+              desc: "Log in to Kamar, NSIS, or your school's student management system.",
+              icon: '🏫',
+            },
+            {
+              n: '2', title: 'Find your iCal / ICS link',
+              desc: 'Look for "Subscribe", "Export Calendar", or "iCal" under My Timetable. Copy the URL — it ends in .ics',
+              icon: '🔗',
+            },
+            {
+              n: '3', title: 'Paste it below',
+              desc: 'Your timetable will sync automatically every day.',
+              icon: '✅',
+            },
+          ].map(({ n, title, desc, icon }) => (
+            <div key={n} style={{
+              display: 'flex', gap: '10px', alignItems: 'flex-start',
+              background: 'rgba(99,102,241,0.06)',
+              border: '1px solid rgba(99,102,241,0.14)',
+              borderRadius: '10px', padding: '10px 12px',
+            }}>
+              <div style={{
+                minWidth: 28, height: 28, borderRadius: '50%',
+                background: 'rgba(99,102,241,0.2)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.72em', fontWeight: 700, color: '#818cf8',
+              }}>{n}</div>
+              <div>
+                <div style={{ fontSize: '0.82em', fontWeight: 600, color: '#e2e8f0', marginBottom: '2px' }}>
+                  {icon} {title}
+                </div>
+                <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.75)', lineHeight: 1.5 }}>{desc}</div>
+              </div>
+            </div>
+          ))}
+
+          {/* URL input */}
+          <div style={{ marginTop: '4px' }}>
+            <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.6)', marginBottom: '6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Your ICS / iCal URL
+            </div>
+            <input
+              type="url"
+              placeholder="https://…/timetable.ics"
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveUrl()}
+              autoFocus
+              style={{ width: '100%', boxSizing: 'border-box', marginBottom: '8px' }}
+            />
+            {saveError && (
+              <div style={{ color: '#f87171', fontSize: '0.75em', marginBottom: '6px' }}>⚠ {saveError}</div>
+            )}
+            <button
+              className="timetable-save-btn"
+              onClick={handleSaveUrl}
+              disabled={saving || !urlInput.trim()}
+              style={{ opacity: saving ? 0.6 : 1, width: '100%' }}
+            >
+              {saving ? 'Connecting…' : '🔗 Connect Timetable'}
+            </button>
+          </div>
+
+          <div style={{ fontSize: '0.68em', color: 'rgba(148,163,184,0.4)', textAlign: 'center', lineHeight: 1.5 }}>
+            Your URL is stored securely and never shared. You can change it anytime in Settings → Timetable.
+          </div>
         </div>
       </div>
     );
   }
+
 
   // ── Loading state ──────────────────────────────────────────────────────────
   if (loading) {
@@ -439,23 +499,25 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
               ? 'No periods scheduled tomorrow.'
               : 'No periods scheduled today.'}
           </div>
-        ) : viewMode === 'week' ? (
+        ) : (
           (() => {
             const groups = {};
             visiblePeriods.forEach(p => {
-              const d = p.date || 'Unknown';
+              const d = p.date || 'Today';
               if (!groups[d]) groups[d] = [];
               groups[d].push(p);
             });
             const sortedDates = Object.keys(groups).sort();
             return sortedDates.map(dStr => {
               let formattedDate = dStr;
-              try {
-                const [year, month, day] = dStr.split('-').map(Number);
-                const dateObj = new Date(year, month - 1, day);
-                formattedDate = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-              } catch (e) {
-                formattedDate = dStr;
+              if (dStr !== 'Today') {
+                try {
+                  const [year, month, day] = dStr.split('-').map(Number);
+                  const dateObj = new Date(year, month - 1, day);
+                  formattedDate = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+                } catch (e) {
+                  formattedDate = dStr;
+                }
               }
               return (
                 <div key={dStr} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -467,10 +529,6 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
               );
             });
           })()
-        ) : (
-          visiblePeriods.map((period, idx) => (
-            <PeriodCard key={period.uid || period.id || idx} period={period} />
-          ))
         )}
       </div>
     </div>

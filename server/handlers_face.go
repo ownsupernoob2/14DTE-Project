@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -22,13 +24,76 @@ type TrainRequest struct {
 	Images []string `json:"images"`
 }
 
+type faceMeta struct {
+	TrainedAt int64 `json:"trained_at"`
+}
+
+const faceRetrainCooldown = 24 * time.Hour
+
+func safeUserIDFromToken(c echo.Context) string {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		return ""
+	}
+	safeUserID := strings.ReplaceAll(userID, "|", "_")
+	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
+	return safeUserID
+}
+
+func faceMetaPath(safeUserID string) string {
+	return fmt.Sprintf("encodings/%s.meta.json", safeUserID)
+}
+
+func facePicklePath(safeUserID string) string {
+	return fmt.Sprintf("encodings/%s.pickle", safeUserID)
+}
+
+func readFaceMeta(safeUserID string) (faceMeta, bool) {
+	data, err := os.ReadFile(faceMetaPath(safeUserID))
+	if err != nil {
+		return faceMeta{}, false
+	}
+	var meta faceMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return faceMeta{}, false
+	}
+	return meta, true
+}
+
+func writeFaceMeta(safeUserID string) error {
+	meta := faceMeta{TrainedAt: time.Now().Unix()}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(faceMetaPath(safeUserID), data, 0644)
+}
+
 // trainFace receives up to 10 base64 images, saves them temporarily, runs train.py
 // to build a face encoding pickle, then deletes the raw images.
 // The encoding is saved to encodings/<user_id>.pickle.
 func trainFace(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
+	safeUserID := safeUserIDFromToken(c)
+	if safeUserID == "" {
 		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
+	}
+
+	// Enforce 24h cooldown when updating an existing encoding
+	picklePath := facePicklePath(safeUserID)
+	if _, err := os.Stat(picklePath); err == nil {
+		if meta, ok := readFaceMeta(safeUserID); ok {
+			trainedAt := time.Unix(meta.TrainedAt, 0)
+			if time.Since(trainedAt) < faceRetrainCooldown {
+				retryAfter := faceRetrainCooldown - time.Since(trainedAt)
+				hours := int(retryAfter.Hours())
+				if hours < 1 {
+					hours = 1
+				}
+				return c.JSON(429, map[string]interface{}{
+					"error": fmt.Sprintf("Face scan was updated recently. You can update again in about %d hour(s). To register a new scan sooner, delete your face data in Settings first.", hours),
+				})
+			}
+		}
 	}
 
 	var req TrainRequest
@@ -41,9 +106,6 @@ func trainFace(c echo.Context) error {
 	}
 
 	// Sanitise userID for use as a directory name (Auth0 sub looks like "auth0|abc123")
-	safeUserID := strings.ReplaceAll(userID, "|", "_")
-	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
-
 	tempDir := fmt.Sprintf("temp/%s", safeUserID)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return c.JSON(500, map[string]string{"error": "Could not create temp directory"})
@@ -75,7 +137,7 @@ func trainFace(c echo.Context) error {
 		return c.JSON(400, map[string]string{"error": "No valid images could be decoded"})
 	}
 
-	outputPickle := fmt.Sprintf("encodings/%s.pickle", safeUserID)
+	outputPickle := facePicklePath(safeUserID)
 
 	// Run the Python training script
 	cmd := exec.Command(getPythonCmd(), "train.py", tempDir, outputPickle)
@@ -98,6 +160,10 @@ func trainFace(c echo.Context) error {
 	framesUsed := 0
 	fmt.Sscanf(strings.TrimPrefix(output, "OK:"), "%d", &framesUsed)
 
+	if err := writeFaceMeta(safeUserID); err != nil {
+		log.Printf("Failed to write face meta for %s: %v", safeUserID, err)
+	}
+
 	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
 
 	return c.JSON(200, map[string]interface{}{
@@ -109,18 +175,20 @@ func trainFace(c echo.Context) error {
 
 // deleteFace removes the user's face encoding pickle file
 func deleteFace(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
+	safeUserID := safeUserIDFromToken(c)
+	if safeUserID == "" {
 		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
 	}
 
-	safeUserID := strings.ReplaceAll(userID, "|", "_")
-	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
-	
-	picklePath := fmt.Sprintf("encodings/%s.pickle", safeUserID)
+	picklePath := facePicklePath(safeUserID)
 	if err := os.Remove(picklePath); err != nil && !os.IsNotExist(err) {
 		log.Printf("Failed to delete face encoding for %s: %v", safeUserID, err)
 		return c.JSON(500, map[string]string{"error": "Failed to delete face scan"})
+	}
+
+	metaPath := faceMetaPath(safeUserID)
+	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Failed to delete face meta for %s: %v", safeUserID, err)
 	}
 
 	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})

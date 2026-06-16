@@ -12,6 +12,7 @@ dist/
 build/
 venv/
 .venv/
+mirror-venv/
 *.pkl
 *.pickle
 
