@@ -152,9 +152,14 @@ func trainFace(c echo.Context) error {
 	}
 
 	output := strings.TrimSpace(out.String())
-	if !strings.HasPrefix(output, "OK:") {
-		msg := strings.TrimPrefix(output, "ERROR:")
-		return c.JSON(500, map[string]string{"error": "Training failed: " + msg})
+
+	lines := strings.Split(output, "\n")
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+
+	if !strings.HasPrefix(lastLine, "OK:") {
+		return c.JSON(500, map[string]string{
+			"error": "Training failed: " + output,
+		})
 	}
 
 	framesUsed := 0
