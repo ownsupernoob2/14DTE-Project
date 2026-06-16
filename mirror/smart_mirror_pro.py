@@ -29,9 +29,10 @@ class SmartMirrorPro:
         windowed = os.environ.get('MIRROR_WINDOWED') == '1'
         if windowed:
             self.screen = pygame.display.set_mode((1280, 800))
+            pygame.mouse.set_visible(True)
         else:
             self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-        pygame.mouse.set_visible(True)
+            pygame.mouse.set_visible(False)
         self.width, self.height = self.screen.get_size()
         self.clock = pygame.time.Clock()
 
