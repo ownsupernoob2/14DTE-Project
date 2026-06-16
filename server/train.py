@@ -76,7 +76,12 @@ def main():
         print(f"WARNING:All {len(encodings)} encodings were outliers; using unfiltered set")
         filtered = encodings
     else:
-        print(f"[train] Kept {len(filtered)} / {len(encodings)} frames (removed {outlier_count} outliers)")
+       print(
+    f"[train] Kept {len(filtered)} / {len(encodings)} frames "
+    f"(removed {outlier_count} outliers)",
+    file=sys.stderr
+)
+
 
     # Ensure output directory exists
     out_dir = os.path.dirname(output_pickle)
