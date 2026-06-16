@@ -1,0 +1,66 @@
+================================================================================
+SMART MIRROR PROJECT - LIST OF ISSUES & IMPROVEMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+EASY TO DO (PHASE 1)
+--------------------------------------------------------------------------------
+1. Rename "Preferences" -> "Settings"
+   - Rename `web/src/pages/Preferences.jsx` to `Settings.jsx`.
+   - Update imports and routing in `App.jsx`, `Navbar.jsx`, and `FaceCaptureModal.jsx`.
+   - Replace any user-facing text from "Preferences" to "Settings".
+
+2. Face Scan Duration and Photo Count
+   - Increase `TOTAL_PHOTOS` from 10 to 20 in `FaceCaptureModal.jsx`.
+   - Change `BURST_INTERVAL_MS` to 1000 (1 second per photo), making the scan 20 seconds long.
+   - Update texts to reflect "20 photos" and "20 seconds".
+
+3. Timetable Widget Date Separators
+   - Add date header separators between periods of different days in both the web React widget (`TimetableWidget.jsx`) and python widget (`timetable_widget.py`).
+
+4. Daily Notices Filters Not Applying
+   - Update python `notices_widget.py` and `smart_mirror_pro.py` to parse and apply the Year Filter (`yearFilter`) and Category Filters (`catFilters`) sent from the web backend.
+
+5. Mirror User Greeting instead of Status Dot & User ID
+   - Remove the technical red/orange/green status dot and technical user ID from `smart_mirror_pro.py`.
+   - Render a warm, clean text greeting (e.g. "Welcome, Ahmed") when a user is recognized.
+
+6. Larger Notices Font size on Mirror
+   - Increase notices widget font size in `notices_widget.py` to improve legibility on physical screens.
+   - Make card padding and height calculation dynamic based on actual line heights to prevent text truncation/overflow.
+
+7. Unrecognized Visitor Screen Layout
+   - When a face is detected but not recognized as a registered user, show a guest layout:
+     - Left side: Big Daily Notices.
+     - Right side: Big, noticeable text saying "Sign up at smartmirror.me".
+
+--------------------------------------------------------------------------------
+HARD TO DO (PHASE 2)
+--------------------------------------------------------------------------------
+8. Face Recognition Mismatch & Sticky Layouts (Robust Session State Machine)
+   - Fix bug where layouts remain active for 15s even when a different face/unregistered face is in front of the mirror.
+   - Implement a 3-state state machine: IDLE, GUEST, and USER.
+   - If a new registered face is recognized, switch instantly.
+   - If an unrecognized face is detected while a user is logged in, use a 4-second grace period. If unrecognized face remains after 4 seconds, log out the user and transition to GUEST state.
+   - Handle multiple unrecognized users gracefully (stay in GUEST state).
+   - Decrease face distance matching threshold in `verify.py` from 0.55 to 0.50.
+   - Clean up outlier encodings during training in `train.py` by filtering out frames with a pairwise distance > 0.40 from the average face encoding.
+
+9. Smooth Transition Animations
+   - Animate widgets when entering/exiting face recognition layouts.
+
+10. Drag-and-Drop Improvements on Web Dashboard
+    - Fix fast dragging widget drop issue.
+    - Implement bounce-back collision/resistance when dragging a widget over another widget while still holding it.
+
+11. Large Daily Notices Layout Column Split
+    - If the daily notices are large, split them into two rows/columns in both web and app widgets.
+
+12. Empty Widget State with Visual Face Scan Guide
+    - Create a graphical onboarding instruction card prompting users to do a face scan when they have no widgets.
+
+13. Timetable Onboarding / Add Tutorial
+    - Integrate a small recording or step-by-step interactive tutorial for adding school timetables.
+
+14. Highly Customizable Dark Themes
+    - Build multiple dark-based styles (different accent colors, fonts, panel layouts).

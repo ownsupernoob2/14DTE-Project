@@ -319,7 +319,7 @@
 .widget-container {
   position: absolute;
   padding: 0;
-  cursor: grab;
+  cursor: default;
   background: rgba(20, 20, 25, 0.4);
 }
 

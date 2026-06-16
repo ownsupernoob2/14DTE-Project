@@ -3,7 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Preferences from './pages/Preferences'
+import Settings from './pages/Settings'
 import Simulator from './pages/Simulator'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -72,8 +72,8 @@ function App() {
             element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />}
           />
           <Route
-            path="/preferences"
-            element={isAuthenticated ? <Preferences /> : <Navigate to="/login" />}
+            path="/settings"
+            element={isAuthenticated ? <Settings /> : <Navigate to="/login" />}
           />
           
           <Route path="/simulator" element={<Simulator />} />

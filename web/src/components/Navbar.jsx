@@ -46,7 +46,7 @@ export default function Navbar() {
               <Link to="/" className="navbar-brand">Smart Mirror</Link>
               <div className="navbar-links">
                 <Link to="/dashboard" className="nav-link">Dashboard</Link>
-                <Link to="/preferences" className="nav-link">Preferences</Link>
+                <Link to="/settings" className="nav-link">Settings</Link>
               </div>
             </div>
           </motion.nav>

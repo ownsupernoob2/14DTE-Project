@@ -69,7 +69,6 @@ func StartNoticeFetcher() {
 	}()
 }
 
-
 func getNotices(c echo.Context) error {
 	data, err := os.ReadFile(outFile)
 	if err != nil {
@@ -348,10 +347,7 @@ type geminiResponse struct {
 }
 
 func processWithGemini(text string) []NoticeItem {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		apiKey = "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
-	}
+	apiKey := "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
 
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
 
@@ -546,7 +542,7 @@ func getStandardCategory(title string, text string) string {
 func extractTargetYears(text string) []string {
 	var years []string
 	lowerText := strings.ToLower(text)
-	
+
 	addYear := func(y string) {
 		for _, existing := range years {
 			if existing == y {
@@ -558,7 +554,7 @@ func extractTargetYears(text string) []string {
 
 	hasJunior := strings.Contains(lowerText, "junior")
 	hasSenior := strings.Contains(lowerText, "senior")
-	
+
 	year9Re := regexp.MustCompile(`\b(year|yr|y)\s*9\b`)
 	year10Re := regexp.MustCompile(`\b(year|yr|y)\s*10\b`)
 	year11Re := regexp.MustCompile(`\b(year|yr|y)\s*11\b`)
@@ -618,17 +614,17 @@ func formatNoticeHTML(text string) string {
 	if strings.Contains(text, "<p>") || strings.Contains(text, "<ul>") || strings.Contains(text, "<li>") || strings.Contains(text, "<table>") {
 		return text
 	}
-	
+
 	lines := strings.Split(text, "\n")
 	var htmlParts []string
 	inList := false
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		
+
 		if strings.HasPrefix(line, "*") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "•") {
 			if !inList {
 				htmlParts = append(htmlParts, "<ul>")
@@ -644,14 +640,14 @@ func formatNoticeHTML(text string) string {
 			htmlParts = append(htmlParts, "<p>"+line+"</p>")
 		}
 	}
-	
+
 	if inList {
 		htmlParts = append(htmlParts, "</ul>")
 	}
-	
+
 	if len(htmlParts) == 0 {
 		return "<p>" + text + "</p>"
 	}
-	
+
 	return strings.Join(htmlParts, "")
 }
