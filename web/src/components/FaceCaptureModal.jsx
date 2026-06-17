@@ -337,11 +337,12 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 <h2 className="fc-title" style={{ marginBottom: 0 }}>
                   {(() => {
                     const count = capturedImagesRef.current.length;
+                    // divide the counter equally for 5/20
                     if (count === 0) return 'Look straight at the camera';
-                    if (count < 3) return 'Keep looking straight...';
-                    if (count < 5) return 'Slowly turn your head to the right...';
-                    if (count < 7) return 'Now slowly turn your head to the left...';
-                    if (count < 9) return 'Look slightly up...';
+                    if (count < 4) return 'Keep looking straight...';
+                    if (count < 8) return 'Slowly turn your head to the right...';
+                    if (count < 12) return 'Now slowly turn your head to the left...';
+                    if (count < 16) return 'Look slightly up...';
                     return 'Look slightly down...';
                   })()}
                 </h2>
