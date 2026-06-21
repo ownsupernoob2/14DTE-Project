@@ -1,3 +1,4 @@
 # Pip-only deps. On Raspberry Pi, mediapipe/opencv/pygame/Pillow
 # are installed via apt and inherited through --system-site-packages.
 requests
+PyQt6

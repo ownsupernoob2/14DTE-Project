@@ -309,6 +309,7 @@ export default function Dashboard() {
   }
 
   const hasUnsavedChanges = JSON.stringify(widgets) !== JSON.stringify(savedWidgets)
+  const hasFaceScan = !!localStorage.getItem('lastFaceScan')
 
   return (
     <div className="dashboard-container">
@@ -326,56 +327,61 @@ export default function Dashboard() {
             transition={{ duration: 0.35, ease: 'easeOut' }}
             style={{
               position: 'absolute',
-              top: '50%', left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: 'min(440px, 88vw)',
-              textAlign: 'center',
+              top: '60px', left: 0, right: 0, bottom: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'center',
               zIndex: 10,
             }}
           >
-            <p style={{
-              color: 'rgba(148,163,184,0.75)',
-              fontSize: '0.95rem',
-              lineHeight: 1.65,
-              marginBottom: '24px',
-            }}>
-              Your dashboard is empty. Register your face so the mirror can load your layout, or add widgets manually.
-            </p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button
-                className="modern-btn"
-                onClick={() => isServerUp && setShowFaceModal(true)}
-                disabled={!isServerUp}
-                style={{
-                  background: 'var(--accent)',
-                  color: 'white',
-                  border: 'none',
-                  padding: '10px 22px',
-                  borderRadius: '9999px',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  cursor: isServerUp ? 'pointer' : 'not-allowed',
-                  opacity: isServerUp ? 1 : 0.5,
-                }}
-              >
-                Register Face Scan
-              </button>
-              <button
-                className="modern-btn"
-                onClick={() => setIsEditMode(true)}
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'rgba(148,163,184,0.9)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  padding: '10px 22px',
-                  borderRadius: '9999px',
-                  fontSize: '0.82rem',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                }}
-              >
-                Add Widgets
-              </button>
+            <div style={{ width: 'min(440px, 88vw)', textAlign: 'center' }}>
+              <p style={{
+                color: 'rgba(148,163,184,0.75)',
+                fontSize: '0.95rem',
+                lineHeight: 1.65,
+                marginBottom: '24px',
+              }}>
+                Your dashboard is empty. {hasFaceScan ? 'Configure widgets to design your layout.' : 'Register your face so the mirror can load your layout, or add widgets manually.'}
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                {!hasFaceScan && (
+                  <button
+                    className="modern-btn"
+                    onClick={() => isServerUp && setShowFaceModal(true)}
+                    disabled={!isServerUp}
+                    style={{
+                      background: 'var(--accent)',
+                      color: 'white',
+                      border: 'none',
+                      padding: '10px 22px',
+                      borderRadius: '9999px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: isServerUp ? 'pointer' : 'not-allowed',
+                      opacity: isServerUp ? 1 : 0.5,
+                    }}
+                  >
+                    Register Face Scan
+                  </button>
+                )}
+                <button
+                  className="modern-btn"
+                  onClick={() => setIsEditMode(true)}
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'rgba(148,163,184,0.9)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    padding: '10px 22px',
+                    borderRadius: '9999px',
+                    fontSize: '0.82rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Add Widgets
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
