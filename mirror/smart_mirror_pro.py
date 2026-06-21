@@ -3,12 +3,13 @@ import sys
 import os
 import json
 import time
+import math
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter
 
 from config import *
 from widgets import (
@@ -25,6 +26,76 @@ def _widget_data(wd):
     return data if isinstance(data, dict) else {}
 
 
+# ---------------------------------------------------------------------------
+# Animated background -- two blurred radial-gradient orbs that slowly drift,
+# matching the web dashboard body::before effect.
+# ---------------------------------------------------------------------------
+class BackgroundCanvas(QWidget):
+    """Full-screen background widget painted with QPainter radial gradients.
+
+    Two glow orbs:
+      - Purple  at roughly (20%, 50%)  -- rgba(109, 40, 217, 0.12)
+      - Sky-blue at roughly (80%, 30%) -- rgba( 56,189, 248, 0.09)
+
+    Their centres drift gently on an 18-second sine cycle to simulate
+    the CSS 'bg-drift' animation.
+    """
+
+    # Orb definitions: (base_cx_pct, base_cy_pct, radius_pct, r, g, b, max_alpha)
+    _ORBS = [
+        (0.20, 0.50, 0.55, 109,  40, 217, 31),   # purple  -- 0.12 * 255 ~ 31
+        (0.80, 0.30, 0.50,  56, 189, 248, 23),   # sky-blue -- 0.09 * 255 ~ 23
+    ]
+    _DRIFT_PERIOD = 18.0   # seconds for one full drift cycle
+    _DRIFT_AMP    = 0.03   # fraction of screen dimension
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._t0 = time.time()
+
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.timeout.connect(self.update)   # triggers paintEvent
+        self._redraw_timer.start(33)   # ~30 fps repaint
+
+    def paintEvent(self, event):  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+
+        # Solid base -- #0a0a0c
+        painter.fillRect(self.rect(), QColor(10, 10, 12))
+
+        t = time.time() - self._t0
+        # Phase offsets keep the two orbs out of sync
+        phases = [0.0, math.pi * 0.6]
+
+        for i, (bcx, bcy, r_pct, r, g, b, max_a) in enumerate(self._ORBS):
+            phase = phases[i]
+            # Slow sine drift in both axes
+            cx = (bcx + self._DRIFT_AMP * math.sin(2 * math.pi * t / self._DRIFT_PERIOD + phase)) * w
+            cy = (bcy + self._DRIFT_AMP * math.cos(2 * math.pi * t / self._DRIFT_PERIOD + phase * 1.3)) * h
+            radius = r_pct * max(w, h)
+
+            grad = QRadialGradient(cx, cy, radius)
+            inner = QColor(r, g, b, max_a)
+            outer  = QColor(r, g, b, 0)
+            grad.setColorAt(0.0, inner)
+            grad.setColorAt(1.0, outer)
+
+            painter.setBrush(grad)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(
+                int(cx - radius), int(cy - radius),
+                int(radius * 2),  int(radius * 2),
+            )
+
+        painter.end()
+
+
 class SmartMirrorPro(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -34,6 +105,11 @@ class SmartMirrorPro(QMainWindow):
         # Central Widget & Main absolute layout
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
+
+        # Animated background -- lowest layer, no mouse interaction
+        self.bg_canvas = BackgroundCanvas(self.central_widget)
+        self.bg_canvas.setGeometry(self.central_widget.rect())
+        self.bg_canvas.lower()   # always below all sibling widgets
 
         # Container for User widgets
         self.user_container = QWidget(self.central_widget)
@@ -82,6 +158,8 @@ class SmartMirrorPro(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         w, h = self.width(), self.height()
+        if hasattr(self, 'bg_canvas') and self.bg_canvas:
+            self.bg_canvas.setGeometry(0, 0, w, h)
         if hasattr(self, 'user_container') and self.user_container:
             self.user_container.setGeometry(0, 0, w, h)
         if hasattr(self, 'guest_container') and self.guest_container:
