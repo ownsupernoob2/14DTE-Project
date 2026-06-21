@@ -1,90 +1,87 @@
-# widgets/base_widget.py
-# Base widget class with common functionality
+# mirror/widgets/base_widget.py
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel
+from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
 
-import pygame
-from config import *
-
-class Widget:
-    """Base widget class providing common functionality for all widgets."""
-
-    def __init__(self, x, y, w, h, title, chromeless=False):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.target_pos = [x, y]
+class Widget(QFrame):
+    """Base QFrame widget wrapper supporting absolute position dragging & snapping."""
+    
+    def __init__(self, x, y, w, h, title="", chromeless=False):
+        super().__init__()
         self.title = title
         self.chromeless = chromeless
-        self.dragging = False
-        self.drag_offset_x = 0
-        self.drag_offset_y = 0
-        self.content_surface = None
-        self.needs_redraw = True
-        self.alpha = 0
+        self.target_pos = [x, y]
+        
+        self.setGeometry(x, y, w, h)
+        
+        # Stylesheet setup
+        if not chromeless:
+            self.setObjectName("WidgetContainer")
+            self.setStyleSheet("""
+                #WidgetContainer {
+                    background-color: rgba(10, 10, 18, 166);
+                    border: 1px solid rgba(255, 255, 255, 18);
+                    border-radius: 16px;
+                }
+                #WidgetContainer:hover {
+                    border-color: rgba(59, 130, 246, 97);
+                }
+            """)
+            
+            # Layout
+            self.main_layout = QVBoxLayout(self)
+            self.main_layout.setContentsMargins(16, 16, 16, 16)
+            self.main_layout.setSpacing(10)
+            
+            # Title
+            if title:
+                self.title_label = QLabel(title.upper())
+                self.title_label.setStyleSheet("""
+                    font-size: 11px;
+                    font-weight: bold;
+                    color: rgba(255, 255, 255, 115);
+                    letter-spacing: 2px;
+                """)
+                self.main_layout.addWidget(self.title_label)
+        else:
+            self.setObjectName("ChromelessWidget")
+            self.setStyleSheet("#ChromelessWidget { background: transparent; border: none; }")
+            self.main_layout = QVBoxLayout(self)
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
+            self.main_layout.setSpacing(0)
+            
+        self.drag_position = None
 
-    def update(self, scroll_y=0):
-        if not self.dragging:
-            dx = self.target_pos[0] - self.rect.x
-            dy = self.target_pos[1] - self.rect.y
-            if abs(dx) > 1 or abs(dy) > 1:
-                self.rect.x += dx * 0.2
-                self.rect.y += dy * 0.2
-            else:
-                self.rect.x = self.target_pos[0]
-                self.rect.y = self.target_pos[1]
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
 
-        if self.alpha < 255:
-            self.alpha = min(255, self.alpha + 5)
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position is not None:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
 
-    def draw(self, surface, font_title, font_content, scroll_y=0):
-        if self.chromeless:
-            return
-        draw_y = self.rect.y - scroll_y
-        if draw_y > surface.get_height() or draw_y + self.rect.h < 0:
-            return
-
-        s = pygame.Surface((self.rect.w, self.rect.h), pygame.SRCALPHA)
-
-        bg_alpha = int(15 * (self.alpha / 255))
-        bg_color = (255, 255, 255, bg_alpha)
-        pygame.draw.rect(s, bg_color, s.get_rect(), border_radius=24)
-
-        border_alpha = int(24 * (self.alpha / 255))
-        border_color = (255, 255, 255, border_alpha)
-        pygame.draw.rect(s, border_color, s.get_rect(), 1, border_radius=24)
-
-        if self.dragging:
-            pygame.draw.rect(s, (255, 255, 255, 80), s.get_rect(), 2, border_radius=24)
-
-        if self.title:
-            title_surf = font_title.render(self.title.upper(), True, COLOR_TEXT_DIM)
-            s.blit(title_surf, (20, 15))
-
-        if self.content_surface:
-            s.blit(self.content_surface, (20, 50))
-
-        surface.blit(s, (self.rect.x, draw_y))
-
-    def handle_drag_start(self, x, y, scroll_y=0):
-        adj_y = y + scroll_y
-        if self.rect.collidepoint(x, adj_y):
-            self.dragging = True
-            self.drag_offset_x = x - self.rect.x
-            self.drag_offset_y = adj_y - self.rect.y
-            return True
-        return False
-
-    def handle_drag_update(self, x, y, scroll_y=0):
-        if self.dragging:
-            self.rect.x = x - self.drag_offset_x
-            self.rect.y = (y + scroll_y) - self.drag_offset_y
-            self.target_pos = [self.rect.x, self.rect.y]
-
-    def handle_drag_end(self, screen_w, screen_h):
-        if self.dragging:
-            self.dragging = False
-            col_width = screen_w / GRID_COLS
-            row_height = screen_h / GRID_ROWS
-            col = round(self.rect.x / col_width)
-            row = round(self.rect.y / row_height)
-            col = max(0, min(col, GRID_COLS - 1))
-            row = max(0, min(row, GRID_ROWS - 1))
-            self.target_pos[0] = int(col * col_width + GRID_GAP)
-            self.target_pos[1] = int(row * row_height + GRID_GAP)
+    def mouseReleaseEvent(self, event):
+        self.drag_position = None
+        # Snap to grid
+        parent = self.parentWidget()
+        if parent:
+            screen_w = parent.width()
+            screen_h = parent.height()
+            col_width = screen_w / 12  # GRID_COLS
+            row_height = screen_h / 12  # GRID_ROWS
+            col = round(self.x() / col_width)
+            row = round(self.y() / row_height)
+            col = max(0, min(col, 11))
+            row = max(0, min(row, 11))
+            
+            target_x = int(col * col_width + 20)
+            target_y = int(row * row_height + 20)
+            
+            # Smoothly snap to grid using QPropertyAnimation
+            self.anim = QPropertyAnimation(self, b"pos")
+            self.anim.setDuration(250)
+            self.anim.setEndValue(QPoint(target_x, target_y))
+            self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+            self.anim.start()
+            event.accept()
