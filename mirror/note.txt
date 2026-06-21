@@ -3,3 +3,9 @@ chmod +x setup.sh start_smart_mirror.sh
 ./setup.sh          # installs python3.10 deps + mirror-venv
 export API_URL=https://api.smartmirror.me   # or your server URL
 ./start_smart_mirror.sh
+[START] Smart Mirror is running.
+frame=  194 fps= 30 q=-0.0 size=N/A time=00:00:06.46 bitrate=N/A speed=0.994x   raspi@raspi:~/14DTE-Project/mirror $ Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 85, in resizeEvent
+    self.user_container.setGeometry(0, 0, w, h)
+AttributeError: 'SmartMirrorPro' object has no attribute 'user_container'
+frame=  210 fps= 30 q=-0.0 size=N/A time=00:00:07.00 bitrate=N/A speed=0.999x 

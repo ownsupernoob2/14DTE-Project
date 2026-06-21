@@ -31,15 +31,6 @@ class SmartMirrorPro(QMainWindow):
         self.setWindowTitle("Smart Mirror Pro")
         self.setStyleSheet("background-color: #000000;")
 
-        # Window state
-        windowed = os.environ.get('MIRROR_WINDOWED') == '1'
-        if windowed:
-            self.resize(1280, 800)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-        else:
-            self.showFullScreen()
-            self.setCursor(Qt.CursorShape.BlankCursor)
-
         # Central Widget & Main absolute layout
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -79,12 +70,24 @@ class SmartMirrorPro(QMainWindow):
         self.poll_timer.timeout.connect(self.update_inputs)
         self.poll_timer.start(200)
 
+        # Window state (show / resize at the end of __init__ so everything is fully initialized)
+        windowed = os.environ.get('MIRROR_WINDOWED') == '1'
+        if windowed:
+            self.resize(1280, 800)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self.showFullScreen()
+            self.setCursor(Qt.CursorShape.BlankCursor)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         w, h = self.width(), self.height()
-        self.user_container.setGeometry(0, 0, w, h)
-        self.guest_container.setGeometry(0, 0, w, h)
-        self.status_dot.move(w - 20, 20)
+        if hasattr(self, 'user_container') and self.user_container:
+            self.user_container.setGeometry(0, 0, w, h)
+        if hasattr(self, 'guest_container') and self.guest_container:
+            self.guest_container.setGeometry(0, 0, w, h)
+        if hasattr(self, 'status_dot') and self.status_dot:
+            self.status_dot.move(w - 20, 20)
 
     def setup_guest_layout(self):
         layout = QHBoxLayout(self.guest_container)
