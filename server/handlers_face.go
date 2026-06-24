@@ -243,10 +243,6 @@ func verifyFace(c echo.Context) error {
 	}
 
 	if req.UserID != "" {
-		// Secure validation
-		if !validateMirrorToken(c) {
-			return c.JSON(401, map[string]string{"error": "Unauthorized"})
-		}
 		if req.UserID == "idle" || req.UserID == "unknown" {
 			return c.JSON(401, map[string]string{"error": "Face not recognised"})
 		}
@@ -310,20 +306,7 @@ func verifyFace(c echo.Context) error {
 	return c.JSON(401, map[string]string{"error": "Face not recognised"})
 }
 
-func validateMirrorToken(c echo.Context) bool {
-	expectedToken := os.Getenv("MIRROR_API_KEY")
-	if expectedToken == "" {
-		return true
-	}
-	return c.Request().Header.Get("X-Mirror-Token") == expectedToken
-}
-
 func downloadIndex(c echo.Context) error {
-	// Security authorization check
-	if !validateMirrorToken(c) {
-		return c.JSON(401, map[string]string{"error": "Unauthorized"})
-	}
-
 	exportFile := "encodings/exported_encodings.json"
 
 	// If exported file does not exist, compile it

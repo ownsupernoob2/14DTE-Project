@@ -68,14 +68,8 @@ user_map = []
 def download_and_load_index():
     global faiss_index, user_map
     print("[FAISS] Downloading vector encodings and user map from server...")
-    
-    headers = {}
-    mirror_token = os.environ.get("MIRROR_API_KEY")
-    if mirror_token:
-        headers["X-Mirror-Token"] = mirror_token
-
     try:
-        res = requests.get(f"{API_URL}/api/download-index", headers=headers, timeout=10)
+        res = requests.get(f"{API_URL}/api/download-index", timeout=10)
         if res.status_code == 200:
             data = res.json()
             with open(ENCODINGS_JSON_PATH, 'w') as f:
@@ -154,16 +148,10 @@ def verify_face_worker(frame, on_result):
             matched_user_id = user_map[idx]
             print(f"[FAISS] Match success: {matched_user_id}. Fetching widgets...")
 
-            # Send lightweight text string (user_id) to fetch the student's widgets with token
-            headers = {}
-            mirror_token = os.environ.get("MIRROR_API_KEY")
-            if mirror_token:
-                headers["X-Mirror-Token"] = mirror_token
-
+            # Send lightweight text string (user_id) to fetch the student's widgets
             res = requests.post(
                 f"{API_URL}/api/verify-face",
                 json={"user_id": matched_user_id},
-                headers=headers,
                 timeout=5,
             )
             if res.status_code == 200:
