@@ -172,8 +172,8 @@ func trainFace(c echo.Context) error {
 
 	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
 
-	// Recompile FAISS index in background
-	exec.Command(getPythonCmd(), "compile_index.py").Start()
+	// Recompile FAISS index (export encodings) in background
+	exec.Command(getPythonCmd(), "export_encodings.py").Start()
 
 	return c.JSON(200, map[string]interface{}{
 		"status":      "trained",
@@ -200,8 +200,8 @@ func deleteFace(c echo.Context) error {
 		log.Printf("Failed to delete face meta for %s: %v", safeUserID, err)
 	}
 
-	// Recompile FAISS index in background
-	exec.Command(getPythonCmd(), "compile_index.py").Start()
+	// Recompile FAISS index (export encodings) in background
+	exec.Command(getPythonCmd(), "export_encodings.py").Start()
 
 	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
 }
@@ -307,41 +307,33 @@ func verifyFace(c echo.Context) error {
 }
 
 func downloadIndex(c echo.Context) error {
-	indexFile := "encodings/index.faiss"
-	mapFile := "encodings/user_map.json"
+	exportFile := "encodings/exported_encodings.json"
 
-	// If files do not exist, compile them
-	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
-		cmd := exec.Command(getPythonCmd(), "compile_index.py")
+	// If exported file does not exist, compile it
+	if _, err := os.Stat(exportFile); os.IsNotExist(err) {
+		cmd := exec.Command(getPythonCmd(), "export_encodings.py")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			return c.JSON(500, map[string]string{
-				"error":  "Failed to compile index: " + err.Error(),
+				"error":  "Failed to export encodings: " + err.Error(),
 				"stderr": stderr.String(),
 			})
 		}
 	}
 
-	indexData, err := os.ReadFile(indexFile)
+	data, err := os.ReadFile(exportFile)
 	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to read index file"})
+		return c.JSON(500, map[string]string{"error": "Failed to read exported encodings file"})
 	}
 
-	mapData, err := os.ReadFile(mapFile)
-	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to read user map file"})
+	var payload struct {
+		Vectors [][]float32 `json:"vectors"`
+		UserMap []string    `json:"user_map"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to parse exported encodings"})
 	}
 
-	var userMap []string
-	if err := json.Unmarshal(mapData, &userMap); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to parse user map file"})
-	}
-
-	encodedIndex := base64.StdEncoding.EncodeToString(indexData)
-
-	return c.JSON(200, map[string]interface{}{
-		"index":    encodedIndex,
-		"user_map": userMap,
-	})
+	return c.JSON(200, payload)
 }

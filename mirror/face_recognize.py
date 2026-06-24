@@ -59,8 +59,7 @@ api_lock = threading.Lock()
 api_busy = False
 
 
-FAISS_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.faiss")
-USER_MAP_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_map.json")
+ENCODINGS_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exported_encodings.json")
 
 faiss_index = None
 user_map = []
@@ -68,38 +67,42 @@ user_map = []
 
 def download_and_load_index():
     global faiss_index, user_map
-    print("[FAISS] Downloading vector index and user map from server...")
+    print("[FAISS] Downloading vector encodings and user map from server...")
     try:
         res = requests.get(f"{API_URL}/api/download-index", timeout=10)
         if res.status_code == 200:
             data = res.json()
-            encoded_index = data.get("index")
-            user_map_data = data.get("user_map", [])
-
-            # Decode and write to local files
-            index_bytes = base64.b64decode(encoded_index)
-            with open(FAISS_INDEX_PATH, 'wb') as f:
-                f.write(index_bytes)
-            with open(USER_MAP_PATH, 'w') as f:
-                json.dump(user_map_data, f)
-            print("[FAISS] Index and user map updated from server successfully.")
+            with open(ENCODINGS_JSON_PATH, 'w') as f:
+                json.dump(data, f)
+            print("[FAISS] Vector encodings updated from server successfully.")
         else:
             print(f"[FAISS] Server returned status code {res.status_code}. Using local cache.")
     except Exception as e:
-        print(f"[FAISS] Failed to download index: {e}. Using local cache.")
+        print(f"[FAISS] Failed to download encodings: {e}. Using local cache.")
 
-    # Load from local cache if they exist
-    if os.path.exists(FAISS_INDEX_PATH) and os.path.exists(USER_MAP_PATH):
+    # Load from local cache if it exists, and build FAISS index locally in RAM
+    if os.path.exists(ENCODINGS_JSON_PATH):
         try:
+            with open(ENCODINGS_JSON_PATH, 'r') as f:
+                data = json.load(f)
+            
+            vectors = data.get("vectors", [])
+            user_map = data.get("user_map", [])
+            
             if faiss is not None:
-                faiss_index = faiss.read_index(FAISS_INDEX_PATH)
-                with open(USER_MAP_PATH, 'r') as f:
-                    user_map = json.load(f)
-                print(f"[FAISS] Loaded index successfully with {faiss_index.ntotal} vectors, map length: {len(user_map)}")
+                if vectors:
+                    dimension = 128
+                    faiss_index = faiss.IndexFlatL2(dimension)
+                    vectors_arr = np.array(vectors, dtype=np.float32)
+                    faiss_index.add(vectors_arr)
+                    print(f"[FAISS] Compiled index locally in RAM with {faiss_index.ntotal} vectors.")
+                else:
+                    faiss_index = faiss.IndexFlatL2(128)
+                    print("[FAISS] Encodings file is empty. Index left empty.")
             else:
-                print("[FAISS] faiss module is not installed/imported. Vector matching in RAM disabled.")
+                print("[FAISS] faiss module is not installed. Native matching in RAM is disabled.")
         except Exception as e:
-            print(f"[FAISS] Error loading index: {e}")
+            print(f"[FAISS] Error compiling local index: {e}")
 
 
 def verify_face_worker(frame, on_result):
