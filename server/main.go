@@ -35,6 +35,7 @@ func main() {
 
 	// Mirror endpoint — no auth needed for the mirror to verify faces
 	e.POST("/api/verify-face", verifyFace)
+	e.GET("/api/download-index", downloadIndex)
 
 	// Protected routes (JWT middleware)
 	protected := e.Group("/api")

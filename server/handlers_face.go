@@ -16,7 +16,8 @@ import (
 
 // FaceRequest is used by the legacy single-image upload and verify endpoints.
 type FaceRequest struct {
-	Image string `json:"image"`
+	Image  string `json:"image,omitempty"`
+	UserID string `json:"user_id,omitempty"`
 }
 
 // TrainRequest accepts a batch of up to 10 base64-encoded images.
@@ -171,6 +172,9 @@ func trainFace(c echo.Context) error {
 
 	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
 
+	// Recompile FAISS index in background
+	exec.Command(getPythonCmd(), "compile_index.py").Start()
+
 	return c.JSON(200, map[string]interface{}{
 		"status":      "trained",
 		"frames_used": framesUsed,
@@ -195,6 +199,9 @@ func deleteFace(c echo.Context) error {
 	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("Failed to delete face meta for %s: %v", safeUserID, err)
 	}
+
+	// Recompile FAISS index in background
+	exec.Command(getPythonCmd(), "compile_index.py").Start()
 
 	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
 }
@@ -233,6 +240,16 @@ func verifyFace(c echo.Context) error {
 	var req FaceRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
+	}
+
+	if req.UserID != "" {
+		if req.UserID == "idle" || req.UserID == "unknown" {
+			return c.JSON(401, map[string]string{"error": "Face not recognised"})
+		}
+		return c.JSON(200, map[string]interface{}{
+			"user_id": req.UserID,
+			"widgets": getWidgetsForUser(req.UserID),
+		})
 	}
 
 	b64data := req.Image
@@ -287,4 +304,39 @@ func verifyFace(c echo.Context) error {
 	}
 
 	return c.JSON(401, map[string]string{"error": "Face not recognised"})
+}
+
+func downloadIndex(c echo.Context) error {
+	indexFile := "encodings/index.faiss"
+	mapFile := "encodings/user_map.json"
+
+	// If files do not exist, compile them
+	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
+		cmd := exec.Command(getPythonCmd(), "compile_index.py")
+		if err := cmd.Run(); err != nil {
+			return c.JSON(500, map[string]string{"error": "Failed to compile index: " + err.Error()})
+		}
+	}
+
+	indexData, err := os.ReadFile(indexFile)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to read index file"})
+	}
+
+	mapData, err := os.ReadFile(mapFile)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to read user map file"})
+	}
+
+	var userMap []string
+	if err := json.Unmarshal(mapData, &userMap); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to parse user map file"})
+	}
+
+	encodedIndex := base64.StdEncoding.EncodeToString(indexData)
+
+	return c.JSON(200, map[string]interface{}{
+		"index":    encodedIndex,
+		"user_map": userMap,
+	})
 }

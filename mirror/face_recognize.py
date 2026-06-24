@@ -30,6 +30,12 @@ import time
 
 import cv2
 import requests
+import numpy as np
+import face_recognition
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
 from config import FACE_DATA_FILE, VISION_FILE
 from timing_config import (
@@ -53,50 +59,113 @@ api_lock = threading.Lock()
 api_busy = False
 
 
-def verify_face_worker(b64_img, on_result):
-    """
-    Background thread: POST the JPEG to /api/verify-face.
+FAISS_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.faiss")
+USER_MAP_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_map.json")
 
-    Calls on_result(user_id, widgets, rec) where rec is:
-      True   — recognised user
-      False  — face found but not in the database
-      None   — no face / network error
-    """
-    global api_busy
+faiss_index = None
+user_map = []
+
+
+def download_and_load_index():
+    global faiss_index, user_map
+    print("[FAISS] Downloading vector index and user map from server...")
     try:
-        res = requests.post(
-            f"{API_URL}/api/verify-face",
-            json={"image": f"data:image/jpeg;base64,{b64_img}"},
-            timeout=5,
-        )
+        res = requests.get(f"{API_URL}/api/download-index", timeout=10)
         if res.status_code == 200:
-            data    = res.json()
-            user_id = data.get("user_id", "idle")
-            widgets = data.get("widgets", [])
-            rec     = bool(user_id and user_id not in ("", "idle"))
-            print(f"[API] 200 — user_id={user_id!r}, recognised={rec}, "
-                  f"widgets={len(widgets)}")
-            on_result(user_id, widgets, rec)
+            data = res.json()
+            encoded_index = data.get("index")
+            user_map_data = data.get("user_map", [])
 
-        elif res.status_code == 401:
-            body = {}
-            try:
-                body = res.json()
-            except Exception:
-                pass
-            no_face = body.get("error", "").lower().startswith("no face")
-            if no_face:
-                print("[API] 401 — no face in frame")
-                on_result(None, [], None)
+            # Decode and write to local files
+            index_bytes = base64.b64decode(encoded_index)
+            with open(FAISS_INDEX_PATH, 'wb') as f:
+                f.write(index_bytes)
+            with open(USER_MAP_PATH, 'w') as f:
+                json.dump(user_map_data, f)
+            print("[FAISS] Index and user map updated from server successfully.")
+        else:
+            print(f"[FAISS] Server returned status code {res.status_code}. Using local cache.")
+    except Exception as e:
+        print(f"[FAISS] Failed to download index: {e}. Using local cache.")
+
+    # Load from local cache if they exist
+    if os.path.exists(FAISS_INDEX_PATH) and os.path.exists(USER_MAP_PATH):
+        try:
+            if faiss is not None:
+                faiss_index = faiss.read_index(FAISS_INDEX_PATH)
+                with open(USER_MAP_PATH, 'r') as f:
+                    user_map = json.load(f)
+                print(f"[FAISS] Loaded index successfully with {faiss_index.ntotal} vectors, map length: {len(user_map)}")
             else:
-                print("[API] 401 — face present but unrecognised")
+                print("[FAISS] faiss module is not installed/imported. Vector matching in RAM disabled.")
+        except Exception as e:
+            print(f"[FAISS] Error loading index: {e}")
+
+
+def verify_face_worker(frame, on_result):
+    """
+    Background thread: Perform face verification natively in RAM using FAISS
+    and local face encodings, then query the Go server using the lightweight user_id
+    to fetch the widgets.
+    """
+    global api_busy, faiss_index, user_map
+    try:
+        # Ensure index is loaded
+        if faiss_index is None:
+            download_and_load_index()
+
+        if faiss_index is None or not user_map:
+            print("[FAISS] No local index/map loaded. Cannot perform matching.")
+            on_result(None, [], None)
+            return
+
+        # Find face encodings using face_recognition
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        encodings = face_recognition.face_encodings(rgb_frame)
+
+        if not encodings:
+            print("[FAISS] No face detected in frame.")
+            on_result(None, [], None)
+            return
+
+        encoding = np.array(encodings[0], dtype=np.float32).reshape(1, -1)
+
+        # Search index (1 nearest neighbor)
+        distances, indices = faiss_index.search(encoding, 1)
+
+        dist = float(distances[0][0])
+        idx = int(indices[0][0])
+
+        # L2 distance returned by FAISS is squared Euclidean distance.
+        # The face distance threshold is usually 0.40 (Euclidean), so squared is 0.16.
+        euclidean_dist = np.sqrt(dist) if dist >= 0 else 1.0
+        print(f"[FAISS] Match query: index_idx={idx}, distance={euclidean_dist:.4f}")
+
+        if euclidean_dist < 0.40 and 0 <= idx < len(user_map):
+            matched_user_id = user_map[idx]
+            print(f"[FAISS] Match success: {matched_user_id}. Fetching widgets...")
+
+            # Send lightweight text string (user_id) to fetch the student's widgets
+            res = requests.post(
+                f"{API_URL}/api/verify-face",
+                json={"user_id": matched_user_id},
+                timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                user_id = data.get("user_id", "idle")
+                widgets = data.get("widgets", [])
+                rec = bool(user_id and user_id not in ("", "idle"))
+                on_result(user_id, widgets, rec)
+            else:
+                print(f"[API] Failed to fetch widgets: status={res.status_code}")
                 on_result(None, [], False)
         else:
-            print(f"[API] {res.status_code} — treating as no-face")
-            on_result(None, [], None)
+            print("[FAISS] Face present but unrecognised.")
+            on_result(None, [], False)
 
     except Exception as e:
-        print(f"[API] Request error: {e}")
+        print(f"[FAISS] Error during local verification: {e}")
         on_result(None, [], None)
     finally:
         with api_lock:
@@ -193,6 +262,9 @@ def main():
     print("=" * 60)
 
     cap = open_camera(args.rpi, args.camera_id)
+
+    # Download and load FAISS index and user map at startup
+    download_and_load_index()
 
     face_cascade = cv2.CascadeClassifier(
         cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
@@ -304,10 +376,10 @@ def main():
                     last_heartbeat = now
                     with api_lock:
                         api_busy = True
-                    _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    b64    = base64.b64encode(buf).decode('utf-8')
+                    # Pass a copy of the frame to perform face recognition
+                    frame_copy = frame.copy()
                     t = threading.Thread(target=verify_face_worker,
-                                         args=(b64, on_api_result), daemon=True)
+                                         args=(frame_copy, on_api_result), daemon=True)
                     t.start()
 
             # ── Timer-driven state transitions ───────────────────────────────
