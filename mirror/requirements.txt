@@ -2,3 +2,4 @@
 # are installed via apt and inherited through --system-site-packages.
 requests
 PyQt6
+faiss-cpu

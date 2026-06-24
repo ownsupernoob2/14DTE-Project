@@ -172,8 +172,8 @@ func trainFace(c echo.Context) error {
 
 	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
 
-	// Recompile FAISS index in background
-	exec.Command(getPythonCmd(), "compile_index.py").Start()
+	// Recompile FAISS index (export encodings) in background
+	exec.Command(getPythonCmd(), "export_encodings.py").Start()
 
 	return c.JSON(200, map[string]interface{}{
 		"status":      "trained",
@@ -200,8 +200,8 @@ func deleteFace(c echo.Context) error {
 		log.Printf("Failed to delete face meta for %s: %v", safeUserID, err)
 	}
 
-	// Recompile FAISS index in background
-	exec.Command(getPythonCmd(), "compile_index.py").Start()
+	// Recompile FAISS index (export encodings) in background
+	exec.Command(getPythonCmd(), "export_encodings.py").Start()
 
 	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
 }
@@ -243,6 +243,10 @@ func verifyFace(c echo.Context) error {
 	}
 
 	if req.UserID != "" {
+		// Secure validation
+		if !validateMirrorToken(c) {
+			return c.JSON(401, map[string]string{"error": "Unauthorized"})
+		}
 		if req.UserID == "idle" || req.UserID == "unknown" {
 			return c.JSON(401, map[string]string{"error": "Face not recognised"})
 		}
@@ -306,42 +310,47 @@ func verifyFace(c echo.Context) error {
 	return c.JSON(401, map[string]string{"error": "Face not recognised"})
 }
 
-func downloadIndex(c echo.Context) error {
-	indexFile := "encodings/index.faiss"
-	mapFile := "encodings/user_map.json"
+func validateMirrorToken(c echo.Context) bool {
+	expectedToken := os.Getenv("MIRROR_API_KEY")
+	if expectedToken == "" {
+		return true
+	}
+	return c.Request().Header.Get("X-Mirror-Token") == expectedToken
+}
 
-	// If files do not exist, compile them
-	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
-		cmd := exec.Command(getPythonCmd(), "compile_index.py")
+func downloadIndex(c echo.Context) error {
+	// Security authorization check
+	if !validateMirrorToken(c) {
+		return c.JSON(401, map[string]string{"error": "Unauthorized"})
+	}
+
+	exportFile := "encodings/exported_encodings.json"
+
+	// If exported file does not exist, compile it
+	if _, err := os.Stat(exportFile); os.IsNotExist(err) {
+		cmd := exec.Command(getPythonCmd(), "export_encodings.py")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			return c.JSON(500, map[string]string{
-				"error":  "Failed to compile index: " + err.Error(),
+				"error":  "Failed to export encodings: " + err.Error(),
 				"stderr": stderr.String(),
 			})
 		}
 	}
 
-	indexData, err := os.ReadFile(indexFile)
+	data, err := os.ReadFile(exportFile)
 	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to read index file"})
+		return c.JSON(500, map[string]string{"error": "Failed to read exported encodings file"})
 	}
 
-	mapData, err := os.ReadFile(mapFile)
-	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to read user map file"})
+	var payload struct {
+		Vectors [][]float32 `json:"vectors"`
+		UserMap []string    `json:"user_map"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to parse exported encodings"})
 	}
 
-	var userMap []string
-	if err := json.Unmarshal(mapData, &userMap); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to parse user map file"})
-	}
-
-	encodedIndex := base64.StdEncoding.EncodeToString(indexData)
-
-	return c.JSON(200, map[string]interface{}{
-		"index":    encodedIndex,
-		"user_map": userMap,
-	})
+	return c.JSON(200, payload)
 }
