@@ -313,8 +313,13 @@ func downloadIndex(c echo.Context) error {
 	// If files do not exist, compile them
 	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
 		cmd := exec.Command(getPythonCmd(), "compile_index.py")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			return c.JSON(500, map[string]string{"error": "Failed to compile index: " + err.Error()})
+			return c.JSON(500, map[string]string{
+				"error":  "Failed to compile index: " + err.Error(),
+				"stderr": stderr.String(),
+			})
 		}
 	}
 
