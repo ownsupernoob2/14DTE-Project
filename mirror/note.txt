@@ -9,3 +9,14 @@ frame=  194 fps= 30 q=-0.0 size=N/A time=00:00:06.46 bitrate=N/A speed=0.994x   
     self.user_container.setGeometry(0, 0, w, h)
 AttributeError: 'SmartMirrorPro' object has no attribute 'user_container'
 frame=  210 fps= 30 q=-0.0 size=N/A time=00:00:07.00 bitrate=N/A speed=0.999x 
+
+
+AISS] Downloading vector encodings and user map from server...
+[FAISS] Vector encodings updated from server successfully.
+[FAISS] faiss module is not installed. Native matching in RAM is disabled.
+[FAISS] No local index/map loaded. Cannot perform matching.
+frame=  344 fps= 30 q=-0.0 size=N/A time=00:00:11.46 bitrate=N/A speed=0.996x   frame=  359 fps= 30 q=-0.0 size=N/A time=00:00:11.96 bitrate=N/A speed=0.997x   frame=  374 fps= 30 q=-0.0 size=N/A time=00:00:12.46 bitrate=N/A speed=0.997x   [FAISS] Downloading vector encodings and user map from server...
+[FAISS] Vector encodings updated from server successfully.
+[FAISS] faiss module is not installed. Native matching in RAM is disabled.
+[FAISS] No local index/map loaded. Cannot perform matching.
+frame=  390 fps= 30 q=-0.0 size=N/A time=00:00:13.00 bitrate=N/A speed=0.999x   frame=  404 fps= 30 q=-0.0 size=N/A time=00:00:13.46 bitrate=N/A speed=0.997x   [INFO] state=idle  detected=True  user=None  widgets=0
