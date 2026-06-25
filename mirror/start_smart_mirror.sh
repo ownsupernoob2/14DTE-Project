@@ -5,6 +5,11 @@
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
+# ── Automatic GitHub Updates ─────────────────────────────────────────────────
+echo "[START] Checking for updates from GitHub..."
+git pull || echo "[WARN] Failed to pull updates from GitHub. Running with current code."
+
+
 # ── Python interpreter ──────────────────────────────────────────────────────
 # Prefer the venv created by setup.sh, fall back to system python3.10 / python3
 PYTHON="${MIRROR_PYTHON:-$HOME/mirror-venv/bin/python}"

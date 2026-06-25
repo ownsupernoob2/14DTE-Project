@@ -44,7 +44,24 @@ fi
 
 chmod +x start_smart_mirror.sh start_camera.sh 2>/dev/null || true
 
+echo ">>> Setting up automatic startup on boot..."
+AUTOSTART_DIR="$HOME/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+cat <<EOF > "$AUTOSTART_DIR/smart_mirror.desktop"
+[Desktop Entry]
+Type=Application
+Name=Smart Mirror
+Exec=/bin/bash $APP_DIR/start_smart_mirror.sh
+Terminal=true
+X-GNOME-Autostart-enabled=true
+EOF
+chmod +x "$AUTOSTART_DIR/smart_mirror.desktop"
+echo ">>> Configured autostart desktop entry at: $AUTOSTART_DIR/smart_mirror.desktop"
+
 echo "=========================================================="
 echo "Setup Complete!"
-echo "Start the mirror with: ./start_smart_mirror.sh"
+echo "- Virtual environment created and requirements (including faiss-cpu) installed."
+echo "- Automatic startup configured to run when the Pi boots."
+echo "- Automatic GitHub updates will be pulled on startup."
+echo "Start the mirror now with: ./start_smart_mirror.sh"
 echo "=========================================================="

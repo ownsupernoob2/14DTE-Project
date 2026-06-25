@@ -62,11 +62,13 @@ api_busy = False
 ENCODINGS_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exported_encodings.json")
 
 faiss_index = None
+numpy_vectors = None
 user_map = []
+index_loaded = False
 
 
 def download_and_load_index():
-    global faiss_index, user_map
+    global faiss_index, numpy_vectors, user_map, index_loaded
     print("[FAISS] Downloading vector encodings and user map from server...")
     try:
         res = requests.get(f"{API_URL}/api/download-index", timeout=10)
@@ -89,6 +91,13 @@ def download_and_load_index():
             vectors = data.get("vectors", [])
             user_map = data.get("user_map", [])
             
+            if vectors:
+                numpy_vectors = np.array(vectors, dtype=np.float32)
+                print(f"[FAISS] Loaded {len(numpy_vectors)} vectors into RAM.")
+            else:
+                numpy_vectors = None
+                print("[FAISS] Encodings file is empty.")
+            
             if faiss is not None:
                 if vectors:
                     dimension = 128
@@ -100,7 +109,8 @@ def download_and_load_index():
                     faiss_index = faiss.IndexFlatL2(128)
                     print("[FAISS] Encodings file is empty. Index left empty.")
             else:
-                print("[FAISS] faiss module is not installed. Native matching in RAM is disabled.")
+                print("[FAISS] faiss module is not installed. Native matching in RAM is disabled (falling back to NumPy).")
+            index_loaded = True
         except Exception as e:
             print(f"[FAISS] Error compiling local index: {e}")
 
@@ -108,16 +118,16 @@ def download_and_load_index():
 def verify_face_worker(frame, on_result):
     """
     Background thread: Perform face verification natively in RAM using FAISS
-    and local face encodings, then query the Go server using the lightweight user_id
-    to fetch the widgets.
+    (or NumPy fallback) and local face encodings, then query the Go server using the
+    lightweight user_id to fetch the widgets.
     """
-    global api_busy, faiss_index, user_map
+    global api_busy, faiss_index, numpy_vectors, user_map, index_loaded
     try:
         # Ensure index is loaded
-        if faiss_index is None:
+        if not index_loaded:
             download_and_load_index()
 
-        if faiss_index is None or not user_map:
+        if (faiss_index is None and numpy_vectors is None) or not user_map:
             print("[FAISS] No local index/map loaded. Cannot perform matching.")
             on_result(None, [], None)
             return
@@ -133,15 +143,21 @@ def verify_face_worker(frame, on_result):
 
         encoding = np.array(encodings[0], dtype=np.float32).reshape(1, -1)
 
-        # Search index (1 nearest neighbor)
-        distances, indices = faiss_index.search(encoding, 1)
+        if faiss_index is not None:
+            # Search index (1 nearest neighbor)
+            distances, indices = faiss_index.search(encoding, 1)
+            dist = float(distances[0][0])
+            idx = int(indices[0][0])
+            # L2 distance returned by FAISS is squared Euclidean distance.
+            # The face distance threshold is usually 0.40 (Euclidean), so squared is 0.16.
+            euclidean_dist = np.sqrt(dist) if dist >= 0 else 1.0
+        else:
+            # Fallback to pure NumPy distance calculation
+            diffs = numpy_vectors - encoding
+            dists = np.linalg.norm(diffs, axis=1)
+            idx = int(np.argmin(dists))
+            euclidean_dist = float(dists[idx])
 
-        dist = float(distances[0][0])
-        idx = int(indices[0][0])
-
-        # L2 distance returned by FAISS is squared Euclidean distance.
-        # The face distance threshold is usually 0.40 (Euclidean), so squared is 0.16.
-        euclidean_dist = np.sqrt(dist) if dist >= 0 else 1.0
         print(f"[FAISS] Match query: index_idx={idx}, distance={euclidean_dist:.4f}")
 
         if euclidean_dist < 0.40 and 0 <= idx < len(user_map):
