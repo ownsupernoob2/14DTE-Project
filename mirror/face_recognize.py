@@ -132,12 +132,33 @@ def verify_face_worker(frame, on_result):
             on_result(None, [], None)
             return
 
-        # Find face encodings using face_recognition
+        # Detect all face locations in the frame first
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb_frame)
+        face_locations = face_recognition.face_locations(rgb_frame)
+        total_faces = len(face_locations)
 
-        if not encodings:
+        if total_faces == 0:
             print("[FAISS] No face detected in frame.")
+            on_result(None, [], None)
+            return
+
+        # Calculate bounding box area for each detected face
+        areas = []
+        for i, loc in enumerate(face_locations):
+            top, right, bottom, left = loc
+            area = (bottom - top) * (right - left)
+            areas.append(area)
+            print(f"[FAISS] Detected face {i+1}/{total_faces}: area={area}px (top={top}, right={right}, bottom={bottom}, left={left})")
+
+        # Exclusively select the largest face (closest to the camera)
+        largest_idx = int(np.argmax(areas))
+        largest_location = face_locations[largest_idx]
+        print(f"[FAISS] Selecting closest/largest face (index={largest_idx}, area={areas[largest_idx]}px) out of {total_faces} total faces.")
+
+        # Compute encoding ONLY for the largest face
+        encodings = face_recognition.face_encodings(rgb_frame, known_face_locations=[largest_location])
+        if not encodings:
+            print("[FAISS] Failed to compute encoding for the selected face.")
             on_result(None, [], None)
             return
 
