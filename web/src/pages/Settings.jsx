@@ -194,14 +194,7 @@ export default function Settings() {
 
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Account</h2>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                className="modern-btn modern-btn-outline logout-btn"
-                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
-              >
-                Logout
-              </button>
-
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '320px' }}>
               <button
                 className="modern-btn"
                 onClick={() => setShowDeleteConfirm(true)}
@@ -217,6 +210,20 @@ export default function Settings() {
                 }}
               >
                 DELETE FACE DATA
+              </button>
+
+              <button
+                className="modern-btn modern-btn-outline"
+                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                style={{
+                  borderColor: 'rgba(239, 68, 68, 0.4)',
+                  color: '#f87171',
+                  background: 'rgba(239, 68, 68, 0.05)',
+                  letterSpacing: '0.08em',
+                  fontWeight: 600
+                }}
+              >
+                LOGOUT
               </button>
             </div>
           </section>
