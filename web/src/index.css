@@ -1,16 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
-
-:root {
-  --bg-color: #0a0a0c;
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-hover: rgba(255, 255, 255, 0.08);
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-glow: rgba(59, 130, 246, 0.4);
-}
+@import './styles/theme-constants.css';
 
 * {
   box-sizing: border-box;
@@ -24,7 +13,7 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family);
   background-color: var(--bg-color);
   color: var(--text-primary);
   overflow-x: hidden;
@@ -411,9 +400,9 @@ button {
   border-color: rgba(255,255,255,0.2);
 }
 .notices-settings-btn.active {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.4);
-  color: #93c5fd;
+  background: var(--accent-bg-trans);
+  border-color: var(--accent-border-trans);
+  color: var(--text-primary);
 }
 
 /* Settings panel */
@@ -476,8 +465,8 @@ button {
 .notices-year-tab.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
-  box-shadow: 0 0 10px rgba(59,130,246,0.3);
+  color: var(--bg-color);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
 /* Category chips */
@@ -1219,3 +1208,20 @@ button {
 .notices-mirror-grid .notices-mirror-card {
   break-inside: avoid;
 }
+
+/* Custom scrollbar for terms & privacy policy */
+.custom-terms-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-terms-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+.custom-terms-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.custom-terms-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+

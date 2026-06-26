@@ -47,12 +47,12 @@ Face recognition is not infallible. The system may occasionally fail to identify
 5. Amendments
 These terms may be updated from time to time. Continued use of the face registration feature constitutes acceptance of any revised terms.`
 
-// Phases: 'intro' | 'consent' | 'capture' | 'uploading' | 'success' | 'error'
+// Phases: 'parental-gate' | 'intro' | 'consent' | 'capture' | 'uploading' | 'success' | 'error'
 
 export default function FaceCaptureModal({ isOpen, onClose }) {
   const { getAccessTokenSilently } = useAuth0()
 
-  const [phase, setPhase] = useState('intro')
+  const [phase, setPhase] = useState('parental-gate')
   const [agreedPrivacy, setAgreedPrivacy] = useState(false)
   const [agreedTerms, setAgreedTerms] = useState(false)
   const [captureProgress, setCaptureProgress] = useState(0)
@@ -92,7 +92,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
   // ── Reset on open/close ──────────────────────────────────────────────────
   useEffect(() => {
     if (isOpen) {
-      setPhase('intro')
+      setPhase('parental-gate')
       setAgreedPrivacy(false)
       setAgreedTerms(false)
       setCaptureProgress(0)
@@ -228,7 +228,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
     stopCamera()
     onClose()
     setTimeout(() => {
-      setPhase('intro')
+      setPhase('parental-gate')
       setAgreedPrivacy(false)
       setAgreedTerms(false)
       setCaptureProgress(0)
@@ -269,40 +269,96 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
 
           <AnimatePresence mode="wait">
 
+            {/* PARENTAL GATE */}
+            {phase === 'parental-gate' && (
+              <motion.div key="parental-gate" className="fc-phase" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <p className="fc-overline">Step 1 of 3: Parental Gate</p>
+                <h2 className="fc-title" style={{ marginBottom: '16px' }}>Parent / Caregiver Review</h2>
+                
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '12px' }}>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                </svg>
+
+                <div className="glass-panel" style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: '16px', borderRadius: '12px', margin: '12px 0', width: '100%' }}>
+                  <p style={{ color: '#f87171', fontWeight: 'bold', fontSize: '0.95rem', margin: 0, lineHeight: 1.5 }}>
+                    "If you are under 16, a parent/caregiver must review this notice."
+                  </p>
+                </div>
+                
+                <p className="fc-sub" style={{ textAlign: 'left', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  This notice explains how the Smart Mirror collects, processes, and stores student data. If you are under 16, please invite a parent or caregiver to review this with you.
+                </p>
+
+                <div className="fc-row-btns" style={{ marginTop: '28px', width: '100%' }}>
+                  <motion.button className="fc-btn fc-btn-outline" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}>
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    className="fc-btn"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => setPhase('intro')}
+                    style={{ background: 'var(--accent)' }}
+                  >
+                    Agree &amp; Continue
+                  </motion.button>
+                </div>
+              </motion.div>
+            )}
+
             {/* INTRO */}
             {phase === 'intro' && (
               <motion.div key="intro" className="fc-phase" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
-                <p className="fc-overline">Face Registration</p>
+                <p className="fc-overline">Step 2 of 3: Face Registration</p>
                 <h2 className="fc-title">Set Up Mirror Recognition</h2>
-                <p className="fc-sub">
-                  We will take 20 photos to train the mirror to recognise you. The process takes about 20 seconds. Raw images are deleted immediately after training — only a mathematical encoding is kept.
+                
+                <div className="glass-panel" style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.09)', padding: '12px 14px', borderRadius: '10px', marginBottom: '4px' }}>
+                  <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem', margin: '0 0 2px 0', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Participation is entirely voluntary
+                  </p>
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem', lineHeight: 1.4, margin: 0 }}>
+                    "Using the mirror/personalising it by signing up is entirely optional."
+                  </p>
+                </div>
+
+                <p className="fc-sub" style={{ marginBottom: '14px', fontSize: '0.85rem' }}>
+                  We will take 20 photos to train the mirror to recognise you. Raw images are deleted immediately after training — only a mathematical encoding is kept.
                 </p>
-                <ul className="fc-list">
+                <ul className="fc-list" style={{ fontSize: '0.8rem', marginBottom: '20px' }}>
                   <li>Sit in a well-lit area</li>
                   <li>Keep your face centred in the frame</li>
                   <li>Slowly rotate your head once prompted</li>
                   <li>Your images are never stored after training</li>
                 </ul>
-                <motion.button
-                  className="fc-btn"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={() => setPhase('consent')}
-                >
-                  Continue
-                </motion.button>
+                <div className="fc-row-btns">
+                  <motion.button className="fc-btn fc-btn-outline" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => setPhase('parental-gate')}>
+                    Back
+                  </motion.button>
+                  <motion.button
+                    className="fc-btn"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => setPhase('consent')}
+                  >
+                    Continue
+                  </motion.button>
+                </div>
               </motion.div>
             )}
 
             {/* CONSENT */}
             {phase === 'consent' && (
               <motion.div key="consent" className="fc-phase" variants={slideVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
-                <p className="fc-overline">Privacy &amp; Terms</p>
-                <h2 className="fc-title">Review &amp; Agree</h2>
-                <p className="fc-sub">Please read and accept the following before registering your face.</p>
+                <p className="fc-overline">Step 3 of 3: Privacy &amp; Consent</p>
+                <h2 className="fc-title">Privacy Policy &amp; Terms</h2>
+                <p className="fc-sub" style={{ fontSize: '0.82rem' }}>
+                  Read and accept the following before registering your face.
+                </p>
+
                 <div className="fc-policy-scroll">
                   <pre className="fc-policy-text">{PRIVACY_TEXT}</pre>
                 </div>
+
                 <div className="fc-checks">
                   <label className="fc-check-row">
                     <input type="checkbox" checked={agreedPrivacy} onChange={(e) => setAgreedPrivacy(e.target.checked)} />
@@ -310,7 +366,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                   </label>
                   <label className="fc-check-row">
                     <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} />
-                    <span>I have read and agree to the <strong>Terms of Use</strong></span>
+                    <span>I understand that using the mirror is <strong>entirely optional</strong> and I can delete my data at any time</span>
                   </label>
                 </div>
                 <div className="fc-row-btns">

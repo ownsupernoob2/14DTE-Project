@@ -408,14 +408,13 @@
 
 .fc-modal {
   position: relative;
-  width: 80vw;
-  height: 80vh;
-  max-width: 900px;
-  background: rgba(8, 8, 10, 0.96);
+  width: min(520px, 92vw);
+  max-height: min(82vh, 700px);
+  background: rgba(8, 8, 10, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 28px;
+  border-radius: 24px;
   box-shadow:
-    0 40px 80px rgba(0, 0, 0, 0.7),
+    0 32px 64px rgba(0, 0, 0, 0.65),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
   overflow: hidden;
   display: flex;
@@ -454,8 +453,8 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 48px 52px 40px;
-  gap: 18px;
+  padding: 32px 36px 28px;
+  gap: 10px;
   overflow-y: auto;
 }
 
@@ -468,8 +467,8 @@
 .fc-phase-capture {
   align-items: center;
   text-align: center;
-  padding: 32px 52px 36px;
-  gap: 20px;
+  padding: 24px 36px 28px;
+  gap: 14px;
 }
 
 /* Typography */

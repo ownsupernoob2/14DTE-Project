@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import Simulator from './pages/Simulator'
+import Privacy from './pages/Privacy'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -62,6 +63,7 @@ function App() {
         <ServerDownNotice />
         <Routes>
           <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
+          <Route path="/privacy" element={<Privacy />} />
           
           <Route
             path="/"

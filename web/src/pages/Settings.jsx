@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
@@ -7,12 +7,26 @@ import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
+// ── Inline style constants (change here to restyle globally) ──────────────────
+const S = {
+  dangerBg:        'rgba(239, 68, 68, 0.08)',
+  dangerBorder:    'rgba(239, 68, 68, 0.22)',
+  dangerText:      '#f87171',
+  dangerActiveBg:  'rgba(239, 68, 68, 0.18)',
+  infoBoxBg:       'rgba(255, 255, 255, 0.03)',
+  infoBoxBorder:   'rgba(255, 255, 255, 0.07)',
+  mutedText:       'rgba(255,255,255,0.55)',
+  subText:         'rgba(255,255,255,0.35)',
+}
+
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const { isServerUp } = useServerStatus()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [barcode, setBarcode] = useState('')
+  const [loadingBarcode, setLoadingBarcode] = useState(true)
 
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
@@ -21,6 +35,56 @@ export default function Settings() {
   const hoursUntilUpdate = isScanRecent
     ? Math.ceil((24 * 60 * 60 * 1000 - (Date.now() - scanTime)) / (60 * 60 * 1000))
     : 0
+
+  useEffect(() => {
+    async function fetchBarcode() {
+      try {
+        const token = await getAccessTokenSilently()
+        const res = await fetch(`${API_URL}/api/users/me/barcode`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setBarcode(data.barcode || '')
+        }
+      } catch (err) {
+        console.error('Failed to load barcode:', err)
+      } finally {
+        setLoadingBarcode(false)
+      }
+    }
+    fetchBarcode()
+  }, [getAccessTokenSilently])
+
+  const handleBarcodeClick = async () => {
+    const code = prompt('Enter your student barcode code:', barcode)
+    if (code === null) return
+    const trimmed = code.trim()
+    if (!trimmed) {
+      alert('Barcode cannot be empty')
+      return
+    }
+
+    try {
+      const token = await getAccessTokenSilently()
+      const res = await fetch(`${API_URL}/api/users/me/barcode`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ barcode: trimmed })
+      })
+      if (res.ok) {
+        setBarcode(trimmed)
+        alert('Barcode updated successfully!')
+      } else {
+        alert('Failed to save barcode.')
+      }
+    } catch (err) {
+      alert('Error updating barcode.')
+    }
+  }
 
   const confirmDeleteFace = async () => {
     setIsDeleting(true)
@@ -66,51 +130,40 @@ export default function Settings() {
             </section>
           )}
 
+          {/* ── Mirror Sign-In ──────────────────────────────────────────────── */}
           <section className="pref-section pref-section-block">
-            <h2 className="text-overline">Face Registration</h2>
+            <h2 className="text-overline">Mirror Sign-In</h2>
             <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
-              Register your face so the smart mirror can identify you and load your dashboard.
+              Choose how the mirror recognises you. Face scan and barcode are both supported.
             </p>
-            {isScanRecent ? (
-              <div style={{ color: 'rgba(148,163,184,0.9)', background: 'rgba(255,255,255,0.04)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <strong style={{ display: 'block', marginBottom: '6px', color: '#e2e8f0', fontSize: '0.9rem' }}>Face registered</strong>
-                <span style={{ fontSize: '0.85rem', lineHeight: 1.6 }}>
-                  You can update your existing face scan again in about {hoursUntilUpdate} hour{hoursUntilUpdate !== 1 ? 's' : ''}.
-                  To register a new scan sooner, delete your face data below — this permanently removes your encoding and lets you scan again immediately.
-                </span>
 
-                <div style={{ marginTop: '14px' }}>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    disabled={isDeleting || !isServerUp}
-                    style={{ padding: '7px 14px', fontSize: '0.8rem', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', cursor: 'pointer' }}
-                  >
-                    Delete Face Data
-                  </button>
-                </div>
+            {/* Face registration */}
+            {isScanRecent ? (
+              <div style={{ background: S.infoBoxBg, padding: '14px 16px', borderRadius: '10px', border: `1px solid ${S.infoBoxBorder}`, marginBottom: '10px' }}>
+                <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--text-primary)', fontSize: '0.88rem' }}>Face scan registered</strong>
+                <span style={{ fontSize: '0.82rem', lineHeight: 1.6, color: S.mutedText }}>
+                  Can be updated in {hoursUntilUpdate} hour{hoursUntilUpdate !== 1 ? 's' : ''}. Delete your data below to re-scan immediately.
+                </span>
               </div>
             ) : (
-              <div>
-                <button
-                  className="modern-btn"
-                  onClick={() => setShowFaceModal(true)}
-                  disabled={!isServerUp}
-                  style={{ opacity: isServerUp ? 1 : 0.5, cursor: isServerUp ? 'pointer' : 'not-allowed', marginBottom: '12px' }}
-                >
-                  {isServerUp ? 'Register Face Scan' : 'Server Offline'}
-                </button>
-
-                <div>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    disabled={isDeleting || !isServerUp}
-                    style={{ padding: '7px 14px', fontSize: '0.8rem', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', cursor: 'pointer' }}
-                  >
-                    Delete Face Data
-                  </button>
-                </div>
-              </div>
+              <button
+                className="modern-btn"
+                onClick={() => setShowFaceModal(true)}
+                disabled={!isServerUp}
+                style={{ opacity: isServerUp ? 1 : 0.45, cursor: isServerUp ? 'pointer' : 'not-allowed', marginBottom: '10px' }}
+              >
+                {isServerUp ? 'Register Face Scan' : 'Server Offline'}
+              </button>
             )}
+
+            {/* Barcode sign-in */}
+            <button
+              className="modern-btn modern-btn-outline"
+              onClick={handleBarcodeClick}
+              style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              STUDENT BARCODE {barcode ? `(${barcode})` : ''}
+            </button>
           </section>
 
           <section className="pref-grid">
@@ -141,18 +194,38 @@ export default function Settings() {
 
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Account</h2>
-            <button
-              className="modern-btn modern-btn-outline logout-btn"
-              onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
-            >
-              Logout
-            </button>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                className="modern-btn modern-btn-outline logout-btn"
+                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+              >
+                Logout
+              </button>
+
+              <button
+                className="modern-btn"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={isDeleting || !isServerUp}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.85)',
+                  border: '1px solid #ef4444',
+                  color: 'white',
+                  letterSpacing: '0.08em',
+                  fontWeight: 600,
+                  opacity: (isDeleting || !isServerUp) ? 0.5 : 1,
+                  cursor: (isDeleting || !isServerUp) ? 'not-allowed' : 'pointer'
+                }}
+              >
+                DELETE FACE DATA
+              </button>
+            </div>
           </section>
         </motion.div>
       </div>
 
       <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
 
+      {/* ── Delete confirmation modal ─────────────────────────────────────── */}
       <AnimatePresence>
         {showDeleteConfirm && (
           <motion.div
@@ -167,33 +240,55 @@ export default function Settings() {
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              style={{ maxWidth: '420px', padding: '28px 32px' }}
               onClick={(e) => e.stopPropagation()}
             >
-              <p className="fc-overline">Delete Face Data</p>
-              <h2 className="fc-title" style={{ fontSize: '1.2rem', marginBottom: '12px' }}>Are you sure?</h2>
-              <p className="fc-sub" style={{ marginBottom: '24px' }}>
-                This permanently deletes your face encoding from our servers. You will no longer be recognised by the mirror until you register again.
-                {isScanRecent && (
-                  <> You can register a new scan immediately after deletion.</>
-                )}
-              </p>
-              <div className="fc-row-btns">
-                <button
-                  className="fc-btn fc-btn-outline"
-                  onClick={() => setShowDeleteConfirm(false)}
-                  disabled={isDeleting}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="fc-btn"
-                  onClick={confirmDeleteFace}
-                  disabled={isDeleting || !isServerUp}
-                  style={{ background: 'rgba(239,68,68,0.85)', border: 'none' }}
-                >
-                  {isDeleting ? 'Deleting...' : 'Delete permanently'}
-                </button>
+              <div className="fc-phase fc-phase-center" style={{ justifyContent: 'center' }}>
+                {/* Warning icon */}
+                <div style={{
+                  width: '48px', height: '48px', borderRadius: '50%',
+                  background: S.dangerBg, border: `1px solid ${S.dangerBorder}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={S.dangerText} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+
+                <p className="fc-overline" style={{ color: S.dangerText }}>Destructive Action</p>
+                <h2 className="fc-title" style={{ fontSize: '1.35rem' }}>Delete Face Data?</h2>
+                <p className="fc-sub">
+                  This permanently removes your face encoding from our servers. You will no longer be recognised by the mirror until you register again.
+                  {isScanRecent && <><br /><span style={{ color: S.mutedText, fontSize: '0.78rem', marginTop: '6px', display: 'block' }}>You can register a new scan immediately after deletion.</span></>}
+                </p>
+
+                <div style={{
+                  background: S.dangerBg, border: `1px solid ${S.dangerBorder}`,
+                  borderRadius: '10px', padding: '10px 14px', width: '100%',
+                  fontSize: '0.78rem', color: S.dangerText, textAlign: 'left',
+                }}>
+                  This action cannot be undone.
+                </div>
+
+                <div className="fc-row-btns" style={{ marginTop: '4px' }}>
+                  <button
+                    className="fc-btn fc-btn-outline"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={isDeleting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="fc-btn"
+                    onClick={confirmDeleteFace}
+                    disabled={isDeleting || !isServerUp}
+                    style={{ background: '#dc2626', border: 'none', color: '#fff' }}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete permanently'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
