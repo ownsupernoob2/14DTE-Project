@@ -195,6 +195,10 @@ export default function Dashboard() {
     setWidgets(widgets.filter((w) => w.id !== id))
   }
 
+  const clearWidgets = () => {
+    setWidgets([])
+  }
+
   const updateWidgetPosition = (id, x, y, allowOverlap = false) => {
     const containerWidth = dimensions.width
     const containerHeight = dimensions.height
@@ -435,11 +439,38 @@ export default function Dashboard() {
                 className="notices-tab active" 
                 onClick={saveLayout}
                 disabled={isSaving || !isServerUp}
-                style={{ padding: '4px 10px', fontSize: '0.72rem', background: '#3b82f6' }}
+                style={{ padding: '4px 10px', fontSize: '0.72rem', background: 'var(--accent)', color: 'var(--bg-color)' }}
               >
                 {isSaving ? 'Saving...' : 'Save'}
               </button>
             </div>
+          )}
+
+          {/* Add Widget Button (only in edit mode) */}
+          {isEditMode && (
+            <button
+              className="modern-btn"
+              onClick={clearWidgets}
+              disabled={!isServerUp || widgets.length === 0}
+              style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.22)',
+                padding: '10px 20px',
+                borderRadius: '9999px',
+                fontSize: '0.82rem',
+                letterSpacing: '0.05em',
+                boxShadow: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                width: 'auto',
+                opacity: widgets.length === 0 ? 0.45 : 1,
+                cursor: widgets.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              Clear Widgets
+            </button>
           )}
 
           {/* Add Widget Button (only in edit mode) */}
