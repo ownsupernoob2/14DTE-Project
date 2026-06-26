@@ -170,7 +170,7 @@ export default function Settings() {
 
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Account</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '320px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <button
                 className="modern-btn"
                 onClick={() => setShowDeleteConfirm(true)}
