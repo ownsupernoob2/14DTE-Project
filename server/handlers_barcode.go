@@ -49,7 +49,10 @@ func getBarcode(c echo.Context) error {
 	path := getBarcodePath(userID)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return c.JSON(404, map[string]string{"error": "Barcode not set"})
+		if os.IsNotExist(err) {
+			return c.JSON(200, map[string]string{"barcode": ""})
+		}
+		return c.JSON(500, map[string]string{"error": "Failed to read barcode"})
 	}
 
 	return c.JSON(200, map[string]string{"barcode": strings.TrimSpace(string(data))})
