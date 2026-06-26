@@ -3,6 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
+import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
@@ -22,6 +23,7 @@ const S = {
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const { isServerUp } = useServerStatus()
   const [isDeleting, setIsDeleting] = useState(false)
@@ -56,34 +58,8 @@ export default function Settings() {
     fetchBarcode()
   }, [getAccessTokenSilently])
 
-  const handleBarcodeClick = async () => {
-    const code = prompt('Enter your student barcode code:', barcode)
-    if (code === null) return
-    const trimmed = code.trim()
-    if (!trimmed) {
-      alert('Barcode cannot be empty')
-      return
-    }
-
-    try {
-      const token = await getAccessTokenSilently()
-      const res = await fetch(`${API_URL}/api/users/me/barcode`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ barcode: trimmed })
-      })
-      if (res.ok) {
-        setBarcode(trimmed)
-        alert('Barcode updated successfully!')
-      } else {
-        alert('Failed to save barcode.')
-      }
-    } catch (err) {
-      alert('Error updating barcode.')
-    }
+  const handleBarcodeClick = () => {
+    setShowBarcodeModal(true)
   }
 
   const confirmDeleteFace = async () => {
@@ -231,6 +207,7 @@ export default function Settings() {
       </div>
 
       <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
+      <BarcodeCaptureModal isOpen={showBarcodeModal} onClose={() => setShowBarcodeModal(false)} onBarcodeSaved={(code) => setBarcode(code)} />
 
       {/* ── Delete confirmation modal ─────────────────────────────────────── */}
       <AnimatePresence>
