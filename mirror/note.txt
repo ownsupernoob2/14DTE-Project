@@ -20,3 +20,15 @@ frame=  344 fps= 30 q=-0.0 size=N/A time=00:00:11.46 bitrate=N/A speed=0.996x   
 [FAISS] faiss module is not installed. Native matching in RAM is disabled.
 [FAISS] No local index/map loaded. Cannot perform matching.
 frame=  390 fps= 30 q=-0.0 size=N/A time=00:00:13.00 bitrate=N/A speed=0.999x   frame=  404 fps= 30 q=-0.0 size=N/A time=00:00:13.46 bitrate=N/A speed=0.997x   [INFO] state=idle  detected=True  user=None  widgets=0
+
+
+)
+[FAISS] Selecting closest/largest face (index=0, area=34410px) out of 1 total faces.
+frame=  254 fps= 30 q=-0.0 size=N/A time=00:00:08.46 bitrate=N/A speed=0.996x   [FAISS] Match query: index_idx=54, distance=0.3065
+[FAISS] Match success: google-oauth2_106749058814716632636. Fetching widgets...
+Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/face_recognize.py", line 549, in <module>
+    main()
+  File "/home/raspi/14DTE-Project/mirror/face_recognize.py", line 480, in main
+    ocr_running = ocr_busy
+UnboundLocalError: local variable 'ocr_busy' referenced before assignment
