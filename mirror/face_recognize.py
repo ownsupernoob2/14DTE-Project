@@ -76,11 +76,16 @@ def ocr_worker(frame, on_barcode_found):
         # PSM 11 is excellent for finding digit/text blocks in arbitrary positions
         text = pytesseract.image_to_string(gray_resized, config='--psm 11')
         
+        # Print detected text details for debugging
+        cleaned_text = " ".join(text.split())
+        if cleaned_text:
+            print(f"[OCR] Detected text in frame: {cleaned_text}")
+        
         # Regex to find student ID numbers (5 to 10 digits)
         match = re.search(r'\b\d{5,10}\b', text)
         if match:
             barcode = match.group(0)
-            print(f"[OCR] Detected student ID number: {barcode}")
+            print(f"[OCR] Found student ID match: {barcode}")
             on_barcode_found(barcode)
     except Exception as e:
         print(f"[OCR] Error processing frame with Tesseract: {e}")
@@ -337,6 +342,7 @@ def write_face_status(state, detected, faces_count,
 
 
 def main():
+    global api_busy, ocr_busy
     parser = argparse.ArgumentParser(description="Smart Mirror — Face Recognition Daemon")
     parser.add_argument('--rpi',       action='store_true',
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
