@@ -59,14 +59,13 @@ STATE_USER  = "user"
 
 # ── Thread safety for the background API call ────────────────────────────────
 api_lock = threading.Lock()
-api_busy = False
+api_state = {"busy": False}
 
 # ── Thread safety and state for OCR background processing ──────────────────
 ocr_lock = threading.Lock()
-ocr_busy = False
+ocr_state = {"busy": False}
 
 def ocr_worker(frame, on_barcode_found):
-    global ocr_busy
     try:
         # Preprocessing: convert to grayscale and upscale for better OCR accuracy on Raspberry Pi
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -91,7 +90,7 @@ def ocr_worker(frame, on_barcode_found):
         print(f"[OCR] Error processing frame with Tesseract: {e}")
     finally:
         with ocr_lock:
-            ocr_busy = False
+            ocr_state["busy"] = False
 
 def verify_barcode_worker(barcode, on_result):
     try:
@@ -178,7 +177,7 @@ def verify_face_worker(frame, on_result):
     (or NumPy fallback) and local face encodings, then query the Go server using the
     lightweight user_id to fetch the widgets.
     """
-    global api_busy, faiss_index, numpy_vectors, user_map, index_loaded
+    global faiss_index, numpy_vectors, user_map, index_loaded
     try:
         # Ensure index is loaded
         if not index_loaded:
@@ -266,7 +265,7 @@ def verify_face_worker(frame, on_result):
         on_result(None, [], None)
     finally:
         with api_lock:
-            api_busy = False
+            api_state["busy"] = False
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
@@ -342,7 +341,6 @@ def write_face_status(state, detected, faces_count,
 
 
 def main():
-    global api_busy, ocr_busy
     parser = argparse.ArgumentParser(description="Smart Mirror — Face Recognition Daemon")
     parser.add_argument('--rpi',       action='store_true',
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
@@ -369,7 +367,6 @@ def main():
     )
 
     # ── Shared API result (written by background thread, read by main loop) ──
-    global api_busy
     result_lock    = threading.Lock()
     pending_result = {"user_id": None, "widgets": [], "rec": None, "fresh": False}
 
@@ -468,12 +465,12 @@ def main():
 
             if should_call:
                 with api_lock:
-                    busy = api_busy
+                    busy = api_state["busy"]
                 if not busy:
                     last_api_call  = now
                     last_heartbeat = now
                     with api_lock:
-                        api_busy = True
+                        api_state["busy"] = True
                     # Pass a copy of the frame to perform face recognition
                     frame_copy = frame.copy()
                     t = threading.Thread(target=verify_face_worker,
@@ -483,10 +480,10 @@ def main():
             # ── Periodic OCR scanner (every 15 frames if face is detected and not logged in) ──
             if detected and state != STATE_USER and frame_counter % 15 == 0:
                 with ocr_lock:
-                    ocr_running = ocr_busy
+                    ocr_running = ocr_state["busy"]
                 if not ocr_running:
                     with ocr_lock:
-                        ocr_busy = True
+                        ocr_state["busy"] = True
                     frame_copy = frame.copy()
                     
                     def handle_barcode_found(barcode):
