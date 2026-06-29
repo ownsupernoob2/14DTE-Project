@@ -3,3 +3,4 @@
 requests
 PyQt6
 faiss-cpu
+pytesseract
