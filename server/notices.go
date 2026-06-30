@@ -22,6 +22,10 @@ const (
 	noticesURL = "https://www.kingshigh.school.nz/whats-on/daily-notices/"
 	dataDir    = "data"
 	outFile    = "data/daily_notices.json"
+
+	// Primary and backup Gemini API keys
+	geminiAPIKeyPrimary = "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
+	geminiAPIKeyBackup  = "AQ.Ab8RN6JbywuHaQUQZtch4pq5ttEkpv8UbHTEzwMqxL0Ed1LXCg"
 )
 
 type NoticeItem struct {
@@ -31,6 +35,12 @@ type NoticeItem struct {
 	TargetYears []string `json:"targetYears"`
 	Importance  string   `json:"importance"`
 	Contact     string   `json:"contact"`
+}
+
+// NoticesFile is the wrapper stored in daily_notices.json
+type NoticesFile struct {
+	FetchedAt string       `json:"fetchedAt"`
+	Notices   []NoticeItem `json:"notices"`
 }
 
 func StartNoticeFetcher() {
@@ -75,11 +85,21 @@ func getNotices(c echo.Context) error {
 		return c.JSON(404, map[string]string{"error": "Notices not found"})
 	}
 
-	var notices interface{}
+	// Try to parse as the new wrapper format first
+	var wrapper NoticesFile
+	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Notices != nil {
+		return c.JSON(200, wrapper)
+	}
+
+	// Legacy fallback: bare array
+	var notices []NoticeItem
 	if err := json.Unmarshal(data, &notices); err != nil {
 		return c.JSON(500, map[string]string{"error": "Failed to parse notices"})
 	}
-	return c.JSON(200, notices)
+	return c.JSON(200, NoticesFile{
+		FetchedAt: "",
+		Notices:   notices,
+	})
 }
 
 func fetchNotices(c echo.Context) error {
@@ -155,7 +175,13 @@ func fetchNoticesLogic() error {
 		notices[i] = normalizeNoticeItem(notices[i])
 	}
 
-	fileData, err := json.MarshalIndent(notices, "", "  ")
+	// Wrap with fetchedAt timestamp
+	wrapper := NoticesFile{
+		FetchedAt: time.Now().Format(time.RFC3339),
+		Notices:   notices,
+	}
+
+	fileData, err := json.MarshalIndent(wrapper, "", "  ")
 	if err != nil {
 		return fmt.Errorf("error marshalling notices: %v", err)
 	}
@@ -346,11 +372,79 @@ type geminiResponse struct {
 	} `json:"candidates"`
 }
 
-func processWithGemini(text string) []NoticeItem {
-	apiKey := "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
+type geminiRequestFull struct {
+	Contents         []geminiContent  `json:"contents"`
+	GenerationConfig geminiGenConfig  `json:"generationConfig"`
+}
 
+type geminiGenConfig struct {
+	ResponseMimeType string `json:"responseMimeType"`
+}
+
+func callGeminiAPI(apiKey string, prompt string) ([]NoticeItem, error) {
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
 
+	reqBody := geminiRequestFull{
+		Contents: []geminiContent{
+			{
+				Parts: []geminiPart{
+					{Text: prompt},
+				},
+			},
+		},
+		GenerationConfig: geminiGenConfig{
+			ResponseMimeType: "application/json",
+		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal error: %v", err)
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("http error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var geminiResp geminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return nil, fmt.Errorf("decode error: %v", err)
+	}
+
+	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("no candidates returned")
+	}
+
+	respText := strings.TrimSpace(geminiResp.Candidates[0].Content.Parts[0].Text)
+
+	// Strip any accidental markdown fences (should not happen with responseMimeType)
+	jsonRe := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
+	if matches := jsonRe.FindStringSubmatch(respText); len(matches) > 1 {
+		respText = strings.TrimSpace(matches[1])
+	}
+	// Find the outermost JSON array
+	arrStart := strings.Index(respText, "[")
+	arrEnd := strings.LastIndex(respText, "]")
+	if arrStart >= 0 && arrEnd > arrStart {
+		respText = respText[arrStart : arrEnd+1]
+	}
+
+	var notices []NoticeItem
+	if err := json.Unmarshal([]byte(respText), &notices); err != nil {
+		return nil, fmt.Errorf("JSON parse error: %v — response: %.500s", err, respText)
+	}
+
+	return notices, nil
+}
+
+func processWithGemini(text string) []NoticeItem {
 	prompt := `You are an expert school notices parsing assistant.
 Analyze the following daily school notices and extract them into a clean JSON array of notice objects.
 
@@ -369,69 +463,24 @@ CRITICAL RULES — you must follow these exactly:
 - Do NOT start titles or notice bodies with symbols, dashes, or decorative characters.
 - Only use these HTML tags: <p>, <ul>, <li>, <strong>. No other tags allowed.
 - No markdown formatting (no **, no #, no -) in the notice field — HTML only.
-- Respond with ONLY a valid JSON array. No explanation, no markdown code fences.
+- Output ONLY a valid JSON array — no explanations, no code fences, no extra text.
 
 Text to process:
 ` + text
 
-	reqBody := geminiRequest{
-		Contents: []geminiContent{
-			{
-				Parts: []geminiPart{
-					{Text: prompt},
-				},
-			},
-		},
+	// Try primary key first, then backup
+	for i, key := range []string{geminiAPIKeyPrimary, geminiAPIKeyBackup} {
+		notices, err := callGeminiAPI(key, prompt)
+		if err == nil {
+			return notices
+		}
+		if i == 0 {
+			log.Printf("[notices] Primary Gemini key failed: %v — trying backup key", err)
+		} else {
+			log.Printf("[notices] Backup Gemini key also failed: %v", err)
+		}
 	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil
-	}
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		log.Printf("Gemini API error: %v", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		log.Printf("Gemini API returned status %d", resp.StatusCode)
-		return nil
-	}
-
-	var geminiResp geminiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return nil
-	}
-
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return nil
-	}
-
-	respText := geminiResp.Candidates[0].Content.Parts[0].Text
-
-	// Extract JSON — handle markdown fences or bare JSON array
-	respText = strings.TrimSpace(respText)
-	jsonRe := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
-	if matches := jsonRe.FindStringSubmatch(respText); len(matches) > 1 {
-		respText = strings.TrimSpace(matches[1])
-	}
-	// Find the outermost JSON array
-	arrStart := strings.Index(respText, "[")
-	arrEnd := strings.LastIndex(respText, "]")
-	if arrStart >= 0 && arrEnd > arrStart {
-		respText = respText[arrStart : arrEnd+1]
-	}
-
-	var notices []NoticeItem
-	if err := json.Unmarshal([]byte(respText), &notices); err != nil {
-		log.Printf("Gemini JSON parse error: %v\nResponse was: %.500s", err, respText)
-		return nil
-	}
-
-	return notices
+	return nil
 }
 
 // emojiRe matches Unicode emoji sequences (broad coverage)

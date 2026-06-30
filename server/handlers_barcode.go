@@ -1,3 +1,5 @@
+// ARCHIVED: Barcode/OCR feature has been removed. Routes were unregistered from main.go.
+// This file is kept for history. Functions here are no longer called.
 package main
 
 import (
