@@ -62,10 +62,48 @@ function buildPreview(html, maxLen = 120) {
   return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + '…' : text;
 }
 
+/** Reusable notice card for mirror mode */
+function NoticeCard({ n, urgent = false }) {
+  const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
+  const isUrgent = urgent || n.importance === 'high';
+  return (
+    <div
+      className={`notices-mirror-card ${isUrgent ? 'urgent' : ''}`}
+      style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
+    >
+      <div className="notices-mirror-card-top">
+        <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
+          {n.category}
+        </span>
+        {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
+        <div style={{ flex: 1 }} />
+        {n.targetYears.map(yr => (
+          <span key={yr} className="notices-mirror-year-badge">Y{yr}</span>
+        ))}
+      </div>
+      <div className="notices-mirror-card-title">{n.title}</div>
+      {(n.details.date || n.details.time || n.details.location) && (
+        <div className="notices-mirror-details">
+          {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
+          {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
+          {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
+        </div>
+      )}
+      <div className="notices-mirror-card-body" dangerouslySetInnerHTML={{ __html: n.notice }} />
+      {n.contact && (
+        <div className="notices-mirror-contact">Contact: {n.contact}</div>
+      )}
+    </div>
+  );
+}
+
 export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly = false }) {
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fetchedAt, setFetchedAt] = useState(null);
+  const [isWide, setIsWide] = useState(false);
+  const containerRef = useRef(null);
 
   // Edit mode controls
   const [searchQuery, setSearchQuery] = useState('');
@@ -80,6 +118,17 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const scrollRef = useRef(null);
   const scrollState = useRef({ scrollInterval: null, holdTimer: null });
 
+  // ─── ResizeObserver: detect wide layout for 2-col ────────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setIsWide(entry.contentRect.width >= 560);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ─── Load notices ───────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -88,18 +137,28 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         const today = new Date().toDateString();
         const cachedDate = localStorage.getItem('notices_date');
         const cachedData = localStorage.getItem('notices_data');
+        const cachedFetchedAt = localStorage.getItem('notices_fetchedAt');
         if (cachedDate === today && cachedData) {
-          if (!cancelled) { setNotices(JSON.parse(cachedData)); setLoading(false); }
+          if (!cancelled) {
+            setNotices(JSON.parse(cachedData));
+            setFetchedAt(cachedFetchedAt || null);
+            setLoading(false);
+          }
           return;
         }
         const res = await fetch(`${API_URL}/api/notices`);
         if (!res.ok) throw new Error('Failed to load notices');
         const data = await res.json();
         if (!cancelled) {
-          if (Array.isArray(data)) {
-            setNotices(data);
+          // Handle both {fetchedAt, notices:[]} wrapper and legacy bare array
+          const noticeList = Array.isArray(data) ? data : (data.notices || []);
+          const fetchedAtVal = data.fetchedAt || null;
+          if (noticeList.length >= 0) {
+            setNotices(noticeList);
+            setFetchedAt(fetchedAtVal);
             localStorage.setItem('notices_date', today);
-            localStorage.setItem('notices_data', JSON.stringify(data));
+            localStorage.setItem('notices_data', JSON.stringify(noticeList));
+            if (fetchedAtVal) localStorage.setItem('notices_fetchedAt', fetchedAtVal);
           } else {
             setNotices([]);
           }
@@ -244,10 +303,27 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     </div>
   );
 
+  // ─── Helper: format fetchedAt for display ───────────────────────────────────
+  const formatFetchedAt = (iso) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleString('en-NZ', {
+        weekday: 'short', day: 'numeric', month: 'short',
+        hour: '2-digit', minute: '2-digit',
+      });
+    } catch { return null; }
+  };
+  const fetchedAtLabel = formatFetchedAt(fetchedAt);
+
   // ─── MIRROR MODE ─────────────────────────────────────────────────────────────
   if (readonly) {
+    // Split: urgent notices always go full-width at top, normal notices fill 2 cols
+    const urgentNotices = sorted.filter(n => n.importance === 'high');
+    const normalNotices = sorted.filter(n => n.importance !== 'high');
+    const useGrid = isWide && normalNotices.length >= 2;
+
     return (
-      <div className="notices-mirror-root">
+      <div className="notices-mirror-root" ref={containerRef}>
         {/* Header strip */}
         <div className="notices-mirror-header">
           <span className="notices-mirror-title">Daily Notices</span>
@@ -257,61 +333,36 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
           </span>
         </div>
 
-        {/* Scrolling list — 2-column grid when many notices */}
+        {/* Last updated label */}
+        {fetchedAtLabel && (
+          <div className="notices-fetched-at">Updated: {fetchedAtLabel}</div>
+        )}
+
+        {/* Scrolling list */}
         <div className="notices-mirror-scroll" ref={scrollRef}>
           {sorted.length === 0 ? (
             <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px' }}>
               No notices match your settings.
             </div>
           ) : (
-            <div className={sorted.length >= 6 ? 'notices-mirror-grid' : undefined}>
-              {sorted.map(n => {
-                const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
-                const isUrgent = n.importance === 'high';
-                return (
-                  <div
-                    key={n.id}
-                    className={`notices-mirror-card ${isUrgent ? 'urgent' : ''}`}
-                    style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
-                  >
-                    {/* Top row: category + year badges */}
-                    <div className="notices-mirror-card-top">
-                      <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
-                        {n.category}
-                      </span>
-                      {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
-                      <div style={{ flex: 1 }} />
-                      {n.targetYears.map(yr => (
-                        <span key={yr} className="notices-mirror-year-badge">Y{yr}</span>
-                      ))}
-                    </div>
-
-                    {/* Title */}
-                    <div className="notices-mirror-card-title">{n.title}</div>
-
-                    {/* Key details chips (date, time, location) */}
-                    {(n.details.date || n.details.time || n.details.location) && (
-                      <div className="notices-mirror-details">
-                        {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
-                        {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
-                        {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
-                      </div>
-                    )}
-
-                    {/* Body text */}
-                    <div
-                      className="notices-mirror-card-body"
-                      dangerouslySetInnerHTML={{ __html: n.notice }}
-                    />
-
-                    {/* Contact */}
-                    {n.contact && (
-                      <div className="notices-mirror-contact">Contact: {n.contact}</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              {/* Urgent notices — full width, large cards */}
+              {urgentNotices.length > 0 && (
+                <div className="notices-urgent-strip">
+                  {urgentNotices.map(n => (
+                    <NoticeCard key={n.id} n={n} urgent />
+                  ))}
+                </div>
+              )}
+              {/* Normal notices — 2-col when wide enough */}
+              {normalNotices.length > 0 && (
+                <div className={useGrid ? 'notices-mirror-grid' : undefined}>
+                  {normalNotices.map(n => (
+                    <NoticeCard key={n.id} n={n} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -451,13 +502,16 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         </div>
       )}
 
-      {/* Result count */}
+      {/* Result count + last updated */}
       <div className="notices-edit-count">
         {sorted.length} of {enriched.length} notices
         {yearFilter !== 'All' && <span className="notices-filter-pill">Year {yearFilter}</span>}
         {searchQuery && <span className="notices-filter-pill">"{searchQuery}"</span>}
         {keywordFilter && <span className="notices-filter-pill">kw: "{keywordFilter}"</span>}
       </div>
+      {fetchedAtLabel && (
+        <div className="notices-fetched-at" style={{ marginBottom: '4px' }}>Updated: {fetchedAtLabel}</div>
+      )}
 
       {/* Notice list */}
       <div className="notices-edit-list">

@@ -1,3 +1,5 @@
+// ARCHIVED: Barcode/OCR capture feature has been removed. This file is no longer imported.
+// Kept for history/reference only.
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'

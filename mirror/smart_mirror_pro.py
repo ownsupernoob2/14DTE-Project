@@ -141,13 +141,6 @@ class SmartMirrorPro(QMainWindow):
 
         self.widgets = []
 
-        # Barcode state tracking
-        self.barcode_user_id = None
-        self.barcode_widgets = []
-        self.barcode_expiry = 0
-        self._barcode_buf = ""
-        self._last_key_time = 0.0
-
         # Polling Timer (Checks face recognition status file every 200ms)
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.update_inputs)
@@ -332,31 +325,7 @@ class SmartMirrorPro(QMainWindow):
             self.clear_widgets()
 
     def update_inputs(self):
-        # 1. Barcode scanner override
-        now = time.time()
-        if self.barcode_user_id and now < self.barcode_expiry:
-            new_state = 'user'
-            new_user_id = self.barcode_user_id
-            widgets = self.barcode_widgets
-
-            state_changed = (new_state != self._last_state)
-            user_switched = (new_state == 'user' and new_user_id != self._last_user_id)
-
-            if state_changed or user_switched:
-                self._last_state = new_state
-                self._last_user_id = new_user_id
-                self.current_user_id = new_user_id
-                self.current_user_name = new_user_id
-                self.guest_container.hide()
-                self.user_container.show()
-                self.apply_remote_widgets(widgets)
-
-            # Show active dot as blue/cyan for barcode instead of green/orange
-            self.status_dot.setStyleSheet("background-color: #0088ff; border-radius: 5px;")
-            self.status_dot.show()
-            return
-
-        # 2. Regular face recognition inputs
+        # Regular face recognition inputs
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
@@ -417,55 +386,9 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.hide()
 
     def keyPressEvent(self, event):
-        # Accumulate barcode inputs
-        key = event.text()
-        now = time.time()
+        # Barcode/OCR keypress features have been archived/removed.
+        pass
 
-        # If there's a huge delay (e.g. > 150ms) between keystrokes, reset buffer
-        if now - self._last_key_time > 0.15:
-            self._barcode_buf = ""
-        self._last_key_time = now
-
-        # Enter key triggers barcode lookup
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            barcode = self._barcode_buf.strip()
-            self._barcode_buf = ""
-            if barcode:
-                print(f"[BARCODE] Scanned: {barcode}. Verifying...")
-                self.verify_barcode_async(barcode)
-        elif event.key() == Qt.Key.Key_Escape:
-            print("[BARCODE] Esc pressed. Logging out.")
-            self.barcode_user_id = None
-            self.barcode_expiry = 0
-            self.update_inputs()
-        else:
-            if key.isalnum():
-                self._barcode_buf += key
-
-    def verify_barcode_async(self, barcode):
-        def worker():
-            try:
-                res = requests.post(f"{API_URL}/api/verify-barcode", json={"barcode": barcode}, timeout=5)
-                if res.status_code == 200:
-                    data = res.json()
-                    user_id = data.get("user_id")
-                    widgets = data.get("widgets", [])
-                    print(f"[BARCODE] Match success: {user_id}")
-                    QTimer.singleShot(0, lambda: self.on_barcode_verified(user_id, widgets))
-                else:
-                    print(f"[BARCODE] Verification failed: {res.status_code}")
-            except Exception as e:
-                print(f"[BARCODE] Error contacting server: {e}")
-
-        import threading
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-
-    def on_barcode_verified(self, user_id, widgets):
-        self.barcode_user_id = user_id
-        self.barcode_widgets = widgets
-        self.barcode_expiry = time.time() + 60.0  # keeps logged in for 60 seconds
-        self.update_inputs()
 
 
 if __name__ == '__main__':

@@ -220,7 +220,24 @@ button {
 }
 .notices-mirror-scroll::-webkit-scrollbar { display: none; }
 
-/* Mirror card */
+/* Last updated timestamp label */
+.notices-fetched-at {
+  font-size: 0.68em;
+  color: rgba(255, 255, 255, 0.3);
+  padding: 4px 14px 6px;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Urgent-notices strip — always full-width above normal notices */
+.notices-urgent-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .notices-mirror-card {
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -234,8 +251,26 @@ button {
 }
 
 .notices-mirror-card.urgent {
+  padding: 14px 16px;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.06);
+  border-left-width: 4px;
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.12);
   animation: mirror-urgent-glow 3s ease-in-out infinite alternate;
 }
+
+/* Larger title on urgent cards */
+.notices-mirror-card.urgent .notices-mirror-card-title {
+  font-size: 1.08em;
+  color: #fca5a5;
+}
+
+/* Slightly larger body text on urgent cards */
+.notices-mirror-card.urgent .notices-mirror-card-body {
+  font-size: 0.86em;
+  color: rgba(255, 220, 220, 0.8);
+}
+
 
 @keyframes mirror-urgent-glow {
   from { box-shadow: 0 0 4px rgba(239, 68, 68, 0.05); }
@@ -1198,10 +1233,10 @@ button {
   75%, 100% { transform: scale(1.6); opacity: 0; }
 }
 
-/* ── Notices 2-column grid (mirror: ≥ 6 notices) ──────────────────── */
+/* ── Notices 2-column grid (mirror: width-triggered via JS) ────────── */
 .notices-mirror-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   align-items: start;
 }

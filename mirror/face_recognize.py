@@ -61,57 +61,6 @@ STATE_USER  = "user"
 api_lock = threading.Lock()
 api_state = {"busy": False}
 
-# ── Thread safety and state for OCR background processing ──────────────────
-ocr_lock = threading.Lock()
-ocr_state = {"busy": False}
-
-def ocr_worker(frame, on_barcode_found):
-    try:
-        # Preprocessing: convert to grayscale and upscale for better OCR accuracy on Raspberry Pi
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray_resized = cv2.resize(gray, (0, 0), fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-        
-        # Run Tesseract with Sparse Text option (PSM 11) or Page Segmentation Mode (PSM 3/6)
-        # PSM 11 is excellent for finding digit/text blocks in arbitrary positions
-        text = pytesseract.image_to_string(gray_resized, config='--psm 11')
-        
-        # Print detected text details for debugging
-        cleaned_text = " ".join(text.split())
-        if cleaned_text:
-            print(f"[OCR] Detected text in frame: {cleaned_text}")
-        
-        # Regex to find student ID numbers (5 to 10 digits)
-        match = re.search(r'\b\d{5,10}\b', text)
-        if match:
-            barcode = match.group(0)
-            print(f"[OCR] Found student ID match: {barcode}")
-            on_barcode_found(barcode)
-    except Exception as e:
-        print(f"[OCR] Error processing frame with Tesseract: {e}")
-    finally:
-        with ocr_lock:
-            ocr_state["busy"] = False
-
-def verify_barcode_worker(barcode, on_result):
-    try:
-        print(f"[OCR] Verifying student ID: {barcode} with server...")
-        res = requests.post(
-            f"{API_URL}/api/verify-barcode",
-            json={"barcode": barcode},
-            timeout=5,
-        )
-        if res.status_code == 200:
-            data = res.json()
-            user_id = data.get("user_id")
-            widgets = data.get("widgets", [])
-            print(f"[OCR] Student ID matched user: {user_id}")
-            on_result(user_id, widgets, True)
-        else:
-            print(f"[OCR] Student ID verification failed (status {res.status_code})")
-            on_result(None, [], False)
-    except Exception as e:
-        print(f"[OCR] Server communication error: {e}")
-        on_result(None, [], False)
 
 
 
@@ -477,29 +426,7 @@ def main():
                                          args=(frame_copy, on_api_result), daemon=True)
                     t.start()
 
-            # ── Periodic OCR scanner (every 15 frames if face is detected and not logged in) ──
-            if detected and state != STATE_USER and frame_counter % 15 == 0:
-                with ocr_lock:
-                    ocr_running = ocr_state["busy"]
-                if not ocr_running:
-                    with ocr_lock:
-                        ocr_state["busy"] = True
-                    frame_copy = frame.copy()
-                    
-                    def handle_barcode_found(barcode):
-                        t_verify = threading.Thread(
-                            target=verify_barcode_worker,
-                            args=(barcode, on_api_result),
-                            daemon=True
-                        )
-                        t_verify.start()
 
-                    t_ocr = threading.Thread(
-                        target=ocr_worker,
-                        args=(frame_copy, handle_barcode_found),
-                        daemon=True
-                    )
-                    t_ocr.start()
 
             # ── Timer-driven state transitions ───────────────────────────────
 

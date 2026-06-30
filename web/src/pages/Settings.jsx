@@ -3,7 +3,6 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
-import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
@@ -23,12 +22,9 @@ const S = {
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
-  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const { isServerUp } = useServerStatus()
   const [isDeleting, setIsDeleting] = useState(false)
-  const [barcode, setBarcode] = useState('')
-  const [loadingBarcode, setLoadingBarcode] = useState(true)
 
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
@@ -39,28 +35,8 @@ export default function Settings() {
     : 0
 
   useEffect(() => {
-    async function fetchBarcode() {
-      try {
-        const token = await getAccessTokenSilently()
-        const res = await fetch(`${API_URL}/api/users/me/barcode`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setBarcode(data.barcode || '')
-        }
-      } catch (err) {
-        console.error('Failed to load barcode:', err)
-      } finally {
-        setLoadingBarcode(false)
-      }
-    }
-    fetchBarcode()
-  }, [getAccessTokenSilently])
-
-  const handleBarcodeClick = () => {
-    setShowBarcodeModal(true)
-  }
+    // (barcode feature removed)
+  }, [])
 
   const confirmDeleteFace = async () => {
     setIsDeleting(true)
@@ -106,11 +82,10 @@ export default function Settings() {
             </section>
           )}
 
-          {/* ── Mirror Sign-In ──────────────────────────────────────────────── */}
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Mirror Sign-In</h2>
             <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
-              Choose how the mirror recognises you. Face scan and barcode are both supported.
+              Register your face so the mirror can recognise you automatically.
             </p>
 
             {/* Face registration */}
@@ -131,15 +106,6 @@ export default function Settings() {
                 {isServerUp ? 'Register Face Scan' : 'Server Offline'}
               </button>
             )}
-
-            {/* Barcode sign-in */}
-            <button
-              className="modern-btn modern-btn-outline"
-              onClick={handleBarcodeClick}
-              style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              STUDENT BARCODE {barcode ? `(${barcode})` : ''}
-            </button>
           </section>
 
           <section className="pref-grid">
@@ -207,7 +173,6 @@ export default function Settings() {
       </div>
 
       <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
-      <BarcodeCaptureModal isOpen={showBarcodeModal} onClose={() => setShowBarcodeModal(false)} onBarcodeSaved={(code) => setBarcode(code)} />
 
       {/* ── Delete confirmation modal ─────────────────────────────────────── */}
       <AnimatePresence>
