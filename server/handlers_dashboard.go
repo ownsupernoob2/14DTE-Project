@@ -27,15 +27,54 @@ type Dashboard struct {
 	Widgets []Widget `json:"widgets"`
 }
 
+type UserLayoutConfig struct {
+	Layout string `json:"layout"` // "focus" | "bulletin" | "compact"
+}
+
+func getPremadeWidgets(layoutName string) []Widget {
+	switch layoutName {
+	case "bulletin":
+		return []Widget{
+			{ID: "not-1", Type: "notices", X: 2, Y: 5, W: 58, H: 90},
+			{ID: "clk-1", Type: "clock", X: 64, Y: 5, W: 34, H: 15},
+			{ID: "tt-1", Type: "timetable", X: 64, Y: 23, W: 34, H: 72},
+		}
+	case "compact":
+		return []Widget{
+			{ID: "clk-1", Type: "clock", X: 35, Y: 15, W: 30, H: 15},
+			{ID: "tt-1", Type: "timetable", X: 15, Y: 35, W: 70, H: 50, Data: map[string]interface{}{"viewMode": "next"}},
+		}
+	case "focus":
+		fallthrough
+	default:
+		return []Widget{
+			{ID: "clk-1", Type: "clock", X: 38, Y: 5, W: 24, H: 14},
+			{ID: "tt-1", Type: "timetable", X: 2, Y: 22, W: 46, H: 72},
+			{ID: "not-1", Type: "notices", X: 52, Y: 22, W: 46, H: 72},
+		}
+	}
+}
+
 func getDashboard(c echo.Context) error {
 	userID := getUserIDFromToken(c)
 	if userID == "" {
 		userID = c.QueryParam("user_id")
 	}
+
+	layoutPath := getUserLayoutPath(userID)
+	layoutName := "focus"
+	if data, err := os.ReadFile(layoutPath); err == nil {
+		var config UserLayoutConfig
+		json.Unmarshal(data, &config)
+		if config.Layout != "" {
+			layoutName = config.Layout
+		}
+	}
+
 	return c.JSON(200, Dashboard{
 		ID:      "dashboard-" + userID,
 		UserID:  userID,
-		Widgets: getWidgetsForUser(userID),
+		Widgets: getPremadeWidgets(layoutName),
 	})
 }
 
@@ -79,6 +118,57 @@ func getWidgets(c echo.Context) error {
 	userID := getUserIDFromToken(c)
 	return c.JSON(200, getWidgetsForUser(userID))
 }
+
+func getUserLayoutPath(userID string) string {
+	return fmt.Sprintf("data/%s_layout.json", getSafeUserID(userID))
+}
+
+func getLayout(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		userID = c.QueryParam("user_id")
+	}
+	if userID == "" {
+		return c.JSON(200, UserLayoutConfig{Layout: "focus"})
+	}
+
+	path := getUserLayoutPath(userID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return c.JSON(200, UserLayoutConfig{Layout: "focus"}) // default
+	}
+
+	var config UserLayoutConfig
+	json.Unmarshal(data, &config)
+	if config.Layout == "" {
+		config.Layout = "focus"
+	}
+	return c.JSON(200, config)
+}
+
+func saveLayout(c echo.Context) error {
+	userID := getUserIDFromToken(c)
+	if userID == "" {
+		return c.JSON(401, map[string]string{"error": "Unauthorized"})
+	}
+
+	var config UserLayoutConfig
+	if err := c.Bind(&config); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request"})
+	}
+
+	if config.Layout != "focus" && config.Layout != "bulletin" && config.Layout != "compact" {
+		return c.JSON(400, map[string]string{"error": "Invalid layout selection"})
+	}
+
+	path := getUserLayoutPath(userID)
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err == nil {
+		os.WriteFile(path, data, 0644)
+	}
+	return c.JSON(200, map[string]string{"message": "Layout configuration saved successfully", "layout": config.Layout})
+}
+
 
 func addWidget(c echo.Context) error {
 	userID := getUserIDFromToken(c)

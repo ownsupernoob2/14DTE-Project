@@ -12,11 +12,11 @@ class ClockWidget(Widget):
         
         self.time_label = QLabel(self)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_label.setStyleSheet("font-size: 42px; font-weight: 300; color: #ffffff;")
+        self.time_label.setStyleSheet("font-size: 64px; font-weight: 300; color: #ffffff;")
         
         self.date_label = QLabel(self)
         self.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.date_label.setStyleSheet("font-size: 14px; color: rgba(255, 255, 255, 180); font-weight: 500;")
+        self.date_label.setStyleSheet("font-size: 20px; color: rgba(255, 255, 255, 180); font-weight: 500;")
         
         self.main_layout.addWidget(self.time_label)
         self.main_layout.addWidget(self.date_label)

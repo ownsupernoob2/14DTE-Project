@@ -246,9 +246,20 @@ func verifyFace(c echo.Context) error {
 		if req.UserID == "idle" || req.UserID == "unknown" {
 			return c.JSON(401, map[string]string{"error": "Face not recognised"})
 		}
+
+		layoutPath := getUserLayoutPath(req.UserID)
+		layoutName := "focus"
+		if data, err := os.ReadFile(layoutPath); err == nil {
+			var config UserLayoutConfig
+			json.Unmarshal(data, &config)
+			if config.Layout != "" {
+				layoutName = config.Layout
+			}
+		}
+
 		return c.JSON(200, map[string]interface{}{
 			"user_id": req.UserID,
-			"widgets": getWidgetsForUser(req.UserID),
+			"widgets": getPremadeWidgets(layoutName),
 		})
 	}
 
@@ -258,9 +269,19 @@ func verifyFace(c echo.Context) error {
 	}
 
 	if b64data == "bypass" {
+		layoutPath := getUserLayoutPath("bypass_user")
+		layoutName := "focus"
+		if data, err := os.ReadFile(layoutPath); err == nil {
+			var config UserLayoutConfig
+			json.Unmarshal(data, &config)
+			if config.Layout != "" {
+				layoutName = config.Layout
+			}
+		}
+
 		return c.JSON(200, map[string]interface{}{
 			"user_id": "bypass_user",
-			"widgets": getWidgetsForUser("bypass_user"),
+			"widgets": getPremadeWidgets(layoutName),
 		})
 	}
 
@@ -297,9 +318,19 @@ func verifyFace(c echo.Context) error {
 			return c.JSON(401, map[string]string{"error": "Face not recognised"})
 		}
 
+		layoutPath := getUserLayoutPath(matchedUserID)
+		layoutName := "focus"
+		if data, err := os.ReadFile(layoutPath); err == nil {
+			var config UserLayoutConfig
+			json.Unmarshal(data, &config)
+			if config.Layout != "" {
+				layoutName = config.Layout
+			}
+		}
+
 		return c.JSON(200, map[string]interface{}{
 			"user_id": matchedUserID,
-			"widgets": getWidgetsForUser(matchedUserID),
+			"widgets": getPremadeWidgets(layoutName),
 		})
 	}
 
