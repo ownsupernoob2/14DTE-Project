@@ -94,5 +94,6 @@ func verifyBarcode(c echo.Context) error {
 	return c.JSON(200, map[string]interface{}{
 		"user_id": matchedUserID,
 		"widgets": getWidgetsForUser(matchedUserID),
+		"config":  getDashboardConfigForUser(matchedUserID),
 	})
 }

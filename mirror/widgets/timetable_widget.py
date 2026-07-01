@@ -5,6 +5,7 @@ import requests
 from datetime import datetime
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from .base_widget import Widget
 
 class TimetableWidget(Widget):
@@ -19,6 +20,16 @@ class TimetableWidget(Widget):
         self.error_msg = ""
         self._lock = threading.Lock()
         
+        self.setup_ui_elements()
+        self._scroll_paused_until = time.time() + 3.0
+        self._start_fetch()
+        
+    def setup_ui_elements(self):
+        # Enforce container layout
+        self.container_layout = QVBoxLayout()
+        self.container_layout.setContentsMargins(0, 0, 0, 0)
+        self.container_layout.setSpacing(6)
+        
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -32,7 +43,8 @@ class TimetableWidget(Widget):
         self.content_layout.setSpacing(8)
         
         self.scroll_area.setWidget(self.content_widget)
-        self.main_layout.addWidget(self.scroll_area)
+        self.container_layout.addWidget(self.scroll_area)
+        self.main_layout.addLayout(self.container_layout)
         
         # Timers
         self.fetch_timer = QTimer(self)
@@ -42,11 +54,20 @@ class TimetableWidget(Widget):
         self.scroll_timer = QTimer(self)
         self.scroll_timer.timeout.connect(self._auto_scroll)
         self.scroll_timer.start(30)
-        
-        self._scroll_paused_until = time.time() + 3.0
-        
-        self._start_fetch()
-        
+
+    def scroll_by_pixels(self, delta_y):
+        bar = self.scroll_area.verticalScrollBar()
+        bar.setValue(bar.value() + delta_y)
+        self._scroll_paused_until = time.time() + 5.0
+
+    def on_orientation_changed(self):
+        self.setup_ui_elements()
+        self.update_ui()
+
+    def apply_theme(self, primary_color, secondary_color, font_family):
+        super().apply_theme(primary_color, secondary_color, font_family)
+        self.update_ui()
+
     def set_user_id(self, user_id):
         if self.user_id != user_id:
             self.user_id = user_id
@@ -128,7 +149,6 @@ class TimetableWidget(Widget):
                 except Exception:
                     pass
             
-            # Day header
             header_widget = QWidget()
             h_layout = QHBoxLayout(header_widget)
             h_layout.setContentsMargins(12, 4, 12, 4)

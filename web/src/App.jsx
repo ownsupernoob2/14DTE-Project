@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import Simulator from './pages/Simulator'
 import Privacy from './pages/Privacy'
+import QRScanner from './pages/QRScanner'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -79,6 +80,7 @@ function App() {
           />
           
           <Route path="/simulator" element={<Simulator />} />
+          <Route path="/qr-scanner" element={<QRScanner />} />
           
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

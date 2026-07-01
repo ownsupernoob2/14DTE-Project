@@ -249,6 +249,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": req.UserID,
 			"widgets": getWidgetsForUser(req.UserID),
+			"config":  getDashboardConfigForUser(req.UserID),
 		})
 	}
 
@@ -261,6 +262,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": "bypass_user",
 			"widgets": getWidgetsForUser("bypass_user"),
+			"config":  getDashboardConfigForUser("bypass_user"),
 		})
 	}
 
@@ -300,6 +302,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": matchedUserID,
 			"widgets": getWidgetsForUser(matchedUserID),
+			"config":  getDashboardConfigForUser(matchedUserID),
 		})
 	}
 

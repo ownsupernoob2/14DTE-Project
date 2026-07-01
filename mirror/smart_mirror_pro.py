@@ -4,12 +4,13 @@ import os
 import json
 import time
 import math
+import requests
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter
+from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter, QFont
 
 from config import *
 from widgets import (
@@ -26,25 +27,12 @@ def _widget_data(wd):
     return data if isinstance(data, dict) else {}
 
 
-# ---------------------------------------------------------------------------
-# Animated background -- two blurred radial-gradient orbs that slowly drift,
-# matching the web dashboard body::before effect.
-# ---------------------------------------------------------------------------
 class BackgroundCanvas(QWidget):
-    """Full-screen background widget painted with QPainter radial gradients.
+    """Full-screen background widget painted with QPainter radial gradients."""
 
-    Two glow orbs:
-      - Purple  at roughly (20%, 50%)  -- rgba(109, 40, 217, 0.12)
-      - Sky-blue at roughly (80%, 30%) -- rgba( 56,189, 248, 0.09)
-
-    Their centres drift gently on an 18-second sine cycle to simulate
-    the CSS 'bg-drift' animation.
-    """
-
-    # Orb definitions: (base_cx_pct, base_cy_pct, radius_pct, r, g, b, max_alpha)
     _ORBS = [
-        (0.20, 0.50, 0.55, 109,  40, 217, 31),   # purple  -- 0.12 * 255 ~ 31
-        (0.80, 0.30, 0.50,  56, 189, 248, 23),   # sky-blue -- 0.09 * 255 ~ 23
+        (0.20, 0.50, 0.55, 109,  40, 217, 31),   # purple
+        (0.80, 0.30, 0.50,  56, 189, 248, 23),   # sky-blue
     ]
     _DRIFT_PERIOD = 18.0   # seconds for one full drift cycle
     _DRIFT_AMP    = 0.03   # fraction of screen dimension
@@ -53,15 +41,22 @@ class BackgroundCanvas(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.glow_enabled = True
         self._t0 = time.time()
 
         self._redraw_timer = QTimer(self)
-        self._redraw_timer.timeout.connect(self.update)   # triggers paintEvent
-        self._redraw_timer.start(33)   # ~30 fps repaint
+        self._redraw_timer.timeout.connect(self.update)
+        self._redraw_timer.start(33)
 
-    def paintEvent(self, event):  # noqa: N802
+    def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # IDLE state: Render completely black (glow_enabled is False)
+        if not self.glow_enabled:
+            painter.fillRect(self.rect(), QColor(0, 0, 0))
+            painter.end()
+            return
 
         w = self.width()
         h = self.height()
@@ -70,12 +65,10 @@ class BackgroundCanvas(QWidget):
         painter.fillRect(self.rect(), QColor(10, 10, 12))
 
         t = time.time() - self._t0
-        # Phase offsets keep the two orbs out of sync
         phases = [0.0, math.pi * 0.6]
 
         for i, (bcx, bcy, r_pct, r, g, b, max_a) in enumerate(self._ORBS):
             phase = phases[i]
-            # Slow sine drift in both axes
             cx = (bcx + self._DRIFT_AMP * math.sin(2 * math.pi * t / self._DRIFT_PERIOD + phase)) * w
             cy = (bcy + self._DRIFT_AMP * math.cos(2 * math.pi * t / self._DRIFT_PERIOD + phase * 1.3)) * h
             radius = r_pct * max(w, h)
@@ -109,7 +102,7 @@ class SmartMirrorPro(QMainWindow):
         # Animated background -- lowest layer, no mouse interaction
         self.bg_canvas = BackgroundCanvas(self.central_widget)
         self.bg_canvas.setGeometry(self.central_widget.rect())
-        self.bg_canvas.lower()   # always below all sibling widgets
+        self.bg_canvas.lower()
 
         # Container for User widgets
         self.user_container = QWidget(self.central_widget)
@@ -123,11 +116,17 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container.hide()
         self.setup_guest_layout()
 
+        # Timetable Promo screen for Guest
+        self.setup_guest_promo_layout()
+
         # Status Dot
         self.status_dot = QLabel(self.central_widget)
         self.status_dot.setFixedSize(10, 10)
         self.status_dot.setStyleSheet("background-color: transparent; border-radius: 5px;")
         self.status_dot.hide()
+
+        # Admin Banner overlay
+        self.setup_admin_banner()
 
         # State tracking
         self.current_user_id = None
@@ -140,20 +139,25 @@ class SmartMirrorPro(QMainWindow):
         self._last_user_id = None
 
         self.widgets = []
+        self.last_gesture_timestamp = 0.0
 
-        # Barcode state tracking
-        self.barcode_user_id = None
-        self.barcode_widgets = []
-        self.barcode_expiry = 0
-        self._barcode_buf = ""
-        self._last_key_time = 0.0
-
-        # Polling Timer (Checks face recognition status file every 200ms)
+        # Polling Timers
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.update_inputs)
         self.poll_timer.start(200)
 
-        # Window state (show / resize at the end of __init__ so everything is fully initialized)
+        # Gesture status polling timer
+        self.gesture_timer = QTimer(self)
+        self.gesture_timer.timeout.connect(self.poll_gestures)
+        self.gesture_timer.start(100)
+
+        # Admin banner polling timer (every 10 seconds)
+        self.banner_timer = QTimer(self)
+        self.banner_timer.timeout.connect(self.poll_admin_banner)
+        self.banner_timer.start(10000)
+        self.poll_admin_banner() # initial check
+
+        # Window state
         windowed = os.environ.get('MIRROR_WINDOWED') == '1'
         if windowed:
             self.resize(1280, 800)
@@ -171,71 +175,208 @@ class SmartMirrorPro(QMainWindow):
             self.user_container.setGeometry(0, 0, w, h)
         if hasattr(self, 'guest_container') and self.guest_container:
             self.guest_container.setGeometry(0, 0, w, h)
+        if hasattr(self, 'guest_promo_container') and self.guest_promo_container:
+            self.guest_promo_container.setGeometry(0, 0, w, h)
         if hasattr(self, 'status_dot') and self.status_dot:
             self.status_dot.move(w - 20, 20)
+        if hasattr(self, 'banner_frame') and self.banner_frame:
+            self.banner_frame.setGeometry(0, 0, w, 40)
 
     def setup_guest_layout(self):
-        layout = QHBoxLayout(self.guest_container)
-        layout.setContentsMargins(40, 80, 40, 120)
-        layout.setSpacing(40)
+        self.guest_layout = QVBoxLayout(self.guest_container)
+        self.guest_layout.setContentsMargins(40, 60, 40, 40)
+        self.guest_layout.setSpacing(20)
 
-        # Left Column - Guest Notices
-        self.guest_notices = NoticesWidget(0, 0, self.width() // 2 - 60, self.height() - 200, API_URL)
-        layout.addWidget(self.guest_notices, 1)
+        # Top row: Clock & notices
+        top_row = QHBoxLayout()
+        top_row.setSpacing(30)
 
-        # Right Column - Welcome panel
-        right_panel = QFrame(self.guest_container)
-        right_panel.setObjectName("WelcomePanel")
-        right_panel.setStyleSheet("""
-            #WelcomePanel {
+        self.guest_clock = ClockWidget(0, 0, 300, 150)
+        self.guest_notices = NoticesWidget(0, 0, 500, 300, API_URL)
+        
+        top_row.addWidget(self.guest_clock, 1)
+        top_row.addWidget(self.guest_notices, 2)
+        self.guest_layout.addLayout(top_row, 3)
+
+        # Bottom row: Onboarding dashboard
+        self.onboarding_card = QFrame(self.guest_container)
+        self.onboarding_card.setObjectName("OnboardingCard")
+        self.onboarding_card.setStyleSheet("""
+            #OnboardingCard {
                 background-color: rgba(255, 255, 255, 6);
                 border: 1px solid rgba(255, 255, 255, 12);
                 border-radius: 16px;
             }
         """)
-        
-        rp_layout = QVBoxLayout(right_panel)
-        rp_layout.setContentsMargins(32, 48, 32, 48)
-        rp_layout.setSpacing(20)
-        rp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ob_layout = QVBoxLayout(self.onboarding_card)
+        ob_layout.setContentsMargins(20, 16, 20, 16)
+        ob_layout.setSpacing(10)
 
-        title_lbl = QLabel("New Visitor?")
-        title_lbl.setStyleSheet("font-size: 32px; font-weight: bold; color: #f0f0f0;")
-        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        desc_lbl = QLabel("Scan your face to configure your\npersonalized smart mirror dashboard.")
-        desc_lbl.setStyleSheet("font-size: 18px; color: #a0a0a0; line-height: 1.5;")
-        desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ob_title = QLabel("HOW TO INTERACT VIA HAND GESTURES")
+        ob_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #60a5fa; letter-spacing: 2px;")
+        ob_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ob_layout.addWidget(ob_title)
 
-        # Image placeholder
-        img_lbl = QLabel(right_panel)
-        img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        guest_img_path = None
-        for ext in ['gif', 'png', 'jpg', 'jpeg']:
-            p = f"assets/guest.{ext}"
-            if os.path.exists(p):
-                guest_img_path = p
-                break
-        if guest_img_path:
-            pix = QPixmap(guest_img_path)
-            img_lbl.setPixmap(pix.scaled(260, 220, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        
-        url_lbl = QLabel("smartmirror.me")
-        url_lbl.setStyleSheet("font-size: 38px; font-weight: bold; color: #60a5fa;")
-        url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Gestures row
+        gestures_layout = QHBoxLayout()
+        gestures_layout.setSpacing(15)
 
-        prompt_lbl = QLabel("Sign up and register on the website")
-        prompt_lbl.setStyleSheet("font-size: 16px; color: #787878;")
-        prompt_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gesture_guides = [
+            ("Swipe Left", "Open Daily Notices"),
+            ("Swipe Right", "Open Timetable"),
+            ("Pinch & Drag", "Scroll Active View"),
+            ("Peace Sign (Hold 2s)", "Notices Shortcut"),
+            ("OK Sign (Hold 2s)", "Timetable Shortcut")
+        ]
+        for title, desc in gesture_guides:
+            g_box = QFrame()
+            g_box.setStyleSheet("background-color: rgba(255,255,255,8); border-radius: 8px; border: 1px solid rgba(255,255,255,8);")
+            gb_lay = QVBoxLayout(g_box)
+            gb_lay.setContentsMargins(10, 10, 10, 10)
+            gb_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        rp_layout.addWidget(title_lbl)
-        rp_layout.addWidget(desc_lbl)
-        if guest_img_path:
-            rp_layout.addWidget(img_lbl)
-        rp_layout.addWidget(url_lbl)
-        rp_layout.addWidget(prompt_lbl)
+            g_title = QLabel(title)
+            g_title.setStyleSheet("font-weight: bold; color: #ffffff; font-size: 11px;")
+            g_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            g_desc = QLabel(desc)
+            g_desc.setStyleSheet("color: #a0a0a0; font-size: 10px;")
+            g_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            g_desc.setWordWrap(True)
+
+            gb_lay.addWidget(g_title)
+            gb_lay.addWidget(g_desc)
+            gestures_layout.addWidget(g_box)
+
+        ob_layout.addLayout(gestures_layout)
         
-        layout.addWidget(right_panel, 1)
+        # Instructional animations GIF placeholder
+        self.ob_gif_label = QLabel(self.onboarding_card)
+        self.ob_gif_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ob_gif_label.setText("Looping Instructional Gestures Animation Placeholder (assets/onboarding_gesture.gif)")
+        self.ob_gif_label.setStyleSheet("color: rgba(255,255,255,100); font-size: 11px; padding: 10px; border: 1px dashed rgba(255,255,255,20); border-radius: 8px;")
+        ob_layout.addWidget(self.ob_gif_label)
+
+        self.guest_layout.addWidget(self.onboarding_card, 2)
+
+    def setup_guest_promo_layout(self):
+        self.guest_promo_container = QFrame(self.central_widget)
+        self.guest_promo_container.setGeometry(self.rect())
+        self.guest_promo_container.setStyleSheet("background-color: rgba(10, 10, 12, 235);")
+        self.guest_promo_container.hide()
+
+        promo_layout = QVBoxLayout(self.guest_promo_container)
+        promo_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        promo_layout.setSpacing(25)
+
+        promo_title = QLabel("Timetable Protected")
+        promo_title.setStyleSheet("font-size: 36px; font-weight: bold; color: #ef4444; letter-spacing: 1px;")
+        promo_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        promo_desc = QLabel("Sign up at smartmirror.me to view your custom school timetable.")
+        promo_desc.setStyleSheet("font-size: 20px; color: #e5e7eb; max-width: 600px; line-height: 1.6;")
+        promo_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        promo_desc.setWordWrap(True)
+
+        promo_hint = QLabel("Swipe Left to return to the guest dashboard.")
+        promo_hint.setStyleSheet("font-size: 14px; color: #9ca3af; font-style: italic;")
+        promo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        promo_layout.addWidget(promo_title)
+        promo_layout.addWidget(promo_desc)
+        promo_layout.addWidget(promo_hint)
+
+    def setup_admin_banner(self):
+        self.banner_frame = QFrame(self.central_widget)
+        self.banner_frame.setStyleSheet("background-color: #ef4444; border-bottom: 2px solid #b91c1c;")
+        self.banner_frame.setFixedHeight(40)
+        self.banner_frame.hide()
+
+        banner_layout = QHBoxLayout(self.banner_frame)
+        banner_layout.setContentsMargins(20, 0, 20, 0)
+
+        self.banner_label = QLabel(self.banner_frame)
+        self.banner_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; letter-spacing: 1px;")
+        self.banner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        banner_layout.addWidget(self.banner_label)
+
+    def show_guest_promo(self):
+        self.guest_container.hide()
+        self.guest_promo_container.show()
+
+    def hide_guest_promo(self):
+        self.guest_promo_container.hide()
+        self.guest_container.show()
+
+    def poll_admin_banner(self):
+        def worker():
+            try:
+                res = requests.get(f"{API_URL}/api/banner", timeout=4)
+                if res.status_code == 200:
+                    data = res.json()
+                    msg = data.get("message", "")
+                    QTimer.singleShot(0, lambda: self.update_admin_banner(msg))
+            except Exception:
+                pass
+        import threading
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    def update_admin_banner(self, message):
+        if message:
+            self.banner_label.setText(message)
+            self.banner_frame.show()
+            self.banner_frame.raise_()
+        else:
+            self.banner_frame.hide()
+
+    def poll_gestures(self):
+        gesture_file = os.path.join(
+            os.environ.get("TEMP", os.environ.get("TMP", "/tmp")), "gesture_status.json"
+        )
+        if os.path.exists(gesture_file):
+            try:
+                with open(gesture_file) as f:
+                    data = json.load(f)
+                
+                t = data.get("timestamp", 0.0)
+                if t > self.last_gesture_timestamp:
+                    self.last_gesture_timestamp = t
+                    gesture = data.get("gesture")
+                    scroll_delta = data.get("scroll_delta", 0)
+                    if gesture:
+                        self.handle_gesture(gesture, scroll_delta)
+            except Exception:
+                pass
+
+    def handle_gesture(self, gesture, scroll_delta):
+        # Ignore gesture commands if state is idle
+        if self._last_state == 'idle':
+            return
+
+        if gesture == "swipe_right" or gesture == "ok_hold":
+            if self._last_state == 'guest':
+                self.show_guest_promo()
+            elif self._last_state == 'user':
+                for w in self.widgets:
+                    if isinstance(w, TimetableWidget):
+                        w.raise_()
+
+        elif gesture == "swipe_left" or gesture == "peace_hold":
+            if self._last_state == 'guest':
+                if self.guest_promo_container.isVisible():
+                    self.hide_guest_promo()
+            elif self._last_state == 'user':
+                for w in self.widgets:
+                    if isinstance(w, NoticesWidget):
+                        w.raise_()
+
+        elif gesture == "scroll" and scroll_delta != 0:
+            for w in self.widgets:
+                if isinstance(w, (NoticesWidget, TimetableWidget)) and w.isVisible():
+                    w.scroll_by_pixels(scroll_delta)
+            if self._last_state == 'guest':
+                self.guest_notices.scroll_by_pixels(scroll_delta)
 
     def clear_widgets(self):
         for w in self.widgets:
@@ -266,13 +407,26 @@ class SmartMirrorPro(QMainWindow):
         real_h = max(80, int((h_pct / 100.0) * self.height()))
         return real_x, real_y, real_w, real_h
 
-    def apply_remote_widgets(self, remote_widgets):
+    def apply_remote_widgets(self, remote_config):
         try:
             self.clear_widgets()
-            if not remote_widgets:
+            if not remote_config:
                 return
 
-            for wd in remote_widgets:
+            theme = remote_config.get("theme", {})
+            colors = theme.get("colors", {})
+            fonts = theme.get("fonts", {})
+            primary = colors.get("primary", "#3b82f6")
+            secondary = colors.get("secondary", "#10b981")
+            font_family = fonts.get("family", "Outfit")
+
+            slots = remote_config.get("slots", [])
+            for s in slots:
+                orientation = s.get("orientation", "horizontal")
+                wd = s.get("widget", {})
+                if not wd:
+                    continue
+
                 real_x, real_y, real_w, real_h = self._pct_to_pixels(wd)
                 wtype = wd.get('type', '').lower()
                 data = _widget_data(wd)
@@ -301,11 +455,11 @@ class SmartMirrorPro(QMainWindow):
 
                 if widget:
                     widget.setParent(self.user_container)
+                    widget.set_orientation(orientation)
+                    widget.apply_theme(primary, secondary, font_family)
                     self.widgets.append(widget)
                     
-                    # Smooth Fade-in Slide Transition using QPropertyAnimation
                     widget.setGeometry(real_x, real_y + 40, real_w, real_h)
-                    
                     pos_anim = QPropertyAnimation(widget, b"geometry")
                     pos_anim.setDuration(600)
                     pos_anim.setStartValue(QRect(real_x, real_y + 40, real_w, real_h))
@@ -322,41 +476,14 @@ class SmartMirrorPro(QMainWindow):
                     pos_anim.start()
                     fade_anim.start()
                     
-                    # Prevent animation garbage collection
                     widget._pos_anim = pos_anim
                     widget._fade_anim = fade_anim
-                    
                     widget.show()
         except Exception as e:
             print(f"[ERROR] Failed to apply remote widgets: {e}")
             self.clear_widgets()
 
     def update_inputs(self):
-        # 1. Barcode scanner override
-        now = time.time()
-        if self.barcode_user_id and now < self.barcode_expiry:
-            new_state = 'user'
-            new_user_id = self.barcode_user_id
-            widgets = self.barcode_widgets
-
-            state_changed = (new_state != self._last_state)
-            user_switched = (new_state == 'user' and new_user_id != self._last_user_id)
-
-            if state_changed or user_switched:
-                self._last_state = new_state
-                self._last_user_id = new_user_id
-                self.current_user_id = new_user_id
-                self.current_user_name = new_user_id
-                self.guest_container.hide()
-                self.user_container.show()
-                self.apply_remote_widgets(widgets)
-
-            # Show active dot as blue/cyan for barcode instead of green/orange
-            self.status_dot.setStyleSheet("background-color: #0088ff; border-radius: 5px;")
-            self.status_dot.show()
-            return
-
-        # 2. Regular face recognition inputs
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
@@ -381,14 +508,17 @@ class SmartMirrorPro(QMainWindow):
                     self.current_user_name = fdata.get('user_name', '')
 
                     if new_state == 'user' and new_user_id not in ('', 'idle'):
+                        self.bg_canvas.glow_enabled = True
                         self.guest_container.hide()
+                        self.guest_promo_container.hide()
                         self.user_container.show()
-                        self.apply_remote_widgets(fdata.get('widgets', []))
+                        self.apply_remote_widgets(fdata.get('config', {}))
                     elif new_state == 'guest':
+                        self.bg_canvas.glow_enabled = True
                         self.clear_widgets()
                         self.user_container.hide()
+                        self.guest_promo_container.hide()
                         
-                        # Animate guest screen fade-in
                         opacity_effect = QGraphicsOpacityEffect(self.guest_container)
                         self.guest_container.setGraphicsEffect(opacity_effect)
                         self.guest_anim = QPropertyAnimation(opacity_effect, b"opacity")
@@ -399,14 +529,15 @@ class SmartMirrorPro(QMainWindow):
                         self.guest_container.show()
                         self.guest_anim.start()
                     else:
-                        # idle - show black screen
+                        # idle - show completely black screen
+                        self.bg_canvas.glow_enabled = False
                         self.clear_widgets()
                         self.guest_container.hide()
+                        self.guest_promo_container.hide()
                         self.user_container.hide()
             except Exception:
                 pass
 
-        # Update status dot
         if self.face_recognized:
             self.status_dot.setStyleSheet("background-color: #00c850; border-radius: 5px;")
             self.status_dot.show()
@@ -415,57 +546,6 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.show()
         else:
             self.status_dot.hide()
-
-    def keyPressEvent(self, event):
-        # Accumulate barcode inputs
-        key = event.text()
-        now = time.time()
-
-        # If there's a huge delay (e.g. > 150ms) between keystrokes, reset buffer
-        if now - self._last_key_time > 0.15:
-            self._barcode_buf = ""
-        self._last_key_time = now
-
-        # Enter key triggers barcode lookup
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            barcode = self._barcode_buf.strip()
-            self._barcode_buf = ""
-            if barcode:
-                print(f"[BARCODE] Scanned: {barcode}. Verifying...")
-                self.verify_barcode_async(barcode)
-        elif event.key() == Qt.Key.Key_Escape:
-            print("[BARCODE] Esc pressed. Logging out.")
-            self.barcode_user_id = None
-            self.barcode_expiry = 0
-            self.update_inputs()
-        else:
-            if key.isalnum():
-                self._barcode_buf += key
-
-    def verify_barcode_async(self, barcode):
-        def worker():
-            try:
-                res = requests.post(f"{API_URL}/api/verify-barcode", json={"barcode": barcode}, timeout=5)
-                if res.status_code == 200:
-                    data = res.json()
-                    user_id = data.get("user_id")
-                    widgets = data.get("widgets", [])
-                    print(f"[BARCODE] Match success: {user_id}")
-                    QTimer.singleShot(0, lambda: self.on_barcode_verified(user_id, widgets))
-                else:
-                    print(f"[BARCODE] Verification failed: {res.status_code}")
-            except Exception as e:
-                print(f"[BARCODE] Error contacting server: {e}")
-
-        import threading
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-
-    def on_barcode_verified(self, user_id, widgets):
-        self.barcode_user_id = user_id
-        self.barcode_widgets = widgets
-        self.barcode_expiry = time.time() + 60.0  # keeps logged in for 60 seconds
-        self.update_inputs()
 
 
 if __name__ == '__main__':
