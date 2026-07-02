@@ -1,5 +1,5 @@
 # mirror/widgets/base_widget.py
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget
 from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont
 

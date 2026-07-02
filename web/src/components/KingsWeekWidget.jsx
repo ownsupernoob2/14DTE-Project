@@ -9,18 +9,14 @@ export default function KingsWeekWidget() {
 
   useEffect(() => {
     let mounted = true;
-    
+
     const fetchKingsWeek = async () => {
       try {
         setLoading(true);
         const res = await fetch(`${API_URL}/api/kings-week`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const result = await res.json();
-        
-        if (mounted) {
-          setData(result);
-          setError(null);
-        }
+        if (mounted) { setData(result); setError(null); }
       } catch (err) {
         console.error('Failed to fetch Kings Week:', err);
         if (mounted) setError(err.message);
@@ -30,69 +26,147 @@ export default function KingsWeekWidget() {
     };
 
     fetchKingsWeek();
-    
-    // Refresh every 30 minutes
     const interval = setInterval(fetchKingsWeek, 30 * 60 * 1000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
+    return () => { mounted = false; clearInterval(interval); };
   }, []);
 
   if (loading && !data) {
     return (
-      <div className="glass-panel w-full h-full rounded-2xl flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '12px',
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: '0.85rem',
+      }}>
+        <div style={{
+          width: '20px', height: '20px',
+          border: '2px solid rgba(255,255,255,0.15)',
+          borderTopColor: 'rgba(255,255,255,0.6)',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }} />
+        Loading King's Week...
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="glass-panel w-full h-full rounded-2xl flex items-center justify-center flex-col p-4 text-center">
-        <div className="text-[var(--text-secondary)] mb-2">King's Week</div>
-        <div className="text-[var(--status-error)] text-sm">{error || 'No data available'}</div>
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: '0.8rem',
+        gap: '6px',
+        textAlign: 'center',
+        padding: '12px',
+      }}>
+        <span style={{ fontSize: '1.5rem' }}>📰</span>
+        <span>King's Week</span>
+        <span style={{ color: '#f87171', fontSize: '0.75rem' }}>{error || 'No data'}</span>
       </div>
     );
   }
 
   return (
-    <a 
-      href={data.link} 
-      target="_blank" 
+    <a
+      href={data.link}
+      target="_blank"
       rel="noopener noreferrer"
-      className="block w-full h-full rounded-2xl overflow-hidden relative group cursor-pointer"
       style={{
+        flex: 1,
+        display: 'block',
+        borderRadius: '14px',
+        overflow: 'hidden',
+        position: 'relative',
         backgroundImage: `url(${data.imageUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        textDecoration: 'none'
+        textDecoration: 'none',
+        cursor: 'pointer',
+        minHeight: '120px',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'scale(1.01)';
+        e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'scale(1)';
+        e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      {/* Dark overlay for text readability */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent transition-opacity group-hover:opacity-90"></div>
-      
-      <div className="absolute bottom-0 left-0 p-6 w-full text-white">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="px-3 py-1 rounded-full bg-[var(--accent-color)] text-white text-sm font-semibold shadow-lg">
+      {/* Gradient overlay */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.1) 100%)',
+      }} />
+
+      {/* Content */}
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        padding: '16px',
+        color: '#ffffff',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <span style={{
+            padding: '2px 10px',
+            borderRadius: '20px',
+            background: 'rgba(109,40,217,0.85)',
+            fontSize: '0.7rem',
+            fontWeight: '700',
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            color: '#e9d5ff',
+          }}>
             {data.edition}
-          </div>
-          <div className="text-sm text-gray-300 font-medium">
+          </span>
+          <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.55)' }}>
             {data.date}
-          </div>
+          </span>
         </div>
-        
-        <h3 className="text-2xl font-bold leading-tight line-clamp-2 drop-shadow-md">
+        <div style={{
+          fontSize: 'clamp(0.85rem, 1.1vw, 1rem)',
+          fontWeight: '600',
+          lineHeight: 1.3,
+          color: '#ffffff',
+          textShadow: '0 1px 8px rgba(0,0,0,0.8)',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}>
           {data.title}
-        </h3>
+        </div>
       </div>
-      
-      {/* Read indicator */}
-      <div className="absolute top-4 right-4 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-sm font-medium text-white flex items-center gap-1">
-          Read Issue 
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-        </span>
+
+      {/* Read Issue badge — top right */}
+      <div style={{
+        position: 'absolute', top: '12px', right: '12px',
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(8px)',
+        padding: '4px 10px',
+        borderRadius: '20px',
+        fontSize: '0.7rem',
+        color: 'rgba(255,255,255,0.8)',
+        fontWeight: '500',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+      }}>
+        Read Issue
+        <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" strokeLinecap="round" strokeLinejoin="round"/>
+          <polyline points="15 3 21 3 21 9" strokeLinecap="round" strokeLinejoin="round"/>
+          <line x1="10" y1="14" x2="21" y2="3" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
       </div>
     </a>
   );
