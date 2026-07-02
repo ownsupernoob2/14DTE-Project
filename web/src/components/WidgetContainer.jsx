@@ -2,8 +2,6 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import DailyNoticesWidget from './DailyNoticesWidget'
 import TimetableWidget from './TimetableWidget'
-import QuoteWidget from './QuoteWidget'
-import CountdownWidget from './CountdownWidget'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const DEFAULT_SIZES = {
@@ -11,8 +9,6 @@ const DEFAULT_SIZES = {
   notices:   { w: 420, h: 340 },
   timetable: { w: 360, h: 320 },
   note:      { w: 220, h: 200 },
-  quote:     { w: 300, h: 120 },
-  countdown: { w: 250, h: 120 },
 }
 
 const WIDGET_LIMITS = {
@@ -20,8 +16,6 @@ const WIDGET_LIMITS = {
   notices:   { minW: 300, minH: 200, maxW: 900, maxH: 700 },
   timetable: { minW: 250, minH: 200, maxW: 900, maxH: 750 },
   note:      { minW: 160, minH: 120, maxW: 600, maxH: 500 },
-  quote:     { minW: 200, minH: 80,  maxW: 800, maxH: 300 },
-  countdown: { minW: 180, minH: 80,  maxW: 600, maxH: 300 },
 }
 
 // Note expiry duration options
@@ -236,8 +230,6 @@ export default function WidgetContainer({ widget, onRemove, onMove, onDragEnd, o
         }}
       >
         {widget.type === 'clock'     && <ClockWidget />}
-        {widget.type === 'quote'     && <QuoteWidget readonly={readonly} />}
-        {widget.type === 'countdown' && <CountdownWidget />}
         {widget.type === 'notices'   && (
           <DailyNoticesWidget 
             widget={widget}

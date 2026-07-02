@@ -59,28 +59,8 @@ export default function Dashboard() {
   const { getAccessTokenSilently } = useAuth0()
   const { isServerUp } = useServerStatus()
 
-  const [currentLayout, setCurrentLayout] = useState('focus')
-  const [savedLayout, setSavedLayout] = useState('focus')
-
-  const PREMADE_LAYOUTS = {
-    focus: [
-      { id: 'clk-1', type: 'clock', x: 38, y: 5, w: 24, h: 14 },
-      { id: 'tt-1', type: 'timetable', x: 2, y: 22, w: 46, h: 72 },
-      { id: 'not-1', type: 'notices', x: 52, y: 22, w: 46, h: 72 }
-    ],
-    bulletin: [
-      { id: 'not-1', type: 'notices', x: 2, y: 5, w: 58, h: 90 },
-      { id: 'clk-1', type: 'clock', x: 64, y: 5, w: 34, h: 15 },
-      { id: 'tt-1', type: 'timetable', x: 64, y: 23, w: 34, h: 72 }
-    ],
-    compact: [
-      { id: 'clk-1', type: 'clock', x: 35, y: 15, w: 30, h: 15 },
-      { id: 'tt-1', type: 'timetable', x: 15, y: 35, w: 70, h: 50, data: { viewMode: 'next' } }
-    ]
-  }
-
   useEffect(() => {
-    fetchLayout()
+    fetchWidgets()
 
     const handleResize = () => {
       if (containerRef.current) {
@@ -98,23 +78,42 @@ export default function Dashboard() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  const fetchLayout = async () => {
+  const fetchWidgets = async () => {
     try {
       const token = await getAccessTokenSilently()
-      const res = await fetch(`${API_URL}/api/layout`, {
+      const res = await fetch(`${API_URL}/api/dashboard/widgets`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (res.ok) {
         const data = await res.json()
-        const layoutName = data.layout || 'focus'
-        setCurrentLayout(layoutName)
-        setSavedLayout(layoutName)
-        setWidgets(PREMADE_LAYOUTS[layoutName] || PREMADE_LAYOUTS.focus)
+        const fetchedWidgets = data || []
+        
+        // Normalize any old absolute coordinates to percentages!
+        // We'll assume old coordinates were saved based on a standard 1280x800 web layout space.
+        const normalized = fetchedWidgets.map(w => {
+          const wNew = { ...w }
+          if (w.x !== undefined && w.x > 100) {
+            wNew.x = (w.x / 1280) * 100
+          }
+          if (w.y !== undefined && w.y > 100) {
+            wNew.y = (w.y / 800) * 100
+          }
+          if (w.w !== undefined && w.w > 100) {
+            wNew.w = (w.w / 1280) * 100
+          }
+          if (w.h !== undefined && w.h > 100) {
+            wNew.h = (w.h / 800) * 100
+          }
+          return wNew
+        })
+        
+        setWidgets(normalized)
+        setSavedWidgets(normalized)
         setWidgetsLoaded(true)
         setErrorMsg('')
       } else {
         setWidgetsLoaded(true)
-        setErrorMsg('Failed to load layout.')
+        setErrorMsg('Failed to load dashboard.')
       }
     } catch (e) {
       console.error(e)
@@ -123,11 +122,147 @@ export default function Dashboard() {
     }
   }
 
-  const selectLayout = (layoutName) => {
-    if (PREMADE_LAYOUTS[layoutName]) {
-      setCurrentLayout(layoutName)
-      setWidgets(PREMADE_LAYOUTS[layoutName])
+  const addWidget = (type) => {
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
+    
+    // Type-specific default sizes matching DEFAULT_SIZES to avoid shrinking/covering content
+    const defaults = {
+      clock:     { w: 220, h: 100 },
+      notices:   { w: 420, h: 340 },
+      timetable: { w: 360, h: 320 },
+      note:      { w: 220, h: 180 },
     }
+    const size = defaults[type] || { w: 220, h: 160 }
+    const widgetWidth = size.w
+    const widgetHeight = size.h
+
+    // Store as percentages (0-100) immediately
+    const w_pct = (widgetWidth / containerWidth) * 100
+    const h_pct = (widgetHeight / containerHeight) * 100
+
+    // Search for a non-overlapping position
+    let x_pct = 2 // start at 2% x
+    let y_pct = 12 // start at 12% y (below navbar)
+    
+    const checkOverlapPct = (px, py, pw, ph) => {
+      return widgets.some(w => {
+        const margin = 0.05
+        return (
+          px + margin < w.x + w.w &&
+          px + pw - margin > w.x &&
+          py + margin < w.y + w.h &&
+          py + ph - margin > w.y
+        )
+      })
+    }
+
+    let found = false
+    for (let row = 0; row < 10 && !found; row++) {
+      for (let col = 0; col < 10 && !found; col++) {
+        const testX = 2 + col * (w_pct + 2)
+        const testY = 12 + row * (h_pct + 2)
+        
+        if (testX + w_pct <= 98 && testY + h_pct <= 98) {
+          if (!checkOverlapPct(testX, testY, w_pct, h_pct)) {
+            x_pct = testX
+            y_pct = testY
+            found = true
+          }
+        }
+      }
+    }
+    
+    if (!found) {
+      x_pct = 2 + Math.random() * 5
+      y_pct = 12 + Math.random() * 5
+    }
+
+    const newWidget = {
+      id: `new-${Date.now()}`,
+      type,
+      x: x_pct,
+      y: y_pct,
+      w: w_pct,
+      h: h_pct,
+    }
+
+    setShowAddMenu(false)
+    setWidgets([...widgets, newWidget])
+  }
+
+  const removeWidget = (id) => {
+    setWidgets(widgets.filter((w) => w.id !== id))
+  }
+
+  const clearWidgets = () => {
+    setWidgets([])
+  }
+
+  const updateWidgetPosition = (id, x, y, allowOverlap = false) => {
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
+    const x_pct = (x / containerWidth) * 100
+    const y_pct = (y / containerHeight) * 100
+
+    setWidgets((current) => {
+      const target = current.find((w) => w.id === id)
+      if (!target) return current
+
+      if (!allowOverlap) {
+        const wouldOverlap = current.some((w) => {
+          if (w.id === id) return false
+          return overlapsPct(x_pct, y_pct, target.w, target.h, w.x, w.y, w.w, w.h)
+        })
+        if (wouldOverlap) return current
+      }
+
+      return current.map((w) => (w.id === id ? { ...w, x: x_pct, y: y_pct } : w))
+    })
+  }
+
+  const resolveWidgetOverlaps = (id) => {
+    setWidgets((current) => {
+      const target = current.find((w) => w.id === id)
+      if (!target) return current
+
+      const others = current.filter((w) => w.id !== id)
+      const hasOverlap = others.some((w) =>
+        overlapsPct(target.x, target.y, target.w, target.h, w.x, w.y, w.w, w.h)
+      )
+      if (!hasOverlap) return current
+
+      const { x, y } = resolveOverlapPosition(target, others)
+      return current.map((w) => (w.id === id ? { ...w, x, y } : w))
+    })
+  }
+
+  const updateWidgetSize = (id, width, height) => {
+    const containerWidth = dimensions.width
+    const containerHeight = dimensions.height
+    const w_pct = (width / containerWidth) * 100
+    const h_pct = (height / containerHeight) * 100
+
+    const target = widgets.find((w) => w.id === id)
+    if (!target) return
+
+    // Check if resizing would overlap with any other widget
+    const wouldOverlap = widgets.some((w) => {
+      if (w.id === id) return false
+      const margin = 0.05
+      return (
+        target.x + margin < w.x + w.w &&
+        target.x + w_pct - margin > w.x &&
+        target.y + margin < w.y + w.h &&
+        target.y + h_pct - margin > w.y
+      )
+    })
+
+    if (wouldOverlap) return
+
+    setWidgets(
+      widgets.map((w) => (w.id === id ? { ...w, w: w_pct, h: h_pct } : w))
+    )
   }
 
   const updateWidgetData = (id, data) => {
@@ -140,25 +275,25 @@ export default function Dashboard() {
     setIsSaving(true)
     try {
       const token = await getAccessTokenSilently()
-      const res = await fetch(`${API_URL}/api/layout`, {
+      const res = await fetch(`${API_URL}/api/dashboard/widgets/bulk`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}` 
         },
-        body: JSON.stringify({ layout: currentLayout })
+        body: JSON.stringify(widgets)
       })
       if (res.ok) {
-        setSavedLayout(currentLayout)
+        setSavedWidgets(widgets)
         setErrorMsg('')
         return true
       } else {
-        setErrorMsg('Failed to save layout selection')
+        setErrorMsg('Failed to save layout')
         return false
       }
     } catch (e) {
       console.error(e)
-      setErrorMsg('Failed to save layout selection')
+      setErrorMsg('Failed to save layout')
       return false
     } finally {
       setIsSaving(false)
@@ -170,14 +305,14 @@ export default function Dashboard() {
       await saveLayout()
     }
     setIsEditMode(false)
+    setShowAddMenu(false)
   }
 
   const undoLayout = () => {
-    setCurrentLayout(savedLayout)
-    setWidgets(PREMADE_LAYOUTS[savedLayout] || PREMADE_LAYOUTS.focus)
+    setWidgets(savedWidgets)
   }
 
-  const hasUnsavedChanges = currentLayout !== savedLayout
+  const hasUnsavedChanges = JSON.stringify(widgets) !== JSON.stringify(savedWidgets)
   const hasFaceScan = !!localStorage.getItem('lastFaceScan')
 
   return (
@@ -259,14 +394,18 @@ export default function Dashboard() {
           <WidgetContainer
             key={widget.id}
             widget={widget}
+            onRemove={removeWidget}
+            onMove={updateWidgetPosition}
+            onDragEnd={resolveWidgetOverlaps}
+            onResize={updateWidgetSize}
             onUpdateData={updateWidgetData}
-            readonly={true}
+            readonly={!isEditMode}
             containerWidth={dimensions.width}
             containerHeight={dimensions.height}
           />
         ))}
 
-        {/* Pre-made Layouts custom UI bar */}
+        {/* Modern Unified Customization Control Bar */}
         <div style={{
           position: 'absolute',
           bottom: 24,
@@ -276,94 +415,157 @@ export default function Dashboard() {
           gap: '12px',
           alignItems: 'center'
         }}>
-          {isEditMode ? (
+          {/* Unsaved changes indicators */}
+          {hasUnsavedChanges && (
             <div className="glass-panel" style={{
               display: 'flex',
-              gap: '10px',
-              padding: '8px 16px',
+              gap: '8px',
+              padding: '6px 12px',
               alignItems: 'center',
               borderRadius: '9999px',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              background: 'rgba(10, 10, 15, 0.92)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              background: 'rgba(245, 158, 11, 0.08)'
             }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'rgba(255,255,255,0.6)', marginRight: '6px' }}>
-                SELECT LAYOUT:
-              </span>
-              {['focus', 'bulletin', 'compact'].map((layoutName) => (
-                <button
-                  key={layoutName}
-                  onClick={() => selectLayout(layoutName)}
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    borderRadius: '9999px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: currentLayout === layoutName ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                    color: currentLayout === layoutName ? '#0f172a' : 'rgba(255,255,255,0.8)',
-                    transition: 'all 0.25s ease'
-                  }}
-                >
-                  {layoutName.toUpperCase()}
-                </button>
-              ))}
-
-              <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.15)', margin: '0 4px' }} />
-
-              {hasUnsavedChanges && (
-                <>
-                  <button 
-                    className="notices-tab" 
-                    onClick={undoLayout}
-                    style={{ padding: '6px 14px', fontSize: '0.78rem', background: 'rgba(255,255,255,0.06)' }}
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    className="notices-tab active" 
-                    onClick={saveLayout}
-                    disabled={isSaving}
-                    style={{ padding: '6px 14px', fontSize: '0.78rem', background: '#10b981', color: '#fff' }}
-                  >
-                    {isSaving ? 'Saving...' : 'Apply Layout'}
-                  </button>
-                </>
-              )}
-
-              {!hasUnsavedChanges && (
-                <button
-                  className="notices-tab active"
-                  onClick={() => setIsEditMode(false)}
-                  style={{ padding: '6px 14px', fontSize: '0.78rem', background: 'var(--accent)', color: '#0f172a' }}
-                >
-                  Close Options
-                </button>
-              )}
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unsaved Layout</span>
+              <button 
+                className="notices-tab" 
+                onClick={undoLayout}
+                disabled={!isServerUp}
+                style={{ padding: '4px 10px', fontSize: '0.72rem', background: 'rgba(255,255,255,0.06)' }}
+              >
+                Undo
+              </button>
+              <button 
+                className="notices-tab active" 
+                onClick={saveLayout}
+                disabled={isSaving || !isServerUp}
+                style={{ padding: '4px 10px', fontSize: '0.72rem', background: 'var(--accent)', color: 'var(--bg-color)' }}
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
             </div>
-          ) : (
+          )}
+
+          {/* Add Widget Button (only in edit mode) */}
+          {isEditMode && (
             <button
               className="modern-btn"
-              onClick={() => setIsEditMode(true)}
+              onClick={clearWidgets}
+              disabled={!isServerUp || widgets.length === 0}
               style={{
-                background: 'rgba(255, 255, 255, 0.08)',
-                color: 'white',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                padding: '12px 24px',
+                background: 'rgba(239, 68, 68, 0.08)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.22)',
+                padding: '10px 20px',
                 borderRadius: '9999px',
                 fontSize: '0.82rem',
                 letterSpacing: '0.05em',
-                fontWeight: 600,
-                cursor: 'pointer',
+                boxShadow: 'none',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px'
+                gap: '6px',
+                width: 'auto',
+                opacity: widgets.length === 0 ? 0.45 : 1,
+                cursor: widgets.length === 0 ? 'not-allowed' : 'pointer'
               }}
             >
-              <span>Change Premade Layout</span>
+              Clear Widgets
             </button>
           )}
+
+          {/* Add Widget Button (only in edit mode) */}
+          {isEditMode && (
+            <div style={{ position: 'relative' }}>
+              <button
+                className="modern-btn"
+                onClick={() => isServerUp && setShowAddMenu(!showAddMenu)}
+                disabled={!isServerUp}
+                style={{
+                  background: 'var(--glass-bg)',
+                  color: 'white',
+                  border: '1px solid var(--glass-border)',
+                  padding: '10px 20px',
+                  borderRadius: '9999px',
+                  fontSize: '0.82rem',
+                  letterSpacing: '0.05em',
+                  boxShadow: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  width: 'auto'
+                }}
+              >
+                <span>+ Add Widget</span>
+              </button>
+              
+              {/* Add menu */}
+              <AnimatePresence>
+                {showAddMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                    transition={{ duration: 0.2 }}
+                    className="glass-panel add-widget-menu"
+                    style={{
+                      position: 'absolute',
+                      bottom: '50px',
+                      right: '0',
+                      width: '180px',
+                      background: 'rgba(10, 10, 15, 0.95)',
+                      padding: '8px',
+                      borderRadius: '16px',
+                      boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(255,255,255,0.08)'
+                    }}
+                  >
+                    {['clock', 'notices', 'timetable', 'note'].map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => addWidget(type)}
+                        className="widget-menu-item"
+                        style={{
+                          padding: '8px 12px',
+                          fontSize: '0.72rem',
+                          borderRadius: '8px'
+                        }}
+                      >
+                        {type === 'clock' ? 'Clock' : ''}
+                        {type === 'notices' ? 'Daily Notices' : ''}
+                        {type === 'timetable' ? 'Timetable' : ''}
+                        {type === 'note' ? 'Note' : ''}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {/* Toggle Edit Mode Button */}
+          <button
+            className="modern-btn"
+            onClick={() => isEditMode ? handleDoneCustomizing() : setIsEditMode(true)}
+            disabled={isEditMode && isSaving}
+            style={{
+              background: isEditMode ? 'var(--accent)' : 'rgba(255, 255, 255, 0.08)',
+              color: 'white',
+              border: isEditMode ? '1px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.15)',
+              padding: '10px 20px',
+              borderRadius: '9999px',
+              fontSize: '0.82rem',
+              letterSpacing: '0.05em',
+              fontWeight: 600,
+              boxShadow: isEditMode ? '0 0 15px var(--accent-glow)' : 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: 'auto',
+              opacity: (isEditMode && isSaving) ? 0.6 : 1,
+            }}
+          >
+            <span>{isEditMode ? (isSaving ? 'Saving...' : 'Done') : 'Customize Layout'}</span>
+          </button>
         </div>
       </div>
 

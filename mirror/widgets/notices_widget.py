@@ -121,11 +121,11 @@ class NoticesWidget(Widget):
 
         self.title_label = QLabel("DAILY NOTICES", self)
         self.title_label.setStyleSheet(
-            "font-size: 18px; font-weight: bold; color: #e6e6e6; letter-spacing: 2px;"
+            "font-size: 15px; font-weight: bold; color: #e6e6e6; letter-spacing: 2px;"
         )
 
         self.count_label = QLabel("0 notices", self)
-        self.count_label.setStyleSheet("font-size: 14px; color: #666666;")
+        self.count_label.setStyleSheet("font-size: 12px; color: #666666;")
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         header_layout.addWidget(self.title_label)
@@ -135,7 +135,7 @@ class NoticesWidget(Widget):
         # Last-updated label
         self.fetched_at_label = QLabel("", self)
         self.fetched_at_label.setStyleSheet(
-            "font-size: 12px; color: rgba(255,255,255,80); padding: 0 14px 4px;"
+            "font-size: 10px; color: rgba(255,255,255,80); padding: 0 14px 4px;"
         )
         self.fetched_at_label.setVisible(False)
         self.container_layout.addWidget(self.fetched_at_label)
@@ -266,7 +266,6 @@ class NoticesWidget(Widget):
                     border-radius: 10px;
                 }}
             """)
-
         # Setup horizontal layout for notices in horizontal widgets, stack vertically in vertical widgets
         if self.orientation == "horizontal":
             card_layout = QHBoxLayout(card)
@@ -318,25 +317,34 @@ class NoticesWidget(Widget):
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(12 if not is_urgent else 14, 12 if not is_urgent else 14, 12, 10)
             card_layout.setSpacing(6 if not is_urgent else 8)
-            
+
+            # Badge & target years row
             row = QHBoxLayout()
             badge_lbl = QLabel("URGENT" if is_urgent else category.upper())
-            badge_lbl.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {'#fca5a5' if is_urgent else border_color};")
+            badge_lbl.setStyleSheet(
+                f"font-size: 10px; font-weight: bold; "
+                f"color: {'#fca5a5' if is_urgent else border_color};"
+            )
             row.addWidget(badge_lbl)
-            
+
             years = notice.get('targetYears', ['All'])
             years_str = "Y" + ", Y".join([str(y) for y in years]) if 'All' not in years else "All"
             years_lbl = QLabel(years_str)
-            years_lbl.setStyleSheet("font-size: 12px; color: #666666;")
+            years_lbl.setStyleSheet("font-size: 10px; color: #666666;")
             years_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
             row.addWidget(years_lbl)
             card_layout.addLayout(row)
-            
+
+            # Title — larger font for urgent
             title_lbl = QLabel(notice.get('title', ''))
             title_lbl.setWordWrap(True)
-            title_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {'#fca5a5' if is_urgent else '#f2f2f2'};")
+            if is_urgent:
+                title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #fca5a5;")
+            else:
+                title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #f2f2f2;")
             card_layout.addWidget(title_lbl)
-            
+
+            # Details chips
             details = extract_details(notice.get('notice', ''))
             if details:
                 det_row = QHBoxLayout()
@@ -345,26 +353,31 @@ class NoticesWidget(Widget):
                     if details.get(key):
                         chip = QLabel(f"{label}: {details[key]}")
                         chip.setStyleSheet("""
-                            font-size: 12px;
+                            font-size: 10px;
                             color: #bfbfbf;
                             background-color: rgba(255, 255, 255, 15);
                             border-radius: 8px;
-                            padding: 3px 8px;
+                            padding: 2px 6px;
                         """)
                         det_row.addWidget(chip)
                 det_row.addStretch()
                 card_layout.addLayout(det_row)
-                
-            body_lbl = QLabel(strip_html(notice.get('notice', '')))
+
+            # Body text
+            body_text = strip_html(notice.get('notice', ''))
+            body_lbl = QLabel(body_text)
             body_lbl.setWordWrap(True)
-            body_lbl.setStyleSheet("font-size: 14px; color: #b8b8b8; line-height: 1.4;")
+            if is_urgent:
+                body_lbl.setStyleSheet("font-size: 13px; color: rgba(255,220,220,0.82); line-height: 1.4;")
+            else:
+                body_lbl.setStyleSheet("font-size: 12px; color: #b8b8b8; line-height: 1.4;")
             card_layout.addWidget(body_lbl)
-            
+
             if notice.get('contact'):
                 contact_lbl = QLabel(f"Contact: {notice['contact']}")
-                contact_lbl.setStyleSheet("font-size: 13px; color: #666666;")
+                contact_lbl.setStyleSheet("font-size: 11px; color: #666666;")
                 card_layout.addWidget(contact_lbl)
-                
+
         return card
 
     def update_ui(self):

@@ -60,9 +60,6 @@ func main() {
 	protected.DELETE("/dashboard/widgets/:id", deleteWidget)
 	protected.GET("/dashboard/widgets", getWidgets)
 	protected.PUT("/dashboard/widgets/bulk", updateWidgetsBulk)
-	protected.GET("/layout", getLayout)
-	protected.PUT("/layout", saveLayout)
-	e.GET("/api/layout", getLayout) // Allow public read for the mirror
 
 	// Daily Notices route
 	e.GET("/api/notices", getNotices)

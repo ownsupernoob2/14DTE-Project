@@ -35,10 +35,10 @@ class NoteWidget(Widget):
         self.body_label = QLabel(self.text if self.text else 'No note written.', self)
         self.body_label.setWordWrap(True)
         self.body_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.body_label.setStyleSheet("font-size: 18px; color: #e6e6e6; line-height: 1.6;")
+        self.body_label.setStyleSheet("font-size: 14px; color: #e6e6e6; line-height: 1.5;")
         
         self.badge_label = QLabel(self)
-        self.badge_label.setStyleSheet("font-size: 13px; font-weight: bold; border-radius: 6px; padding: 2px 6px;")
+        self.badge_label.setStyleSheet("font-size: 11px; font-weight: bold; border-radius: 6px; padding: 2px 6px;")
         self.badge_label.hide()
         
         self.main_layout.addWidget(self.body_label, 1)

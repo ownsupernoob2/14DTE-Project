@@ -153,7 +153,7 @@ class TimetableWidget(Widget):
             h_layout = QHBoxLayout(header_widget)
             h_layout.setContentsMargins(12, 4, 12, 4)
             lbl = QLabel(friendly_date.upper())
-            lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #60a5fa;")
+            lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #60a5fa;")
             h_layout.addWidget(lbl)
             
             line = QFrame()
@@ -181,42 +181,42 @@ class TimetableWidget(Widget):
                     card.setWindowOpacity(0.4)
                     
                 card_layout = QHBoxLayout(card)
-                card_layout.setContentsMargins(14, 12, 14, 12)
+                card_layout.setContentsMargins(12, 10, 12, 10)
                 
                 start = period.get('startTime', period.get('start', ''))
                 end = period.get('endTime', period.get('end', ''))
                 time_lbl = QLabel(f"{start} – {end}" if start and end else (start or ''))
-                time_lbl.setStyleSheet("font-size: 13px; color: rgba(255, 255, 255, 180); font-weight: bold;")
+                time_lbl.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 180); font-weight: bold;")
                 card_layout.addWidget(time_lbl)
                 
                 subject = period.get('subject', period.get('summary', period.get('title', 'Period')))
                 subj_lbl = QLabel(subject)
                 subj_lbl.setWordWrap(True)
-                subj_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {'#666666' if is_done else '#ffffff'};")
+                subj_lbl.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {'#666666' if is_done else '#ffffff'};")
                 card_layout.addWidget(subj_lbl, 1)
                 
                 if period.get('location'):
                     loc_lbl = QLabel(period['location'])
                     loc_lbl.setStyleSheet("""
-                        font-size: 13px;
+                        font-size: 11px;
                         color: #93c5fd;
                         background-color: rgba(59, 130, 246, 25);
                         border: 1px solid rgba(59, 130, 246, 51);
                         border-radius: 6px;
-                        padding: 3px 8px;
+                        padding: 2px 6px;
                     """)
                     card_layout.addWidget(loc_lbl)
                     
                 if is_now:
                     now_lbl = QLabel("IN PROGRESS")
                     now_lbl.setStyleSheet("""
-                        font-size: 12px;
+                        font-size: 10px;
                         font-weight: bold;
                         color: #22d3ee;
                         background-color: rgba(6, 182, 212, 38);
                         border: 1px solid rgba(6, 182, 212, 89);
                         border-radius: 6px;
-                        padding: 3px 8px;
+                        padding: 2px 6px;
                     """)
                     card_layout.addWidget(now_lbl)
                     
