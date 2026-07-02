@@ -21,10 +21,38 @@ type Widget struct {
 	Data interface{} `json:"data,omitempty"`
 }
 
+type ThemeColors struct {
+	Primary    string `json:"primary"`
+	Secondary  string `json:"secondary"`
+	Background string `json:"background"`
+}
+
+type ThemeFonts struct {
+	Family       string  `json:"family"`
+	SizeModifier float64 `json:"size_modifier"`
+}
+
+type Theme struct {
+	Colors ThemeColors `json:"colors"`
+	Fonts  ThemeFonts  `json:"fonts"`
+}
+
+type Slot struct {
+	SlotID      string `json:"slot_id"`
+	Orientation string `json:"orientation"`
+	Widget      Widget `json:"widget"`
+}
+
+type UserDashboardConfig struct {
+	Theme Theme  `json:"theme"`
+	Slots []Slot `json:"slots"`
+}
+
 type Dashboard struct {
-	ID      string   `json:"id"`
-	UserID  string   `json:"user_id"`
-	Widgets []Widget `json:"widgets"`
+	ID      string              `json:"id"`
+	UserID  string              `json:"user_id"`
+	Config  UserDashboardConfig `json:"config"`
+	Widgets []Widget            `json:"widgets"` // kept for legacy compatibility
 }
 
 type UserLayoutConfig struct {
@@ -54,6 +82,24 @@ func getPremadeWidgets(layoutName string) []Widget {
 		}
 	}
 }
+func getDashboardConfigWithPremadeSlots(userID string, layoutName string) UserDashboardConfig {
+	config := getDashboardConfigForUser(userID)
+	premadeWidgets := getPremadeWidgets(layoutName)
+	slots := []Slot{}
+	for i, w := range premadeWidgets {
+		orientation := "horizontal"
+		if w.Type == "notices" {
+			orientation = "vertical"
+		}
+		slots = append(slots, Slot{
+			SlotID:      fmt.Sprintf("slot_%d", i),
+			Orientation: orientation,
+			Widget:      w,
+		})
+	}
+	config.Slots = slots
+	return config
+}
 
 func getDashboard(c echo.Context) error {
 	userID := getUserIDFromToken(c)
@@ -71,13 +117,14 @@ func getDashboard(c echo.Context) error {
 		}
 	}
 
+	config := getDashboardConfigWithPremadeSlots(userID, layoutName)
 	return c.JSON(200, Dashboard{
 		ID:      "dashboard-" + userID,
 		UserID:  userID,
+		Config:  config,
 		Widgets: getPremadeWidgets(layoutName),
 	})
 }
-
 // In-memory cache + file sync per user
 func getSafeUserID(userID string) string {
 	safeUserID := strings.ReplaceAll(userID, "|", "_")
@@ -89,29 +136,92 @@ func getUserWidgetsPath(userID string) string {
 	return fmt.Sprintf("data/%s_widgets.json", getSafeUserID(userID))
 }
 
-func getWidgetsForUser(userID string) []Widget {
+func getDashboardConfigForUser(userID string) UserDashboardConfig {
 	if userID == "" {
-		return []Widget{}
+		return defaultDashboardConfig()
 	}
 	path := getUserWidgetsPath(userID)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return []Widget{}
+		return defaultDashboardConfig()
 	}
-	var widgets []Widget
-	json.Unmarshal(data, &widgets)
-	return widgets
+	var config UserDashboardConfig
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		// Fallback to legacy structure
+		var widgets []Widget
+		if json.Unmarshal(data, &widgets) == nil {
+			slots := []Slot{}
+			for i, w := range widgets {
+				slots = append(slots, Slot{
+					SlotID:      fmt.Sprintf("slot_%d", i),
+					Orientation: "horizontal",
+					Widget:      w,
+				})
+			}
+			return UserDashboardConfig{
+				Theme: defaultTheme(),
+				Slots: slots,
+			}
+		}
+		return defaultDashboardConfig()
+	}
+	return config
 }
 
-func saveWidgetsForUser(userID string, widgets []Widget) {
+func saveDashboardConfigForUser(userID string, config UserDashboardConfig) {
 	if userID == "" {
 		return
 	}
 	path := getUserWidgetsPath(userID)
-	data, err := json.MarshalIndent(widgets, "", "  ")
+	data, err := json.MarshalIndent(config, "", "  ")
 	if err == nil {
 		os.WriteFile(path, data, 0644)
 	}
+}
+
+func defaultTheme() Theme {
+	return Theme{
+		Colors: ThemeColors{
+			Primary:    "#3b82f6",
+			Secondary:  "#10b981",
+			Background: "#0a0a0c",
+		},
+		Fonts: ThemeFonts{
+			Family:       "Outfit",
+			SizeModifier: 1.0,
+		},
+	}
+}
+
+func defaultDashboardConfig() UserDashboardConfig {
+	return UserDashboardConfig{
+		Theme: defaultTheme(),
+		Slots: []Slot{},
+	}
+}
+
+func getWidgetsForUser(userID string) []Widget {
+	config := getDashboardConfigForUser(userID)
+	widgets := []Widget{}
+	for _, slot := range config.Slots {
+		widgets = append(widgets, slot.Widget)
+	}
+	return widgets
+}
+
+func saveWidgetsForUser(userID string, widgets []Widget) {
+	config := getDashboardConfigForUser(userID)
+	slots := []Slot{}
+	for i, w := range widgets {
+		slots = append(slots, Slot{
+			SlotID:      fmt.Sprintf("slot_%d", i),
+			Orientation: "horizontal",
+			Widget:      w,
+		})
+	}
+	config.Slots = slots
+	saveDashboardConfigForUser(userID, config)
 }
 
 func getWidgets(c echo.Context) error {
@@ -179,9 +289,13 @@ func addWidget(c echo.Context) error {
 	if widget.ID == "" {
 		widget.ID = "widget-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
-	widgets := getWidgetsForUser(userID)
-	widgets = append(widgets, widget)
-	saveWidgetsForUser(userID, widgets)
+	config := getDashboardConfigForUser(userID)
+	config.Slots = append(config.Slots, Slot{
+		SlotID:      "slot_" + widget.ID,
+		Orientation: "horizontal",
+		Widget:      widget,
+	})
+	saveDashboardConfigForUser(userID, config)
 
 	return c.JSON(201, widget)
 }
@@ -195,11 +309,11 @@ func updateWidget(c echo.Context) error {
 	}
 	widget.ID = id
 
-	widgets := getWidgetsForUser(userID)
-	for i, w := range widgets {
-		if w.ID == id {
-			widgets[i] = widget
-			saveWidgetsForUser(userID, widgets)
+	config := getDashboardConfigForUser(userID)
+	for i, slot := range config.Slots {
+		if slot.Widget.ID == id {
+			config.Slots[i].Widget = widget
+			saveDashboardConfigForUser(userID, config)
 			return c.JSON(200, widget)
 		}
 	}
@@ -208,27 +322,36 @@ func updateWidget(c echo.Context) error {
 
 func updateWidgetsBulk(c echo.Context) error {
 	userID := getUserIDFromToken(c)
-	var widgets []Widget
-	if err := c.Bind(&widgets); err != nil {
+	
+	// Try parsing direct UserDashboardConfig first
+	var config UserDashboardConfig
+	if err := c.Bind(&config); err != nil || len(config.Slots) == 0 {
+		// Fallback: try raw widgets array
+		var widgets []Widget
+		if err := c.Bind(&widgets); err == nil {
+			saveWidgetsForUser(userID, widgets)
+			return c.JSON(200, map[string]string{"message": "Widgets saved successfully"})
+		}
 		return c.JSON(400, map[string]string{"error": "Invalid request"})
 	}
 
-	saveWidgetsForUser(userID, widgets)
-	return c.JSON(200, map[string]string{"message": "Widgets saved successfully"})
+	saveDashboardConfigForUser(userID, config)
+	return c.JSON(200, map[string]string{"message": "Dashboard config saved successfully"})
 }
 
 func deleteWidget(c echo.Context) error {
 	userID := getUserIDFromToken(c)
 	id := c.Param("id")
 
-	widgets := getWidgetsForUser(userID)
-	newWidgets := []Widget{}
-	for _, w := range widgets {
-		if w.ID != id {
-			newWidgets = append(newWidgets, w)
+	config := getDashboardConfigForUser(userID)
+	newSlots := []Slot{}
+	for _, slot := range config.Slots {
+		if slot.Widget.ID != id {
+			newSlots = append(newSlots, slot)
 		}
 	}
-	saveWidgetsForUser(userID, newWidgets)
+	config.Slots = newSlots
+	saveDashboardConfigForUser(userID, config)
 
 	return c.JSON(200, map[string]string{"message": "Widget deleted", "id": id})
 }

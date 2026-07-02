@@ -260,6 +260,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": req.UserID,
 			"widgets": getPremadeWidgets(layoutName),
+			"config":  getDashboardConfigWithPremadeSlots(req.UserID, layoutName),
 		})
 	}
 
@@ -282,6 +283,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": "bypass_user",
 			"widgets": getPremadeWidgets(layoutName),
+			"config":  getDashboardConfigWithPremadeSlots("bypass_user", layoutName),
 		})
 	}
 
@@ -331,6 +333,7 @@ func verifyFace(c echo.Context) error {
 		return c.JSON(200, map[string]interface{}{
 			"user_id": matchedUserID,
 			"widgets": getPremadeWidgets(layoutName),
+			"config":  getDashboardConfigWithPremadeSlots(matchedUserID, layoutName),
 		})
 	}
 

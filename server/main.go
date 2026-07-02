@@ -68,6 +68,10 @@ func main() {
 	e.GET("/api/notices", getNotices)
 	protected.POST("/notices/fetch", fetchNotices)
 
+	// Admin Banner routes
+	e.POST("/api/admin/banner", setAdminBanner)
+	e.GET("/api/banner", getAdminBanner)
+
 	// Timetable routes
 	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT
 	protected.POST("/timetable/ics", setTimetableURL)
