@@ -21,6 +21,7 @@ func init() {
 
 func main() {
 	StartNoticeFetcher()
+	StartKingsWeekFetcher()
 	e := echo.New()
 
 	// Middleware
@@ -60,13 +61,17 @@ func main() {
 	protected.DELETE("/dashboard/widgets/:id", deleteWidget)
 	protected.GET("/dashboard/widgets", getWidgets)
 	protected.PUT("/dashboard/widgets/bulk", updateWidgetsBulk)
-	protected.GET("/layout", getLayout)
-	protected.PUT("/layout", saveLayout)
-	e.GET("/api/layout", getLayout) // Allow public read for the mirror
 
 	// Daily Notices route
 	e.GET("/api/notices", getNotices)
 	protected.POST("/notices/fetch", fetchNotices)
+
+	// Kings Week route
+	e.GET("/api/kings-week", getKingsWeek)
+
+	// Admin Banner routes
+	e.POST("/api/admin/banner", setAdminBanner)
+	e.GET("/api/banner", getAdminBanner)
 
 	// Timetable routes
 	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT

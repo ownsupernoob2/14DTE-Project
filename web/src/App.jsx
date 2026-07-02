@@ -64,7 +64,7 @@ function App() {
         <Routes>
           <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
           <Route path="/privacy" element={<Privacy />} />
-          
+
           <Route
             path="/"
             element={isAuthenticated ? <Navigate to="/dashboard" /> : <Navigate to="/login" />}
@@ -77,9 +77,9 @@ function App() {
             path="/settings"
             element={isAuthenticated ? <Settings /> : <Navigate to="/login" />}
           />
-          
+
           <Route path="/simulator" element={<Simulator />} />
-          
+
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Router>

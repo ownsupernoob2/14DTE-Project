@@ -5,6 +5,7 @@ import requests
 from datetime import datetime
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from .base_widget import Widget
 
 class TimetableWidget(Widget):
@@ -19,6 +20,16 @@ class TimetableWidget(Widget):
         self.error_msg = ""
         self._lock = threading.Lock()
         
+        self.setup_ui_elements()
+        self._scroll_paused_until = time.time() + 3.0
+        self._start_fetch()
+        
+    def setup_ui_elements(self):
+        # Enforce container layout
+        self.container_layout = QVBoxLayout()
+        self.container_layout.setContentsMargins(0, 0, 0, 0)
+        self.container_layout.setSpacing(6)
+        
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -32,7 +43,8 @@ class TimetableWidget(Widget):
         self.content_layout.setSpacing(8)
         
         self.scroll_area.setWidget(self.content_widget)
-        self.main_layout.addWidget(self.scroll_area)
+        self.container_layout.addWidget(self.scroll_area)
+        self.main_layout.addLayout(self.container_layout)
         
         # Timers
         self.fetch_timer = QTimer(self)
@@ -42,11 +54,20 @@ class TimetableWidget(Widget):
         self.scroll_timer = QTimer(self)
         self.scroll_timer.timeout.connect(self._auto_scroll)
         self.scroll_timer.start(30)
-        
-        self._scroll_paused_until = time.time() + 3.0
-        
-        self._start_fetch()
-        
+
+    def scroll_by_pixels(self, delta_y):
+        bar = self.scroll_area.verticalScrollBar()
+        bar.setValue(bar.value() + delta_y)
+        self._scroll_paused_until = time.time() + 5.0
+
+    def on_orientation_changed(self):
+        self.setup_ui_elements()
+        self.update_ui()
+
+    def apply_theme(self, primary_color, secondary_color, font_family):
+        super().apply_theme(primary_color, secondary_color, font_family)
+        self.update_ui()
+
     def set_user_id(self, user_id):
         if self.user_id != user_id:
             self.user_id = user_id
@@ -128,12 +149,11 @@ class TimetableWidget(Widget):
                 except Exception:
                     pass
             
-            # Day header
             header_widget = QWidget()
             h_layout = QHBoxLayout(header_widget)
             h_layout.setContentsMargins(12, 4, 12, 4)
             lbl = QLabel(friendly_date.upper())
-            lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #60a5fa;")
+            lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #60a5fa;")
             h_layout.addWidget(lbl)
             
             line = QFrame()
@@ -161,42 +181,42 @@ class TimetableWidget(Widget):
                     card.setWindowOpacity(0.4)
                     
                 card_layout = QHBoxLayout(card)
-                card_layout.setContentsMargins(14, 12, 14, 12)
+                card_layout.setContentsMargins(12, 10, 12, 10)
                 
                 start = period.get('startTime', period.get('start', ''))
                 end = period.get('endTime', period.get('end', ''))
                 time_lbl = QLabel(f"{start} – {end}" if start and end else (start or ''))
-                time_lbl.setStyleSheet("font-size: 13px; color: rgba(255, 255, 255, 180); font-weight: bold;")
+                time_lbl.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 180); font-weight: bold;")
                 card_layout.addWidget(time_lbl)
                 
                 subject = period.get('subject', period.get('summary', period.get('title', 'Period')))
                 subj_lbl = QLabel(subject)
                 subj_lbl.setWordWrap(True)
-                subj_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {'#666666' if is_done else '#ffffff'};")
+                subj_lbl.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {'#666666' if is_done else '#ffffff'};")
                 card_layout.addWidget(subj_lbl, 1)
                 
                 if period.get('location'):
                     loc_lbl = QLabel(period['location'])
                     loc_lbl.setStyleSheet("""
-                        font-size: 13px;
+                        font-size: 11px;
                         color: #93c5fd;
                         background-color: rgba(59, 130, 246, 25);
                         border: 1px solid rgba(59, 130, 246, 51);
                         border-radius: 6px;
-                        padding: 3px 8px;
+                        padding: 2px 6px;
                     """)
                     card_layout.addWidget(loc_lbl)
                     
                 if is_now:
                     now_lbl = QLabel("IN PROGRESS")
                     now_lbl.setStyleSheet("""
-                        font-size: 12px;
+                        font-size: 10px;
                         font-weight: bold;
                         color: #22d3ee;
                         background-color: rgba(6, 182, 212, 38);
                         border: 1px solid rgba(6, 182, 212, 89);
                         border-radius: 6px;
-                        padding: 3px 8px;
+                        padding: 2px 6px;
                     """)
                     card_layout.addWidget(now_lbl)
                     
