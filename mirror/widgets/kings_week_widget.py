@@ -1,8 +1,8 @@
 import os
 import requests
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QFrame
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QPixmap, QFont, QImage
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QFrame
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPixmap, QFont, QImage
 
 class KingsWeekWidget(QFrame):
     def __init__(self, parent=None, config=None):
