@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import Simulator from './pages/Simulator'
 import Privacy from './pages/Privacy'
-import QRScanner from './pages/QRScanner'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -65,7 +64,7 @@ function App() {
         <Routes>
           <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
           <Route path="/privacy" element={<Privacy />} />
-          
+
           <Route
             path="/"
             element={isAuthenticated ? <Navigate to="/dashboard" /> : <Navigate to="/login" />}
@@ -78,10 +77,9 @@ function App() {
             path="/settings"
             element={isAuthenticated ? <Settings /> : <Navigate to="/login" />}
           />
-          
+
           <Route path="/simulator" element={<Simulator />} />
-          <Route path="/qr-scanner" element={<QRScanner />} />
-          
+
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Router>
