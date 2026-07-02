@@ -47,7 +47,6 @@ class BackgroundCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # IDLE state: Render completely black (glow_enabled is False)
         if not self.glow_enabled:
             painter.fillRect(self.rect(), QColor(0, 0, 0))
             painter.end()
@@ -55,8 +54,6 @@ class BackgroundCanvas(QWidget):
 
         w = self.width()
         h = self.height()
-
-        # Solid base -- #0a0a0c
         painter.fillRect(self.rect(), QColor(10, 10, 12))
 
         t = time.time() - self._t0
@@ -179,48 +176,88 @@ class SmartMirrorPro(QMainWindow):
             self.banner_frame.setGeometry(0, 0, w, 40)
 
     def setup_user_layout(self):
-        # Fixed layout instances
+        # Master unified glass card
+        self.master_glass_frame = QFrame(self.user_container)
+        self.master_glass_frame.setObjectName("MasterGlassFrame")
+        self.master_glass_frame.setStyleSheet("""
+            #MasterGlassFrame {
+                background-color: rgba(15, 15, 25, 140);
+                border: 1px solid rgba(255, 255, 255, 20);
+                border-radius: 24px;
+            }
+        """)
+
+        # Dividers inside master glass
+        self.left_divider = QFrame(self.master_glass_frame)
+        self.left_divider.setFrameShape(QFrame.Shape.VLine)
+        self.left_divider.setStyleSheet("background-color: rgba(255, 255, 255, 20); border: none; min-width: 1px; max-width: 1px;")
+
+        self.right_divider = QFrame(self.master_glass_frame)
+        self.right_divider.setFrameShape(QFrame.Shape.VLine)
+        self.right_divider.setStyleSheet("background-color: rgba(255, 255, 255, 20); border: none; min-width: 1px; max-width: 1px;")
+
+        self.center_horizontal_divider = QFrame(self.master_glass_frame)
+        self.center_horizontal_divider.setFrameShape(QFrame.Shape.HLine)
+        self.center_horizontal_divider.setStyleSheet("background-color: rgba(255, 255, 255, 20); border: none; min-height: 1px; max-height: 1px;")
+
+        # User widgets - all set to the master glass container as parent!
         self.user_notices = NoticesWidget(0, 0, 100, 100, API_URL)
-        self.user_notices.setParent(self.user_container)
+        self.user_notices.setParent(self.master_glass_frame)
         self.user_notices.set_orientation("vertical")
         
         self.user_clock = ClockWidget(0, 0, 100, 100)
-        self.user_clock.setParent(self.user_container)
+        self.user_clock.setParent(self.master_glass_frame)
         
-        self.user_kingsweek = KingsWeekWidget(self.user_container)
+        self.user_kingsweek = KingsWeekWidget(self.master_glass_frame)
         
         self.user_timetable = TimetableWidget(0, 0, 100, 100, "", API_URL)
-        self.user_timetable.setParent(self.user_container)
+        self.user_timetable.setParent(self.master_glass_frame)
         self.user_timetable.set_orientation("vertical")
 
         self.user_widgets = [self.user_notices, self.user_clock, self.user_kingsweek, self.user_timetable]
 
         # Explicitly show them
+        self.master_glass_frame.show()
+        self.left_divider.show()
+        self.right_divider.show()
+        self.center_horizontal_divider.show()
         for w in self.user_widgets:
             w.show()
 
     def update_user_layout_geometry(self, w, h):
-        # Top banner space = 40px, let's leave some margin
-        margin = 20
-        top_offset = 60
+        # 24px padding around screen, and top offset for banner
+        margin = 24
+        top_offset = 64
         
-        col_w = int((w - margin * 4) / 4)
-        center_w = col_w * 2 + margin
-        content_h = h - top_offset - margin
+        deck_w = w - margin * 2
+        deck_h = h - top_offset - margin
 
-        # Left: Notices
-        self.user_notices.setGeometry(margin, top_offset, col_w, content_h)
+        self.master_glass_frame.setGeometry(margin, top_offset, deck_w, deck_h)
+
+        # Columns inside the master glass frame (0 margin between columns)
+        col_w = int(deck_w * 0.26)
+        center_w = deck_w - col_w * 2
+
+        # Left Column: Notices
+        self.user_notices.setGeometry(0, 0, col_w, deck_h)
+        self.left_divider.setGeometry(col_w, 0, 1, deck_h)
+
+        # Center Column: Clock & Kings Week
+        clock_h = int(deck_h * 0.55)
+        self.user_clock.setGeometry(col_w + 1, 0, center_w - 2, clock_h)
+        self.center_horizontal_divider.setGeometry(col_w + 1, clock_h, center_w - 2, 1)
         
-        # Center Top: Clock
-        clock_h = int(content_h * 0.4)
-        self.user_clock.setGeometry(margin * 2 + col_w, top_offset, center_w, clock_h)
-        
-        # Center Bottom: Kings Week
-        kw_h = content_h - clock_h - margin
-        self.user_kingsweek.setGeometry(margin * 2 + col_w, top_offset + clock_h + margin, center_w, kw_h)
-        
-        # Right: Timetable
-        self.user_timetable.setGeometry(margin * 3 + col_w + center_w, top_offset, col_w, content_h)
+        kw_margin = 16
+        self.user_kingsweek.setGeometry(
+            col_w + 1 + kw_margin, 
+            clock_h + kw_margin, 
+            center_w - 2 - kw_margin * 2, 
+            deck_h - clock_h - kw_margin * 2
+        )
+
+        # Right Column: Timetable
+        self.right_divider.setGeometry(col_w + center_w - 1, 0, 1, deck_h)
+        self.user_timetable.setGeometry(col_w + center_w, 0, col_w, deck_h)
 
     def setup_guest_layout(self):
         self.guest_layout = QVBoxLayout(self.guest_container)
@@ -357,7 +394,6 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(w, 'apply_theme'):
                 w.apply_theme(primary, secondary, font_family)
                 
-        # Also pass user id to timetable if needed to fetch customized events
         if self.current_user_id:
             self.user_timetable.user_id = self.current_user_id
 
@@ -391,8 +427,6 @@ class SmartMirrorPro(QMainWindow):
                         
                         self.apply_user_theme(fdata.get('config', {}))
                         self.user_container.show()
-                        for w in self.user_widgets:
-                            w.show()
                         self.update_user_layout_geometry(self.width(), self.height())
                         
                     elif new_state == 'guest':
