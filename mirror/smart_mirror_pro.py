@@ -182,6 +182,7 @@ class SmartMirrorPro(QMainWindow):
         # Fixed layout instances
         self.user_notices = NoticesWidget(0, 0, 100, 100, API_URL)
         self.user_notices.setParent(self.user_container)
+        self.user_notices.set_orientation("vertical")
         
         self.user_clock = ClockWidget(0, 0, 100, 100)
         self.user_clock.setParent(self.user_container)
@@ -190,8 +191,13 @@ class SmartMirrorPro(QMainWindow):
         
         self.user_timetable = TimetableWidget(0, 0, 100, 100, "", API_URL)
         self.user_timetable.setParent(self.user_container)
+        self.user_timetable.set_orientation("vertical")
 
         self.user_widgets = [self.user_notices, self.user_clock, self.user_kingsweek, self.user_timetable]
+
+        # Explicitly show them
+        for w in self.user_widgets:
+            w.show()
 
     def update_user_layout_geometry(self, w, h):
         # Top banner space = 40px, let's leave some margin
@@ -385,6 +391,8 @@ class SmartMirrorPro(QMainWindow):
                         
                         self.apply_user_theme(fdata.get('config', {}))
                         self.user_container.show()
+                        for w in self.user_widgets:
+                            w.show()
                         self.update_user_layout_geometry(self.width(), self.height())
                         
                     elif new_state == 'guest':

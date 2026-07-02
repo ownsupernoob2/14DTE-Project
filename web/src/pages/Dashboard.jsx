@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import DailyNoticesWidget from '../components/DailyNoticesWidget'
 import TimetableWidget from '../components/TimetableWidget'
@@ -17,11 +16,31 @@ function Clock() {
   }, [])
   
   return (
-    <div className="flex flex-col items-center justify-center h-full text-white">
-      <div className="text-8xl font-bold tracking-tight mb-2 drop-shadow-lg" style={{ fontFamily: 'var(--font-family)' }}>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '100%',
+      color: 'white',
+      textAlign: 'center'
+    }}>
+      <div style={{
+        fontSize: '5rem',
+        fontWeight: 'bold',
+        letterSpacing: '-0.025em',
+        marginBottom: '8px',
+        fontFamily: 'var(--font-family)',
+        textShadow: '0 4px 12px rgba(0,0,0,0.5)'
+      }}>
         {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
-      <div className="text-2xl font-medium text-[var(--text-secondary)]">
+      <div style={{
+        fontSize: '1.25rem',
+        fontWeight: '500',
+        color: 'var(--text-secondary)',
+        textShadow: '0 2px 4px rgba(0,0,0,0.3)'
+      }}>
         {now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
       </div>
     </div>
@@ -51,48 +70,151 @@ export default function Dashboard() {
   }, [])
 
   return (
-    <div className="dashboard-container overflow-hidden h-screen flex flex-col relative bg-[#0a0a0f]">
+    <div className="dashboard-container" style={{
+      overflow: 'hidden',
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'relative',
+      backgroundColor: '#0a0a0f',
+      padding: '0',
+      margin: '0',
+      boxSizing: 'border-box'
+    }}>
       <Navbar />
       
       {/* Background gradients */}
-      <div className="absolute inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/10 blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/10 blur-[120px]" />
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
+        <div style={{
+          position: 'absolute',
+          top: '-10%',
+          left: '-10%',
+          width: '40%',
+          height: '40%',
+          borderRadius: '50%',
+          background: 'rgba(109, 40, 217, 0.1)',
+          filter: 'blur(120px)'
+        }} />
+        <div style={{
+          position: 'absolute',
+          bottom: '-10%',
+          right: '-10%',
+          width: '40%',
+          height: '40%',
+          borderRadius: '50%',
+          background: 'rgba(56, 189, 248, 0.1)',
+          filter: 'blur(120px)'
+        }} />
       </div>
 
-      <div className="flex-1 p-6 z-10 flex flex-col gap-6 max-h-[calc(100vh-64px)]">
+      <div style={{
+        flex: 1,
+        padding: '24px',
+        zIndex: 10,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '24px',
+        maxHeight: 'calc(100vh - 64px)',
+        boxSizing: 'border-box'
+      }}>
         
         {/* Banner Section */}
         {bannerMsg && (
-          <div className="w-full bg-red-500/20 border border-red-500/30 rounded-xl p-4 backdrop-blur-md flex items-center justify-center shadow-lg">
-            <span className="text-red-200 font-semibold text-lg tracking-wide uppercase flex items-center gap-2">
-              <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+          <div style={{
+            width: '100%',
+            backgroundColor: 'rgba(239, 68, 68, 0.2)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '12px',
+            padding: '16px',
+            backdropFilter: 'blur(12px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
+          }}>
+            <span style={{
+              color: '#fca5a5',
+              fontWeight: '600',
+              fontSize: '1.125rem',
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <svg style={{ width: '24px', height: '24px', color: '#f87171' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
               {bannerMsg}
             </span>
           </div>
         )}
 
         {/* Main 3-Column Layout */}
-        <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'row',
+          gap: '24px',
+          minHeight: 0,
+          width: '100%',
+          boxSizing: 'border-box'
+        }}>
           
           {/* Left Column: Notices */}
-          <div className="col-span-3 h-full rounded-2xl overflow-hidden glass-panel border border-white/5">
+          <div style={{
+            width: '25%',
+            height: '100%',
+            borderRadius: '16px',
+            overflow: 'hidden',
+            backgroundColor: 'var(--glass-bg)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+            boxSizing: 'border-box'
+          }}>
             <DailyNoticesWidget widget={{}} readonly={true} />
           </div>
           
           {/* Center Column: Clock + Kings Week */}
-          <div className="col-span-6 h-full flex flex-col gap-6 min-h-0">
-            <div className="flex-1 rounded-2xl flex items-center justify-center p-8">
+          <div style={{
+            width: '50%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '24px',
+            minHeight: 0,
+            boxSizing: 'border-box'
+          }}>
+            <div style={{
+              flex: 1,
+              borderRadius: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '32px'
+            }}>
               <Clock />
             </div>
             
-            <div className="h-[45%] rounded-2xl">
+            <div style={{
+              height: '45%',
+              borderRadius: '16px',
+              overflow: 'hidden',
+              boxSizing: 'border-box'
+            }}>
               <KingsWeekWidget />
             </div>
           </div>
           
           {/* Right Column: Timetable */}
-          <div className="col-span-3 h-full rounded-2xl overflow-hidden glass-panel border border-white/5">
+          <div style={{
+            width: '25%',
+            height: '100%',
+            borderRadius: '16px',
+            overflow: 'hidden',
+            backgroundColor: 'var(--glass-bg)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+            boxSizing: 'border-box'
+          }}>
             <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
           </div>
           
