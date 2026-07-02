@@ -21,6 +21,7 @@ func init() {
 
 func main() {
 	StartNoticeFetcher()
+	StartKingsWeekFetcher()
 	e := echo.New()
 
 	// Middleware
@@ -64,6 +65,9 @@ func main() {
 	// Daily Notices route
 	e.GET("/api/notices", getNotices)
 	protected.POST("/notices/fetch", fetchNotices)
+
+	// Kings Week route
+	e.GET("/api/kings-week", getKingsWeek)
 
 	// Admin Banner routes
 	e.POST("/api/admin/banner", setAdminBanner)

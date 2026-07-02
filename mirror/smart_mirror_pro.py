@@ -16,16 +16,11 @@ from config import *
 from widgets import (
     ClockWidget, WeatherWidget, NoticesWidget, TimetableWidget, NoteWidget
 )
+from widgets.kings_week_widget import KingsWeekWidget
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH = 1280
 REF_HEIGHT = 800
-
-
-def _widget_data(wd):
-    data = wd.get('data', {}) or {}
-    return data if isinstance(data, dict) else {}
-
 
 class BackgroundCanvas(QWidget):
     """Full-screen background widget painted with QPainter radial gradients."""
@@ -99,15 +94,17 @@ class SmartMirrorPro(QMainWindow):
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
 
-        # Animated background -- lowest layer, no mouse interaction
+        # Animated background
         self.bg_canvas = BackgroundCanvas(self.central_widget)
         self.bg_canvas.setGeometry(self.central_widget.rect())
         self.bg_canvas.lower()
 
-        # Container for User widgets
+        # Container for User widgets (Fixed layout)
         self.user_container = QWidget(self.central_widget)
         self.user_container.setGeometry(self.rect())
         self.user_container.setStyleSheet("background: transparent;")
+        self.setup_user_layout()
+        self.user_container.hide()
 
         # Container for Guest screen
         self.guest_container = QFrame(self.central_widget)
@@ -137,8 +134,6 @@ class SmartMirrorPro(QMainWindow):
         self.in_grace = False
         self._last_state = None
         self._last_user_id = None
-
-        self.widgets = []
         self.last_gesture_timestamp = 0.0
 
         # Polling Timers
@@ -151,11 +146,11 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_timer.timeout.connect(self.poll_gestures)
         self.gesture_timer.start(100)
 
-        # Admin banner polling timer (every 10 seconds)
+        # Admin banner polling timer
         self.banner_timer = QTimer(self)
         self.banner_timer.timeout.connect(self.poll_admin_banner)
         self.banner_timer.start(10000)
-        self.poll_admin_banner() # initial check
+        self.poll_admin_banner()
 
         # Window state
         windowed = os.environ.get('MIRROR_WINDOWED') == '1'
@@ -173,6 +168,7 @@ class SmartMirrorPro(QMainWindow):
             self.bg_canvas.setGeometry(0, 0, w, h)
         if hasattr(self, 'user_container') and self.user_container:
             self.user_container.setGeometry(0, 0, w, h)
+            self.update_user_layout_geometry(w, h)
         if hasattr(self, 'guest_container') and self.guest_container:
             self.guest_container.setGeometry(0, 0, w, h)
         if hasattr(self, 'guest_promo_container') and self.guest_promo_container:
@@ -182,12 +178,49 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'banner_frame') and self.banner_frame:
             self.banner_frame.setGeometry(0, 0, w, 40)
 
+    def setup_user_layout(self):
+        # Fixed layout instances
+        self.user_notices = NoticesWidget(0, 0, 100, 100, API_URL)
+        self.user_notices.setParent(self.user_container)
+        
+        self.user_clock = ClockWidget(0, 0, 100, 100)
+        self.user_clock.setParent(self.user_container)
+        
+        self.user_kingsweek = KingsWeekWidget(self.user_container)
+        
+        self.user_timetable = TimetableWidget(0, 0, 100, 100, "", API_URL)
+        self.user_timetable.setParent(self.user_container)
+
+        self.user_widgets = [self.user_notices, self.user_clock, self.user_kingsweek, self.user_timetable]
+
+    def update_user_layout_geometry(self, w, h):
+        # Top banner space = 40px, let's leave some margin
+        margin = 20
+        top_offset = 60
+        
+        col_w = int((w - margin * 4) / 4)
+        center_w = col_w * 2 + margin
+        content_h = h - top_offset - margin
+
+        # Left: Notices
+        self.user_notices.setGeometry(margin, top_offset, col_w, content_h)
+        
+        # Center Top: Clock
+        clock_h = int(content_h * 0.4)
+        self.user_clock.setGeometry(margin * 2 + col_w, top_offset, center_w, clock_h)
+        
+        # Center Bottom: Kings Week
+        kw_h = content_h - clock_h - margin
+        self.user_kingsweek.setGeometry(margin * 2 + col_w, top_offset + clock_h + margin, center_w, kw_h)
+        
+        # Right: Timetable
+        self.user_timetable.setGeometry(margin * 3 + col_w + center_w, top_offset, col_w, content_h)
+
     def setup_guest_layout(self):
         self.guest_layout = QVBoxLayout(self.guest_container)
         self.guest_layout.setContentsMargins(40, 60, 40, 40)
         self.guest_layout.setSpacing(20)
 
-        # Top row: Clock & notices
         top_row = QHBoxLayout()
         top_row.setSpacing(30)
 
@@ -198,64 +231,15 @@ class SmartMirrorPro(QMainWindow):
         top_row.addWidget(self.guest_notices, 2)
         self.guest_layout.addLayout(top_row, 3)
 
-        # Bottom row: Onboarding dashboard
         self.onboarding_card = QFrame(self.guest_container)
-        self.onboarding_card.setObjectName("OnboardingCard")
-        self.onboarding_card.setStyleSheet("""
-            #OnboardingCard {
-                background-color: rgba(255, 255, 255, 6);
-                border: 1px solid rgba(255, 255, 255, 12);
-                border-radius: 16px;
-            }
-        """)
+        self.onboarding_card.setStyleSheet("background-color: rgba(255, 255, 255, 6); border: 1px solid rgba(255, 255, 255, 12); border-radius: 16px;")
         ob_layout = QVBoxLayout(self.onboarding_card)
         ob_layout.setContentsMargins(20, 16, 20, 16)
-        ob_layout.setSpacing(10)
-
+        
         ob_title = QLabel("HOW TO INTERACT VIA HAND GESTURES")
         ob_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #60a5fa; letter-spacing: 2px;")
         ob_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ob_layout.addWidget(ob_title)
-
-        # Gestures row
-        gestures_layout = QHBoxLayout()
-        gestures_layout.setSpacing(15)
-
-        gesture_guides = [
-            ("Swipe Left", "Open Daily Notices"),
-            ("Swipe Right", "Open Timetable"),
-            ("Pinch & Drag", "Scroll Active View"),
-            ("Peace Sign (Hold 2s)", "Notices Shortcut"),
-            ("OK Sign (Hold 2s)", "Timetable Shortcut")
-        ]
-        for title, desc in gesture_guides:
-            g_box = QFrame()
-            g_box.setStyleSheet("background-color: rgba(255,255,255,8); border-radius: 8px; border: 1px solid rgba(255,255,255,8);")
-            gb_lay = QVBoxLayout(g_box)
-            gb_lay.setContentsMargins(10, 10, 10, 10)
-            gb_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            g_title = QLabel(title)
-            g_title.setStyleSheet("font-weight: bold; color: #ffffff; font-size: 11px;")
-            g_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            g_desc = QLabel(desc)
-            g_desc.setStyleSheet("color: #a0a0a0; font-size: 10px;")
-            g_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g_desc.setWordWrap(True)
-
-            gb_lay.addWidget(g_title)
-            gb_lay.addWidget(g_desc)
-            gestures_layout.addWidget(g_box)
-
-        ob_layout.addLayout(gestures_layout)
-        
-        # Instructional animations GIF placeholder
-        self.ob_gif_label = QLabel(self.onboarding_card)
-        self.ob_gif_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ob_gif_label.setText("Looping Instructional Gestures Animation Placeholder (assets/onboarding_gesture.gif)")
-        self.ob_gif_label.setStyleSheet("color: rgba(255,255,255,100); font-size: 11px; padding: 10px; border: 1px dashed rgba(255,255,255,20); border-radius: 8px;")
-        ob_layout.addWidget(self.ob_gif_label)
 
         self.guest_layout.addWidget(self.onboarding_card, 2)
 
@@ -267,24 +251,12 @@ class SmartMirrorPro(QMainWindow):
 
         promo_layout = QVBoxLayout(self.guest_promo_container)
         promo_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        promo_layout.setSpacing(25)
-
+        
         promo_title = QLabel("Timetable Protected")
-        promo_title.setStyleSheet("font-size: 36px; font-weight: bold; color: #ef4444; letter-spacing: 1px;")
+        promo_title.setStyleSheet("font-size: 36px; font-weight: bold; color: #ef4444;")
         promo_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        promo_desc = QLabel("Sign up at smartmirror.me to view your custom school timetable.")
-        promo_desc.setStyleSheet("font-size: 20px; color: #e5e7eb; max-width: 600px; line-height: 1.6;")
-        promo_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        promo_desc.setWordWrap(True)
-
-        promo_hint = QLabel("Swipe Left to return to the guest dashboard.")
-        promo_hint.setStyleSheet("font-size: 14px; color: #9ca3af; font-style: italic;")
-        promo_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        
         promo_layout.addWidget(promo_title)
-        promo_layout.addWidget(promo_desc)
-        promo_layout.addWidget(promo_hint)
 
     def setup_admin_banner(self):
         self.banner_frame = QFrame(self.central_widget)
@@ -313,14 +285,12 @@ class SmartMirrorPro(QMainWindow):
             try:
                 res = requests.get(f"{API_URL}/api/banner", timeout=4)
                 if res.status_code == 200:
-                    data = res.json()
-                    msg = data.get("message", "")
+                    msg = res.json().get("message", "")
                     QTimer.singleShot(0, lambda: self.update_admin_banner(msg))
             except Exception:
                 pass
         import threading
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
+        threading.Thread(target=worker, daemon=True).start()
 
     def update_admin_banner(self, message):
         if message:
@@ -331,9 +301,7 @@ class SmartMirrorPro(QMainWindow):
             self.banner_frame.hide()
 
     def poll_gestures(self):
-        gesture_file = os.path.join(
-            os.environ.get("TEMP", os.environ.get("TMP", "/tmp")), "gesture_status.json"
-        )
+        gesture_file = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "/tmp")), "gesture_status.json")
         if os.path.exists(gesture_file):
             try:
                 with open(gesture_file) as f:
@@ -350,141 +318,44 @@ class SmartMirrorPro(QMainWindow):
                 pass
 
     def handle_gesture(self, gesture, scroll_delta):
-        # Ignore gesture commands if state is idle
-        if self._last_state == 'idle':
-            return
+        if self._last_state == 'idle': return
 
-        if gesture == "swipe_right" or gesture == "ok_hold":
+        if gesture in ("swipe_right", "ok_hold"):
             if self._last_state == 'guest':
                 self.show_guest_promo()
             elif self._last_state == 'user':
-                for w in self.widgets:
-                    if isinstance(w, TimetableWidget):
-                        w.raise_()
+                self.user_timetable.raise_()
 
-        elif gesture == "swipe_left" or gesture == "peace_hold":
+        elif gesture in ("swipe_left", "peace_hold"):
             if self._last_state == 'guest':
-                if self.guest_promo_container.isVisible():
-                    self.hide_guest_promo()
+                self.hide_guest_promo()
             elif self._last_state == 'user':
-                for w in self.widgets:
-                    if isinstance(w, NoticesWidget):
-                        w.raise_()
+                self.user_notices.raise_()
 
         elif gesture == "scroll" and scroll_delta != 0:
-            for w in self.widgets:
-                if isinstance(w, (NoticesWidget, TimetableWidget)) and w.isVisible():
-                    w.scroll_by_pixels(scroll_delta)
-            if self._last_state == 'guest':
+            if self._last_state == 'user':
+                self.user_notices.scroll_by_pixels(scroll_delta)
+                self.user_timetable.scroll_by_pixels(scroll_delta)
+            elif self._last_state == 'guest':
                 self.guest_notices.scroll_by_pixels(scroll_delta)
 
-    def clear_widgets(self):
-        for w in self.widgets:
-            w.deleteLater()
-        self.widgets = []
+    def apply_user_theme(self, remote_config):
+        theme = remote_config.get("theme", {})
+        colors = theme.get("colors", {})
+        fonts = theme.get("fonts", {})
+        primary = colors.get("primary", "#3b82f6")
+        secondary = colors.get("secondary", "#10b981")
+        font_family = fonts.get("family", "Outfit")
 
-    def _pct_to_pixels(self, wd):
-        x = wd.get('x', 5.0)
-        y = wd.get('y', 5.0)
-        w = wd.get('w')
-        h = wd.get('h')
-
-        is_absolute = x > 100 or y > 100 or (w is not None and w > 100) or (h is not None and h > 100)
-        if is_absolute:
-            x_pct = (x / REF_WIDTH) * 100.0
-            y_pct = (y / REF_HEIGHT) * 100.0
-            w_pct = (w / REF_WIDTH) * 100.0 if w is not None else 18.0
-            h_pct = (h / REF_HEIGHT) * 100.0 if h is not None else 13.0
-        else:
-            x_pct = x
-            y_pct = y
-            w_pct = w if w is not None else 18.0
-            h_pct = h if h is not None else 13.0
-
-        real_x = int((x_pct / 100.0) * self.width())
-        real_y = int((y_pct / 100.0) * self.height())
-        real_w = max(160, int((w_pct / 100.0) * self.width()))
-        real_h = max(80, int((h_pct / 100.0) * self.height()))
-        return real_x, real_y, real_w, real_h
-
-    def apply_remote_widgets(self, remote_config):
-        try:
-            self.clear_widgets()
-            if not remote_config:
-                return
-
-            theme = remote_config.get("theme", {})
-            colors = theme.get("colors", {})
-            fonts = theme.get("fonts", {})
-            primary = colors.get("primary", "#3b82f6")
-            secondary = colors.get("secondary", "#10b981")
-            font_family = fonts.get("family", "Outfit")
-
-            slots = remote_config.get("slots", [])
-            for s in slots:
-                orientation = s.get("orientation", "horizontal")
-                wd = s.get("widget", {})
-                if not wd:
-                    continue
-
-                real_x, real_y, real_w, real_h = self._pct_to_pixels(wd)
-                wtype = wd.get('type', '').lower()
-                data = _widget_data(wd)
-
-                widget = None
-                if wtype == 'clock':
-                    widget = ClockWidget(real_x, real_y, real_w, real_h)
-                elif wtype == 'weather':
-                    widget = WeatherWidget(real_x, real_y, real_w, real_h)
-                elif wtype == 'notices':
-                    kw = data.get('keyword_filter') or data.get('keywordFilter') or ''
-                    speed = data.get('scroll_speed', data.get('scrollSpeed', 0.5))
-                    year = data.get('year_filter') or data.get('yearFilter') or 'All'
-                    cats = data.get('cat_filters') or data.get('catFilters') or None
-                    widget = NoticesWidget(real_x, real_y, real_w, real_h, API_URL, kw, speed, year, cats)
-                elif wtype == 'timetable':
-                    view_mode = data.get('viewMode', 'today')
-                    subject = data.get('subject_filter') or data.get('subjectFilter') or ''
-                    widget = TimetableWidget(
-                        real_x, real_y, real_w, real_h,
-                        self.current_user_id or '', API_URL,
-                        view_mode=view_mode, subject_filter=subject
-                    )
-                elif wtype == 'note':
-                    widget = NoteWidget(real_x, real_y, real_w, real_h, data)
-
-                if widget:
-                    widget.setParent(self.user_container)
-                    widget.set_orientation(orientation)
-                    widget.apply_theme(primary, secondary, font_family)
-                    self.widgets.append(widget)
-                    
-                    widget.setGeometry(real_x, real_y + 40, real_w, real_h)
-                    pos_anim = QPropertyAnimation(widget, b"geometry")
-                    pos_anim.setDuration(600)
-                    pos_anim.setStartValue(QRect(real_x, real_y + 40, real_w, real_h))
-                    pos_anim.setEndValue(QRect(real_x, real_y, real_w, real_h))
-                    pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-                    
-                    opacity_effect = QGraphicsOpacityEffect(widget)
-                    widget.setGraphicsEffect(opacity_effect)
-                    fade_anim = QPropertyAnimation(opacity_effect, b"opacity")
-                    fade_anim.setDuration(600)
-                    fade_anim.setStartValue(0.0)
-                    fade_anim.setEndValue(1.0)
-                    
-                    pos_anim.start()
-                    fade_anim.start()
-                    
-                    widget._pos_anim = pos_anim
-                    widget._fade_anim = fade_anim
-                    widget.show()
-        except Exception as e:
-            print(f"[ERROR] Failed to apply remote widgets: {e}")
-            self.clear_widgets()
+        for w in self.user_widgets:
+            if hasattr(w, 'apply_theme'):
+                w.apply_theme(primary, secondary, font_family)
+                
+        # Also pass user id to timetable if needed to fetch customized events
+        if self.current_user_id:
+            self.user_timetable.user_id = self.current_user_id
 
     def update_inputs(self):
-        # Regular face recognition inputs
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
@@ -499,8 +370,7 @@ class SmartMirrorPro(QMainWindow):
                 new_user_id = fdata.get('user_id', 'idle')
 
                 state_changed = (new_state != self._last_state)
-                user_switched = (new_state == 'user' and new_user_id != self._last_user_id
-                                 and new_user_id not in ('', 'idle'))
+                user_switched = (new_state == 'user' and new_user_id != self._last_user_id and new_user_id not in ('', 'idle'))
 
                 if state_changed or user_switched:
                     self._last_state = new_state
@@ -512,30 +382,22 @@ class SmartMirrorPro(QMainWindow):
                         self.bg_canvas.glow_enabled = True
                         self.guest_container.hide()
                         self.guest_promo_container.hide()
+                        
+                        self.apply_user_theme(fdata.get('config', {}))
                         self.user_container.show()
-                        self.apply_remote_widgets(fdata.get('config', {}))
+                        self.update_user_layout_geometry(self.width(), self.height())
+                        
                     elif new_state == 'guest':
                         self.bg_canvas.glow_enabled = True
-                        self.clear_widgets()
                         self.user_container.hide()
                         self.guest_promo_container.hide()
-                        
-                        opacity_effect = QGraphicsOpacityEffect(self.guest_container)
-                        self.guest_container.setGraphicsEffect(opacity_effect)
-                        self.guest_anim = QPropertyAnimation(opacity_effect, b"opacity")
-                        self.guest_anim.setDuration(500)
-                        self.guest_anim.setStartValue(0.0)
-                        self.guest_anim.setEndValue(1.0)
-                        
                         self.guest_container.show()
-                        self.guest_anim.start()
+                        
                     else:
-                        # idle - show completely black screen
                         self.bg_canvas.glow_enabled = False
-                        self.clear_widgets()
+                        self.user_container.hide()
                         self.guest_container.hide()
                         self.guest_promo_container.hide()
-                        self.user_container.hide()
             except Exception:
                 pass
 
@@ -549,7 +411,6 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.hide()
 
     def keyPressEvent(self, event):
-        # Barcode/OCR keypress features have been archived/removed.
         pass
 
 
