@@ -1,20 +1,22 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Navbar from '../components/Navbar'
 import DailyNoticesWidget from '../components/DailyNoticesWidget'
 import TimetableWidget from '../components/TimetableWidget'
 import KingsWeekWidget from '../components/KingsWeekWidget'
-import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
+// ─── Live Clock ──────────────────────────────────────────────────────────────
 function Clock() {
   const [now, setNow] = useState(new Date())
-  
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(id)
   }, [])
-  
+
+  const timeStr = now.toLocaleTimeString('en-NZ', { hour: '2-digit', minute: '2-digit', hour12: true })
+  const dateStr = now.toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+
   return (
     <div style={{
       display: 'flex',
@@ -22,34 +24,43 @@ function Clock() {
       alignItems: 'center',
       justifyContent: 'center',
       height: '100%',
-      color: 'white',
-      textAlign: 'center'
+      gap: '8px',
     }}>
       <div style={{
-        fontSize: '5.5rem',
-        fontWeight: 'bold',
-        letterSpacing: '-0.02em',
-        marginBottom: '6px',
-        fontFamily: 'var(--font-family)',
-        textShadow: '0 4px 16px rgba(0,0,0,0.6)'
+        fontSize: 'clamp(3rem, 6vw, 5.5rem)',
+        fontWeight: '200',
+        letterSpacing: '-0.03em',
+        color: '#ffffff',
+        fontFamily: "'Inter', sans-serif",
+        lineHeight: 1,
+        textShadow: '0 2px 40px rgba(255,255,255,0.15)',
       }}>
-        {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {timeStr}
       </div>
       <div style={{
-        fontSize: '1.35rem',
-        fontWeight: '500',
-        color: 'var(--text-secondary)',
-        opacity: 0.85
+        fontSize: 'clamp(0.85rem, 1.2vw, 1.1rem)',
+        fontWeight: '400',
+        color: 'rgba(255,255,255,0.5)',
+        letterSpacing: '0.05em',
+        fontFamily: "'Inter', sans-serif",
       }}>
-        {now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+        {dateStr}
       </div>
     </div>
   )
 }
 
+// ─── Divider ─────────────────────────────────────────────────────────────────
+function VDivider() {
+  return <div style={{ width: '1px', background: 'rgba(255,255,255,0.07)', flexShrink: 0 }} />
+}
+function HDivider() {
+  return <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', flexShrink: 0 }} />
+}
+
+// ─── Dashboard ───────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [bannerMsg, setBannerMsg] = useState('')
-  const { isServerUp } = useServerStatus()
 
   useEffect(() => {
     const fetchBanner = async () => {
@@ -59,172 +70,181 @@ export default function Dashboard() {
           const data = await res.json()
           setBannerMsg(data.message || '')
         }
-      } catch (e) {
-        console.error('Failed to fetch banner:', e)
-      }
+      } catch { /* silent */ }
     }
-    
     fetchBanner()
     const interval = setInterval(fetchBanner, 60000)
     return () => clearInterval(interval)
   }, [])
 
   return (
-    <div className="dashboard-container" style={{
-      overflow: 'hidden',
+    <div style={{
       height: '100vh',
       display: 'flex',
       flexDirection: 'column',
+      background: '#050508',
+      overflow: 'hidden',
       position: 'relative',
-      backgroundColor: '#050508',
-      padding: '0',
-      margin: '0',
-      boxSizing: 'border-box'
+      fontFamily: "'Inter', sans-serif",
     }}>
-      <Navbar />
-      
-      {/* Background radial gradients for dynamic look under the glass panel */}
+      {/* Ambient background orbs */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
         <div style={{
-          position: 'absolute',
-          top: '-15%',
-          left: '-15%',
-          width: '50%',
-          height: '50%',
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(124, 58, 237, 0.15) 0%, rgba(124, 58, 237, 0) 70%)',
-          filter: 'blur(100px)'
+          position: 'absolute', top: '-20%', left: '-10%',
+          width: '55%', height: '55%', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(109,40,217,0.18) 0%, transparent 70%)',
+          filter: 'blur(80px)',
         }} />
         <div style={{
-          position: 'absolute',
-          bottom: '-15%',
-          right: '-15%',
-          width: '50%',
-          height: '50%',
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(14, 165, 233, 0.15) 0%, rgba(14, 165, 233, 0) 70%)',
-          filter: 'blur(100px)'
+          position: 'absolute', bottom: '-20%', right: '-10%',
+          width: '55%', height: '55%', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(14,165,233,0.15) 0%, transparent 70%)',
+          filter: 'blur(80px)',
         }} />
       </div>
 
+      <Navbar style={{ position: 'relative', zIndex: 10 }} />
+
+      {/* Main body — below navbar */}
       <div style={{
         flex: 1,
-        padding: '24px 32px 32px',
-        zIndex: 10,
         display: 'flex',
         flexDirection: 'column',
-        gap: '20px',
-        maxHeight: 'calc(100vh - 64px)',
-        boxSizing: 'border-box'
+        padding: '0 20px 20px 20px',
+        gap: '12px',
+        minHeight: 0,
+        zIndex: 5,
+        boxSizing: 'border-box',
       }}>
-        
-        {/* Banner Section */}
-        {bannerMsg && (
-          <div style={{
-            width: '100%',
-            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
-            borderRadius: '16px',
-            padding: '14px',
-            backdropFilter: 'blur(20px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 8px 32px rgba(239, 68, 68, 0.1)'
-          }}>
-            <span style={{
-              color: '#fecaca',
-              fontWeight: '600',
-              fontSize: '1rem',
-              letterSpacing: '0.075em',
-              textTransform: 'uppercase',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px'
-            }}>
-              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444', animate: 'pulse 2s infinite' }} />
-              {bannerMsg}
-            </span>
-          </div>
-        )}
 
-        {/* Master Connected Glass Deck */}
+        {/* ── Important Banner (always shown — dimmed if empty) ── */}
+        <div style={{
+          width: '100%',
+          padding: '10px 20px',
+          borderRadius: '14px',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          background: bannerMsg
+            ? 'rgba(239,68,68,0.12)'
+            : 'rgba(255,255,255,0.03)',
+          border: bannerMsg
+            ? '1px solid rgba(239,68,68,0.3)'
+            : '1px solid rgba(255,255,255,0.05)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px',
+          transition: 'all 0.4s ease',
+          flexShrink: 0,
+          minHeight: '42px',
+        }}>
+          {bannerMsg ? (
+            <>
+              <span style={{
+                width: '7px', height: '7px', borderRadius: '50%',
+                background: '#ef4444', flexShrink: 0,
+                boxShadow: '0 0 8px #ef4444',
+                animation: 'pulse 2s infinite',
+              }} />
+              <span style={{
+                color: '#fecaca',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}>
+                {bannerMsg}
+              </span>
+            </>
+          ) : (
+            <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '0.75rem', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+              Important Messages &amp; Announcements
+            </span>
+          )}
+        </div>
+
+        {/* ── Master glass deck: 3 columns ── */}
         <div style={{
           flex: 1,
           display: 'flex',
           flexDirection: 'row',
           minHeight: 0,
-          width: '100%',
-          borderRadius: '24px',
-          backgroundColor: 'rgba(15, 15, 25, 0.45)',
-          backdropFilter: 'blur(30px)',
-          WebkitBackdropFilter: 'blur(30px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 24px 60px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.1)',
-          boxSizing: 'border-box',
-          overflow: 'hidden'
+          borderRadius: '20px',
+          background: 'rgba(12,12,20,0.55)',
+          backdropFilter: 'blur(40px)',
+          WebkitBackdropFilter: 'blur(40px)',
+          border: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)',
+          overflow: 'hidden',
         }}>
-          
-          {/* Left Column: Notices */}
+
+          {/* ── LEFT: Notices ── */}
           <div style={{
             width: '26%',
-            height: '100%',
-            borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-            boxSizing: 'border-box',
+            minWidth: '220px',
             display: 'flex',
-            flexDirection: 'column'
+            flexDirection: 'column',
+            overflow: 'hidden',
           }}>
             <DailyNoticesWidget widget={{}} readonly={true} />
           </div>
-          
-          {/* Center Column: Clock (Top) & Kings Week (Bottom) */}
+
+          <VDivider />
+
+          {/* ── CENTER: Clock (top) + Kings Week (bottom) ── */}
           <div style={{
-            width: '48%',
-            height: '100%',
+            flex: 1,
             display: 'flex',
             flexDirection: 'column',
-            boxSizing: 'border-box'
+            minWidth: 0,
           }}>
-            {/* Clock area */}
+            {/* Clock */}
             <div style={{
-              flex: '1.2',
+              flex: '1.1',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               padding: '24px',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
             }}>
               <Clock />
             </div>
-            
-            {/* Kings Week area */}
+
+            <HDivider />
+
+            {/* Kings Week */}
             <div style={{
               flex: '1',
-              padding: '20px',
-              boxSizing: 'border-box',
+              padding: '16px',
+              minHeight: 0,
               display: 'flex',
-              alignItems: 'stretch'
+              flexDirection: 'column',
             }}>
-              <div style={{ flex: 1, borderRadius: '16px', overflow: 'hidden' }}>
-                <KingsWeekWidget />
-              </div>
+              <KingsWeekWidget />
             </div>
           </div>
-          
-          {/* Right Column: Timetable */}
+
+          <VDivider />
+
+          {/* ── RIGHT: Timetable ── */}
           <div style={{
             width: '26%',
-            height: '100%',
-            borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
-            boxSizing: 'border-box',
+            minWidth: '220px',
             display: 'flex',
-            flexDirection: 'column'
+            flexDirection: 'column',
+            overflow: 'hidden',
           }}>
             <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
           </div>
-          
+
         </div>
       </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
     </div>
   )
 }

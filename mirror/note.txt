@@ -41,3 +41,43 @@ sudo apt-get install -y tesseract-ocr
 
 
 raspi@raspi:~/14DTE-Project/mirror $ [OCR] Error processing frame with Tesseract: tesseract is not installed or it's not in your PATH. See README file for more information.
+
+
+[CAMERA] RPi mode — opening /dev/video10
+Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 19, in <module>
+    from widgets.kings_week_widget import KingsWeekWidget
+  File "/home/raspi/14DTE-Project/mirror/widgets/kings_week_widget.py", line 3, in <module>
+    from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QFrame
+ModuleNotFoundError: No module named 'PyQt5'
+[CAMERA] Opened successfully.
+[FAISS] Downloading vector encodings and user map from server...
+[FAISS] Vector encodings updated from server successfully.te=N/A speed=   1x    
+[FAISS] Loaded 144 vectors into RAM.
+[FAISS] Compiled index locally in RAM with 144 vectors.
+
+
+
+
+
+
+
+
+
+
+
+
+
+[CAMERA] RPi mode — opening /dev/video10
+Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 461, in <module>
+    mirror = SmartMirrorPro()
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 103, in __init__
+    [CAMERA] Opened successfully.
+[FAISS] Downloading vector encodings and user map from server...
+self.setup_user_layout()
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 206, in setup_user_layout
+    self.user_notices.set_orientation("vertical")
+  File "/home/raspi/14DTE-Project/mirror/widgets/base_widget.py", line 72, in set_orientation
+    QWidget().setLayout(self.main_layout)
+NameError: name 'QWidget' is not defined. Did you mean: 'Widget'?
