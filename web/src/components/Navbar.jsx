@@ -1,57 +1,66 @@
-import { useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 
-export default function Navbar() {
-  const [isVisible, setIsVisible] = useState(false)
-  const timeoutRef = useRef(null)
-  const navRef = useRef(null)
-
-  const handleMouseMove = (e) => {
-    if (e.clientY < 50) {
-      setIsVisible(true)
-      clearTimeout(timeoutRef.current)
-    } else if (isVisible) {
-      clearTimeout(timeoutRef.current)
-      timeoutRef.current = setTimeout(() => setIsVisible(false), 10000)
-    }
-  }
-
-  const handleMouseEnterNav = () => {
-    clearTimeout(timeoutRef.current)
-    setIsVisible(true)
-  }
-
-  const handleMouseLeaveNav = () => {
-    clearTimeout(timeoutRef.current)
-    timeoutRef.current = setTimeout(() => setIsVisible(false), 10000)
-  }
+export default function Navbar({ activeTab = 'dashboard', onTabClick }) {
+  const tabs = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'timetable', label: 'Timetable' },
+    { id: 'notices', label: 'Notices' },
+    { id: 'kings-week', label: "King's Week" },
+  ]
 
   return (
-    <>
-      <div onMouseMove={handleMouseMove} className="navbar-trigger" />
-      <AnimatePresence>
-        {isVisible && (
-          <motion.nav
-            ref={navRef}
-            initial={{ y: -80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -80, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="navbar"
-            onMouseEnter={handleMouseEnterNav}
-            onMouseLeave={handleMouseLeaveNav}
-          >
-            <div className="navbar-content">
-              <Link to="/" className="navbar-brand">Smart Mirror</Link>
-              <div className="navbar-links">
-                <Link to="/dashboard" className="nav-link">Dashboard</Link>
-                <Link to="/settings" className="nav-link">Settings</Link>
-              </div>
-            </div>
-          </motion.nav>
-        )}
-      </AnimatePresence>
-    </>
+    <header className="bg-surface-dim border-b border-outline-variant shadow-sm flex justify-between items-center w-full px-6 h-16 shrink-0 z-50 relative">
+      {/* Brand Logo */}
+      <div className="flex items-center gap-4">
+        <Link to="/dashboard" className="font-headline-lg text-2xl font-bold text-primary font-body-lg tracking-tight select-none">
+          Smart Mirror
+        </Link>
+      </div>
+
+      {/* Navigation tabs */}
+      <div className="flex items-center gap-6 hidden md:flex h-full">
+        <nav className="flex gap-6 h-full items-center">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => onTabClick && onTabClick(tab.id)}
+                className={`relative py-5 px-1 font-body-lg text-sm transition-colors cursor-pointer select-none outline-none ${
+                  isActive ? 'text-primary font-bold' : 'text-on-surface-variant font-medium hover:text-primary'
+                }`}
+              >
+                {tab.label}
+                {isActive && (
+                  <motion.div
+                    layoutId="activeNavbarTab"
+                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                  />
+                )}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-4">
+        <button
+          aria-label="notifications"
+          className="text-primary hover:bg-surface-container-highest transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"
+        >
+          <span className="material-symbols-outlined text-2xl" data-icon="notifications">notifications</span>
+        </button>
+        <Link
+          to="/settings"
+          aria-label="settings"
+          className="text-primary hover:bg-surface-container-highest transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"
+        >
+          <span className="material-symbols-outlined text-2xl" data-icon="account_circle">account_circle</span>
+        </Link>
+      </div>
+    </header>
   )
 }

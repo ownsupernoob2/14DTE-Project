@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -66,34 +67,73 @@ function buildPreview(html, maxLen = 120) {
 function NoticeCard({ n, urgent = false }) {
   const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
   const isUrgent = urgent || n.importance === 'high';
+  
+  // Clean notice preview text to avoid HTML tags in preview
+  const previewText = buildPreview(n.notice, 120);
+
   return (
-    <div
-      className={`notices-mirror-card ${isUrgent ? 'urgent' : ''}`}
-      style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
+    <motion.article 
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      style={{ borderLeftColor: isUrgent ? '#ffb4ab' : colors.accent }}
+      className="bg-surface-container rounded-lg p-4 border-l-4 relative shadow-sm hover:bg-surface-container-highest transition-colors cursor-pointer group"
     >
-      <div className="notices-mirror-card-top">
-        <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
+      <div className="flex gap-2 mb-2 flex-wrap">
+        <span 
+          style={{ background: colors.bg, color: colors.text }}
+          className="px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold uppercase tracking-wider"
+        >
           {n.category}
         </span>
-        {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
-        <div style={{ flex: 1 }} />
-        {n.targetYears.map(yr => (
-          <span key={yr} className="notices-mirror-year-badge">Y{yr}</span>
+        {isUrgent && (
+          <span className="bg-error text-on-error px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold animate-pulse">
+            URGENT
+          </span>
+        )}
+        <div className="flex-1" />
+        {n.targetYears && n.targetYears.map(yr => (
+          <span key={yr} className="bg-surface-dim text-outline px-1.5 py-0.5 rounded font-label-caps text-[9px]">
+            Y{yr}
+          </span>
         ))}
       </div>
-      <div className="notices-mirror-card-title">{n.title}</div>
-      {(n.details.date || n.details.time || n.details.location) && (
-        <div className="notices-mirror-details">
-          {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
-          {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
-          {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
+      
+      <h4 className="font-headline-md text-[17px] font-semibold leading-snug mb-2 group-hover:text-primary transition-colors text-white">
+        {n.title}
+      </h4>
+
+      {n.details && (n.details.date || n.details.time || n.details.location) && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {n.details.date && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Date: {n.details.date}
+            </div>
+          )}
+          {n.details.time && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Time: {n.details.time}
+            </div>
+          )}
+          {n.details.location && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Where: {n.details.location}
+            </div>
+          )}
         </div>
       )}
-      <div className="notices-mirror-card-body" dangerouslySetInnerHTML={{ __html: n.notice }} />
+
+      <p className="font-body-md text-xs text-on-surface-variant line-clamp-3 mb-3 leading-relaxed">
+        {previewText}
+      </p>
+
       {n.contact && (
-        <div className="notices-mirror-contact">Contact: {n.contact}</div>
+        <div className="font-label-caps text-[10px] text-outline-variant flex items-center gap-1 select-none">
+          <span className="material-symbols-outlined text-[13px]">person</span>
+          Contact: {n.contact}
+        </div>
       )}
-    </div>
+    </motion.article>
   );
 }
 
@@ -317,55 +357,39 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
 
   // ─── MIRROR MODE ─────────────────────────────────────────────────────────────
   if (readonly) {
-    // Split: urgent notices always go full-width at top, normal notices fill 2 cols
-    const urgentNotices = sorted.filter(n => n.importance === 'high');
-    const normalNotices = sorted.filter(n => n.importance !== 'high');
-    const useGrid = isWide && normalNotices.length >= 2;
-
     return (
-      <div className="notices-mirror-root" ref={containerRef}>
-        {/* Header strip */}
-        <div className="notices-mirror-header">
-          <span className="notices-mirror-title">Daily Notices</span>
-          <span className="notices-mirror-count">
-            {sorted.length} notice{sorted.length !== 1 ? 's' : ''}
-            {keywordFilter && <span className="notices-filter-pill" style={{ marginLeft: '6px' }}>"{keywordFilter}"</span>}
-          </span>
+      <section className="h-full flex flex-col relative overflow-hidden w-full select-none" ref={containerRef}>
+        {/* Sticky Header */}
+        <div className="p-4 border-b border-outline-variant/30 bg-surface-container-high/50 sticky top-0 z-10 backdrop-blur-md flex justify-between items-center select-none">
+          <h3 className="font-headline-md text-xl font-semibold text-primary">Notices</h3>
+          <span className="material-symbols-outlined text-outline text-xl" data-icon="campaign">campaign</span>
         </div>
 
-        {/* Last updated label */}
-        {fetchedAtLabel && (
-          <div className="notices-fetched-at">Updated: {fetchedAtLabel}</div>
-        )}
-
-        {/* Scrolling list */}
-        <div className="notices-mirror-scroll" ref={scrollRef}>
+        {/* Scrollable Notices List */}
+        <div 
+          className="p-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1 pb-[25vh]" 
+          ref={scrollRef}
+          style={{ scrollBehavior: 'smooth' }}
+        >
           {sorted.length === 0 ? (
-            <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px' }}>
+            <div className="opacity-50 italic text-center p-6 text-sm text-outline">
               No notices match your settings.
             </div>
           ) : (
-            <>
-              {/* Urgent notices — full width, large cards */}
-              {urgentNotices.length > 0 && (
-                <div className="notices-urgent-strip">
-                  {urgentNotices.map(n => (
-                    <NoticeCard key={n.id} n={n} urgent />
-                  ))}
-                </div>
-              )}
-              {/* Normal notices — 2-col when wide enough */}
-              {normalNotices.length > 0 && (
-                <div className={useGrid ? 'notices-mirror-grid' : undefined}>
-                  {normalNotices.map(n => (
-                    <NoticeCard key={n.id} n={n} />
-                  ))}
-                </div>
-              )}
-            </>
+            sorted.map(n => (
+              <NoticeCard key={n.id} n={n} />
+            ))
           )}
         </div>
-      </div>
+
+        {/* Swipe Gesture Hint Overlay */}
+        <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-surface-container-low via-surface-container-low/80 to-transparent p-4 flex flex-col items-center justify-end pb-8 h-[20vh] pointer-events-none z-20">
+          <div className="flex flex-col items-center text-primary animate-pulse scale-110">
+            <span className="material-symbols-outlined text-4xl" data-icon="swipe_left">swipe_left</span>
+            <span className="font-label-caps text-[10px] mt-1 font-bold tracking-wider uppercase">Swipe left for more</span>
+          </div>
+        </div>
+      </section>
     );
   }
 
