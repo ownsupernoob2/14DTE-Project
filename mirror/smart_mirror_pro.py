@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter, QFont, QImage
+from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter, QFont, QImage, QFontDatabase
 
 from config import *
 from widgets.notices_widget import NoticesWidget
@@ -22,6 +22,7 @@ from widgets.kings_week_widget import KingsWeekWidget
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
+HANKEN_FONT = 'Hanken Grotesk'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Animated background canvas
@@ -90,6 +91,15 @@ class SmartMirrorPro(QMainWindow):
         self.setWindowTitle("Smart Mirror")
         self.setStyleSheet("background-color: #050508;")
 
+        # ── Load Hanken Grotesk if available ──────────────────────────────
+        hk_id = QFontDatabase.addApplicationFont(
+            os.path.join(os.path.dirname(__file__), 'assets', 'HankenGrotesk.ttf')
+        )
+        if hk_id >= 0:
+            families = QFontDatabase.applicationFontFamilies(hk_id)
+            if families:
+                QApplication.instance().setFont(QFont(families[0], 12))
+
         # ── Central widget ────────────────────────────────────────────────
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -123,6 +133,9 @@ class SmartMirrorPro(QMainWindow):
         self._last_state       = None
         self._last_user_id     = None
         self.last_gesture_timestamp = 0.0
+        self._transitioning    = False   # guard: ignore polls during fade
+        self._anim_in          = None    # keep refs alive to prevent GC
+        self._anim_out         = None
 
         # ── Timers ────────────────────────────────────────────────────────
         self.poll_timer = QTimer(self)
@@ -154,146 +167,167 @@ class SmartMirrorPro(QMainWindow):
         self.banner_frame.setObjectName("BannerFrame")
         self.banner_frame.setStyleSheet("""
             #BannerFrame {
-                background-color: rgba(239, 68, 68, 0.18);
-                border-bottom: 1px solid rgba(239, 68, 68, 0.35);
+                background-color: rgba(153, 27, 27, 0.95);
+                border: none;
+                border-radius: 12px;
             }
         """)
-        self.banner_frame.setFixedHeight(44)
+        self.banner_frame.setFixedHeight(68)
         self.banner_frame.hide()
 
         lay = QHBoxLayout(self.banner_frame)
-        lay.setContentsMargins(24, 0, 24, 0)
+        lay.setContentsMargins(18, 10, 18, 10)
+        lay.setSpacing(14)
 
-        dot = QLabel()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet("background: #ef4444; border-radius: 4px;")
-        lay.addWidget(dot)
-
-        self.banner_label = QLabel()
-        self.banner_label.setStyleSheet(
-            "color: #fecaca; font-size: 14px; font-weight: 600; letter-spacing: 1px;"
+        self.warn_icon = QLabel("⚠", self.banner_frame)
+        self.warn_icon.setStyleSheet(
+            f'font-family: "{HANKEN_FONT}"; font-size: 20px; '
+            'background: transparent; border: none; color: #fca5a5;'
         )
-        self.banner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.banner_label, 1)
+        self.warn_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.warn_icon)
+
+        text_container = QWidget(self.banner_frame)
+        text_container.setStyleSheet("background: transparent; border: none;")
+        text_lay = QVBoxLayout(text_container)
+        text_lay.setContentsMargins(0, 0, 0, 0)
+        text_lay.setSpacing(3)
+
+        self.banner_title = QLabel("IMPORTANT MESSAGE / NOTICE", text_container)
+        self.banner_title.setStyleSheet(
+            f'font-family: "{HANKEN_FONT}"; color: #fca5a5; '
+            'font-size: 11px; font-weight: 700; letter-spacing: 1.5px;'
+        )
+        text_lay.addWidget(self.banner_title)
+
+        self.banner_label = QLabel(text_container)
+        self.banner_label.setStyleSheet(
+            f'font-family: "{HANKEN_FONT}"; color: #ffffff; '
+            'font-size: 13px; font-weight: 500;'
+        )
+        text_lay.addWidget(self.banner_label)
+
+        lay.addWidget(text_container, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: user layout (fixed 3-column glass deck)
+    # Build: user layout (floating glassmorphic cards)
     # ─────────────────────────────────────────────────────────────────────
     def _build_user_layout(self):
         self.user_container = QWidget(self.central_widget)
         self.user_container.setStyleSheet("background: transparent;")
 
-        # Master glass card
-        self.deck = QFrame(self.user_container)
-        self.deck.setObjectName("Deck")
-        self.deck.setStyleSheet("""
-            #Deck {
-                background-color: rgba(12, 12, 20, 140);
-                border: 1px solid rgba(255, 255, 255, 18);
-                border-radius: 20px;
-            }
-        """)
-
         # ── Left column: Notices ──────────────────────────────────────────
-        self.notices_widget = NoticesWidget(0, 0, 100, 100, API_URL)
-        self.notices_widget.setParent(self.deck)
-
-        self.left_vdiv = QFrame(self.deck)
-        self.left_vdiv.setFrameShape(QFrame.Shape.VLine)
-        self.left_vdiv.setStyleSheet("background: rgba(255,255,255,18); border: none;")
+        self.notices_widget = NoticesWidget(
+            api_url=API_URL, parent=self.user_container
+        )
 
         # ── Center column: Clock (top) + Kings Week (bottom) ─────────────
-        self.clock_widget = ClockWidget(0, 0, 100, 100)
-        self.clock_widget.setParent(self.deck)
+        self.clock_widget = ClockWidget(parent=self.user_container)
 
-        self.center_hdiv = QFrame(self.deck)
-        self.center_hdiv.setFrameShape(QFrame.Shape.HLine)
-        self.center_hdiv.setStyleSheet("background: rgba(255,255,255,18); border: none;")
-
-        self.kings_week_widget = KingsWeekWidget(self.deck)
+        self.kings_week_widget = KingsWeekWidget(self.user_container)
 
         # ── Right column: Timetable ───────────────────────────────────────
-        self.right_vdiv = QFrame(self.deck)
-        self.right_vdiv.setFrameShape(QFrame.Shape.VLine)
-        self.right_vdiv.setStyleSheet("background: rgba(255,255,255,18); border: none;")
-
-        self.timetable_widget = TimetableWidget(0, 0, 100, 100, "", API_URL)
-        self.timetable_widget.setParent(self.deck)
+        self.timetable_widget = TimetableWidget(
+            api_url=API_URL, parent=self.user_container
+        )
 
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
         """Position all user layout elements given the window size."""
-        banner_h   = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
-        margin     = 16
-        top        = banner_h + margin
-
-        deck_x = margin
-        deck_y = top
-        deck_w = w - margin * 2
-        deck_h = h - top - margin
+        banner_h = self.banner_frame.height() + 16 if not self.banner_frame.isHidden() else 0
+        margin   = 16
+        top      = banner_h + margin
 
         self.user_container.setGeometry(0, 0, w, h)
-        self.deck.setGeometry(deck_x, deck_y, deck_w, deck_h)
 
-        col_w    = int(deck_w * 0.25)
-        center_w = deck_w - col_w * 2
-        clock_h  = int(deck_h * 0.52)
+        # 3 columns — side panels 27% each, center fills the rest
+        col_w    = int((w - margin * 4) * 0.27)
+        center_w = w - col_w * 2 - margin * 4
 
-        # Left notices
-        self.notices_widget.setGeometry(0, 0, col_w, deck_h)
-        self.left_vdiv.setGeometry(col_w, 0, 1, deck_h)
+        # Notices (left column)
+        self.notices_widget.setGeometry(margin, top, col_w, h - top - margin)
 
-        # Center clock
-        self.clock_widget.setGeometry(col_w + 1, 0, center_w - 2, clock_h)
-        self.center_hdiv.setGeometry(col_w + 1, clock_h, center_w - 2, 1)
+        # Clock (center top) — taller so Kings Week gets ample image space
+        clock_h = int(h * 0.22)
+        self.clock_widget.setGeometry(margin * 2 + col_w, top, center_w, clock_h)
 
-        # Center kings week
-        kw_pad = 12
+        # Kings Week (center bottom)
+        kw_y = top + clock_h + margin
         self.kings_week_widget.setGeometry(
-            col_w + 1 + kw_pad,
-            clock_h + 1 + kw_pad,
-            center_w - 2 - kw_pad * 2,
-            deck_h - clock_h - 1 - kw_pad * 2,
+            margin * 2 + col_w, kw_y, center_w, h - kw_y - margin
         )
 
-        # Right timetable
-        self.right_vdiv.setGeometry(col_w + center_w - 1, 0, 1, deck_h)
-        self.timetable_widget.setGeometry(col_w + center_w, 0, col_w, deck_h)
+        # Timetable (right column)
+        self.timetable_widget.setGeometry(w - margin - col_w, top, col_w, h - top - margin)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: guest layout (clock + notices + prompt)
     # ─────────────────────────────────────────────────────────────────────
     def _build_guest_layout(self):
+        """
+        Guest layout (sketch design):
+        ─────────────────────────────────────────────────────
+        │  [IMPORTANT MESSAGE / NOTICE banner — full width] │
+        ├─────────────────┬───────────────────────────────── │
+        │  Notices        │     12:00  2/07/2026            │
+        │  (left column)  │     (centered clock)            │
+        ├─────────────────┴───────────────────────────────── │
+        │  STAND IN FRONT OF THE MIRROR  (hint strip)       │
+        ─────────────────────────────────────────────────────
+        """
         self.guest_container = QWidget(self.central_widget)
         self.guest_container.setStyleSheet("background: transparent;")
 
         outer = QVBoxLayout(self.guest_container)
-        outer.setContentsMargins(40, 60, 40, 40)
-        outer.setSpacing(20)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(20)
+        # ── Content row: notices left, clock right ────────────────────────
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
 
-        self.guest_clock   = ClockWidget(0, 0, 300, 150)
-        self.guest_notices = NoticesWidget(0, 0, 500, 300, API_URL)
-        top_row.addWidget(self.guest_clock, 1)
-        top_row.addWidget(self.guest_notices, 2)
-        outer.addLayout(top_row, 3)
+        # Left: notices panel (no extra background — uses widget's own style)
+        self.guest_notices = NoticesWidget(api_url=API_URL)
+        content_row.addWidget(self.guest_notices, 1)
 
+        # Center/Right: clock
+        self.guest_clock = ClockWidget()
+        content_row.addWidget(self.guest_clock, 2)
+
+        outer.addLayout(content_row, 1)
+
+        # ── Bottom hint strip ─────────────────────────────────────────────
         hint = QFrame()
-        hint.setStyleSheet(
-            "background: rgba(255,255,255,5); border: 1px solid rgba(255,255,255,10); border-radius: 14px;"
+        hint.setObjectName('GuestHint')
+        hint.setStyleSheet("""
+            #GuestHint {
+                background: rgba(96, 165, 250, 0.08);
+                border: 1px solid rgba(96, 165, 250, 0.18);
+                border-radius: 0px;
+            }
+        """)
+        hint.setFixedHeight(52)
+        h_lay = QHBoxLayout(hint)
+        h_lay.setContentsMargins(24, 0, 24, 0)
+
+        hint_icon = QLabel('◎')
+        hint_icon.setStyleSheet(
+            f'font-family: "{HANKEN_FONT}"; font-size: 16px; '
+            'color: #60a5fa; background: transparent; border: none;'
         )
-        h_lay = QVBoxLayout(hint)
-        h_lay.setContentsMargins(20, 16, 20, 16)
+        h_lay.addWidget(hint_icon)
 
-        title = QLabel("STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF")
-        title.setStyleSheet("font-size: 12px; font-weight: bold; color: #60a5fa; letter-spacing: 2px;")
+        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF')
+        title.setStyleSheet(
+            f'font-family: "{HANKEN_FONT}"; font-size: 12px; font-weight: 700; '
+            'color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;'
+        )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h_lay.addWidget(title)
+        h_lay.addWidget(title, 1)
 
-        outer.addWidget(hint, 1)
+        outer.addWidget(hint)
         self.guest_container.hide()
 
     # ─────────────────────────────────────────────────────────────────────
@@ -307,9 +341,12 @@ class SmartMirrorPro(QMainWindow):
             self.bg_canvas.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'banner_frame'):
-            self.banner_frame.setGeometry(0, 0, w, self.banner_frame.height())
+            self.banner_frame.setGeometry(16, 16, w - 32, self.banner_frame.height())
 
-        if hasattr(self, 'guest_container'):
+        if hasattr(self, 'guest_container') and not self.guest_container.isHidden():
+            banner_h = self.banner_frame.height() + 16 if not self.banner_frame.isHidden() else 0
+            self.guest_container.setGeometry(0, banner_h, w, h - banner_h)
+        elif hasattr(self, 'guest_container'):
             self.guest_container.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'user_container') and not self.user_container.isHidden():
@@ -375,6 +412,43 @@ class SmartMirrorPro(QMainWindow):
                 self.guest_notices.scroll_by_pixels(scroll_delta)
 
     # ─────────────────────────────────────────────────────────────────────
+    # Fade helpers
+    # ─────────────────────────────────────────────────────────────────────
+    def _fade_in(self, widget, duration=380):
+        """Show widget and animate opacity 0 → 1."""
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        widget.show()
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self._on_fade_in_done(widget))
+        anim.start()
+        self._anim_in = anim
+
+    def _on_fade_in_done(self, widget):
+        # Remove effect so child painting isn't affected by opacity layer
+        widget.setGraphicsEffect(None)
+        self._transitioning = False
+
+    def _fade_out(self, widget, on_done, duration=280):
+        """Animate opacity 1 → 0 then call on_done()."""
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        effect.setOpacity(1.0)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.finished.connect(on_done)
+        anim.start()
+        self._anim_out = anim
+
+    # ─────────────────────────────────────────────────────────────────────
     # Theme application
     # ─────────────────────────────────────────────────────────────────────
     def _apply_user_theme(self, remote_config):
@@ -416,28 +490,13 @@ class SmartMirrorPro(QMainWindow):
                     and new_user_id not in ('', 'idle')
                 )
 
-                if state_changed or user_switched:
-                    self._last_state   = new_state
-                    self._last_user_id = new_user_id
+                if (state_changed or user_switched) and not self._transitioning:
+                    self._transitioning = True
+                    self._last_state    = new_state
+                    self._last_user_id  = new_user_id
                     self.current_user_id   = new_user_id
                     self.current_user_name = fdata.get('user_name', '')
-
-                    if new_state == 'user' and new_user_id not in ('', 'idle'):
-                        self.bg_canvas.glow_enabled = True
-                        self.guest_container.hide()
-                        self._apply_user_theme(fdata.get('config', {}))
-                        self.user_container.show()
-                        self._apply_user_layout(self.width(), self.height())
-
-                    elif new_state == 'guest':
-                        self.bg_canvas.glow_enabled = True
-                        self.user_container.hide()
-                        self.guest_container.show()
-
-                    else:  # idle
-                        self.bg_canvas.glow_enabled = False
-                        self.user_container.hide()
-                        self.guest_container.hide()
+                    self._trigger_transition(new_state, new_user_id, fdata)
 
             except Exception:
                 pass
@@ -451,6 +510,43 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.show()
         else:
             self.status_dot.hide()
+
+    def _trigger_transition(self, new_state, new_user_id, fdata):
+        """Fade out whatever is currently visible, then apply + fade in new state."""
+        # Find the currently visible container (if any)
+        visible = None
+        if not self.user_container.isHidden():
+            visible = self.user_container
+        elif not self.guest_container.isHidden():
+            visible = self.guest_container
+
+        def apply_new():
+            # Hide everything first
+            self.user_container.hide()
+            self.guest_container.hide()
+            if visible:
+                visible.setGraphicsEffect(None)
+
+            if new_state == 'user' and new_user_id not in ('', 'idle'):
+                self.bg_canvas.glow_enabled = True
+                self.timetable_widget.set_user_id(new_user_id)
+                self._apply_user_theme(fdata.get('config', {}))
+                self._apply_user_layout(self.width(), self.height())
+                self._fade_in(self.user_container)
+
+            elif new_state == 'guest':
+                self.bg_canvas.glow_enabled = True
+                self.timetable_widget.set_user_id('')
+                self._fade_in(self.guest_container)
+
+            else:  # idle
+                self.bg_canvas.glow_enabled = False
+                self._transitioning = False   # nothing to fade in
+
+        if visible:
+            self._fade_out(visible, on_done=apply_new)
+        else:
+            apply_new()
 
     def keyPressEvent(self, event):
         pass

@@ -445,27 +445,33 @@ func callGeminiAPI(apiKey string, prompt string) ([]NoticeItem, error) {
 }
 
 func processWithGemini(text string) []NoticeItem {
-	prompt := `You are an expert school notices parsing assistant.
-Analyze the following daily school notices and extract them into a clean JSON array of notice objects.
+	prompt := `You are an expert school notice parser for a smart mirror display system.
+Parse the following daily school notices into a clean JSON array. Each notice must be a separate, self-contained item — do NOT merge unrelated notices together.
 
-Strict JSON format requirements:
-Each notice object in the array must have EXACTLY these fields:
-- "title": A clean, concise headline summarizing the notice (e.g. "Year 12 Geography Field Trip").
-- "category": Must be exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Choose the most appropriate category based on the content.
-- "notice": The body of the notice formatted as clean, well-spaced HTML. Use <p> for paragraphs and <ul><li> for lists. Bold critical details like Date, Time, Location, Cost, and Deadlines using <strong>. Correct any OCR/spelling/spacing errors (e.g., replace "King?s" with "King's", "min utes" with "minutes"). Write complete, readable sentences.
-- "targetYears": An array of strings representing the target school year levels, e.g. ["9", "10"], ["12"], or ["All"] if it applies to everyone or is not specified. Extract year level mentions like "Year 9", "Y10", "Juniors" (Year 9 and 10), "Seniors" (Year 11, 12, and 13).
-- "importance": Either "high" (use for room changes, time-critical updates, urgent instructions, cancellations) or "normal" (general notices).
-- "contact": The name of the teacher, facilitator, or staff member in charge of the event/notice if mentioned (e.g. "Mr Smith"), otherwise an empty string "".
+Output a JSON array of objects with EXACTLY these fields:
 
-CRITICAL RULES — you must follow these exactly:
-- Do NOT use any emoji characters anywhere in any field. Use plain descriptive text only.
-- Do NOT use bullet point symbols or dashes as list markers — use proper HTML <ul><li> tags.
-- Do NOT start titles or notice bodies with symbols, dashes, or decorative characters.
-- Only use these HTML tags: <p>, <ul>, <li>, <strong>. No other tags allowed.
-- No markdown formatting (no **, no #, no -) in the notice field — HTML only.
-- Output ONLY a valid JSON array — no explanations, no code fences, no extra text.
+- "title": Short, clear headline (max 8 words). Use title case. No dashes, symbols, or ALL CAPS. Example: "Year 12 Geography Field Trip".
+- "category": Exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Pick the most relevant.
+- "notice": The notice body as clean HTML. Rules:
+    • Use <p> for paragraphs (each logical sentence or thought on its own <p>).
+    • Use <ul><li> for lists — never use dash, bullet, or asterisk as list markers.
+    • Use <strong> to highlight: dates, times, room numbers, deadlines, cost.
+    • Fix ALL OCR errors (e.g. "King?s" → "King's", "min utes" → "minutes", "1 0am" → "10am").
+    • Write complete, grammatically correct sentences. Remove filler like "Please note that".
+    • Only allowed tags: <p>, <ul>, <li>, <strong>. No others.
+    • No markdown, no emoji, no symbols (★, •, –) in the notice body.
+- "targetYears": Array of year level strings, e.g. ["9","10"] or ["All"]. Extract from "Year 9", "Y10", "Juniors" (→["9","10"]), "Seniors" (→["11","12","13"]).
+- "importance": "high" for urgent/time-critical/cancellations/room changes. "normal" otherwise.
+- "contact": Teacher/staff name if mentioned (e.g. "Mr Smith"), else "".
 
-Text to process:
+STRICT RULES:
+1. Output ONLY a valid JSON array. No code fences, no extra text, no explanations.
+2. No emoji anywhere in any field.
+3. Each logical notice = one JSON object. Do not combine unrelated items.
+4. Titles must be concise — no full sentences as titles.
+5. The "notice" field must always have content.
+
+Text to parse:
 ` + text
 
 	// Try primary key first, then backup

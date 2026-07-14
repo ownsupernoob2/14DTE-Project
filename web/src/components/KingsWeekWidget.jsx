@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -76,98 +77,50 @@ export default function KingsWeekWidget() {
   }
 
   return (
-    <a
-      href={data.link}
-      target="_blank"
-      rel="noopener noreferrer"
-      style={{
-        flex: 1,
-        display: 'block',
-        borderRadius: '14px',
-        overflow: 'hidden',
-        position: 'relative',
-        backgroundImage: `url(${data.imageUrl})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        textDecoration: 'none',
-        cursor: 'pointer',
-        minHeight: '120px',
-        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = 'scale(1.01)';
-        e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.boxShadow = 'none';
-      }}
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.1 }}
+      className="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden relative group cursor-pointer"
+      onClick={() => data.link && window.open(data.link, '_blank', 'noopener,noreferrer')}
     >
-      {/* Gradient overlay */}
-      <div style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.1) 100%)',
-      }} />
+      <div className="absolute inset-0 z-0 overflow-hidden">
+        {/* Featured image with zoom effect on hover */}
+        <motion.div
+          className="bg-cover bg-center w-full h-full opacity-70 mix-blend-luminosity"
+          style={{ backgroundImage: `url(${data.imageUrl})` }}
+          whileHover={{ scale: 1.05 }}
+          transition={{ duration: 0.6 }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-surface-dim via-surface-dim/80 to-transparent" />
+      </div>
 
-      {/* Content */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0,
-        padding: '16px',
-        color: '#ffffff',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <span style={{
-            padding: '2px 10px',
-            borderRadius: '20px',
-            background: 'rgba(109,40,217,0.85)',
-            fontSize: '0.7rem',
-            fontWeight: '700',
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase',
-            color: '#e9d5ff',
-          }}>
-            {data.edition}
+      <div className="relative z-10 p-6 flex flex-col h-full justify-end flex-1 select-none">
+        <span className="bg-primary text-on-primary px-3 py-1 rounded-full font-label-caps text-xs self-start mb-4 shadow-[0_0_10px_rgba(77,142,255,0.5)] uppercase tracking-wider font-bold">
+          Featured News
+        </span>
+        
+        <div className="mb-2">
+          <span className="font-label-caps text-xs text-primary-fixed-dim bg-primary/20 px-2 py-0.5 rounded mr-2">
+            {data.edition || "King's Week"}
           </span>
-          <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.55)' }}>
+          <span className="font-label-caps text-xs text-outline">
             {data.date}
           </span>
         </div>
-        <div style={{
-          fontSize: 'clamp(0.85rem, 1.1vw, 1rem)',
-          fontWeight: '600',
-          lineHeight: 1.3,
-          color: '#ffffff',
-          textShadow: '0 1px 8px rgba(0,0,0,0.8)',
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-        }}>
-          {data.title}
-        </div>
-      </div>
 
-      {/* Read Issue badge — top right */}
-      <div style={{
-        position: 'absolute', top: '12px', right: '12px',
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(8px)',
-        padding: '4px 10px',
-        borderRadius: '20px',
-        fontSize: '0.7rem',
-        color: 'rgba(255,255,255,0.8)',
-        fontWeight: '500',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-      }}>
-        Read Issue
-        <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" strokeLinecap="round" strokeLinejoin="round"/>
-          <polyline points="15 3 21 3 21 9" strokeLinecap="round" strokeLinejoin="round"/>
-          <line x1="10" y1="14" x2="21" y2="3" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
+        <h3 className="font-display-lg text-2xl md:text-3xl font-bold mb-2 text-white leading-tight">
+          {data.title}
+        </h3>
+        
+        <p className="font-body-lg text-sm text-on-surface-variant max-w-lg mb-6 line-clamp-3">
+          Highlights from this week's inter-house competitions, academic achievements, and upcoming weekend fixtures.
+        </p>
+
+        <button className="bg-transparent border border-outline hover:bg-white/10 hover:border-white text-white font-label-caps text-xs px-6 py-2 rounded-full self-start transition-all duration-300 backdrop-blur-sm active:scale-95">
+          Read Full Edition
+        </button>
       </div>
-    </a>
+    </motion.div>
   );
 }

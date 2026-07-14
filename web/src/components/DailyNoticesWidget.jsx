@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -66,34 +67,73 @@ function buildPreview(html, maxLen = 120) {
 function NoticeCard({ n, urgent = false }) {
   const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
   const isUrgent = urgent || n.importance === 'high';
+  
+  // Clean notice preview text to avoid HTML tags in preview
+  const previewText = buildPreview(n.notice, 120);
+
   return (
-    <div
-      className={`notices-mirror-card ${isUrgent ? 'urgent' : ''}`}
-      style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
+    <motion.article 
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      style={{ borderLeftColor: isUrgent ? '#ffb4ab' : colors.accent }}
+      className="bg-surface-container rounded-lg p-4 border-l-4 relative shadow-sm hover:bg-surface-container-highest transition-colors cursor-pointer group"
     >
-      <div className="notices-mirror-card-top">
-        <span className="notices-mirror-badge" style={{ background: colors.bg, color: colors.text }}>
+      <div className="flex gap-2 mb-2 flex-wrap">
+        <span 
+          style={{ background: colors.bg, color: colors.text }}
+          className="px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold uppercase tracking-wider"
+        >
           {n.category}
         </span>
-        {isUrgent && <span className="notices-mirror-urgent-badge">URGENT</span>}
-        <div style={{ flex: 1 }} />
-        {n.targetYears.map(yr => (
-          <span key={yr} className="notices-mirror-year-badge">Y{yr}</span>
+        {isUrgent && (
+          <span className="bg-error text-on-error px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold animate-pulse">
+            URGENT
+          </span>
+        )}
+        <div className="flex-1" />
+        {n.targetYears && n.targetYears.map(yr => (
+          <span key={yr} className="bg-surface-dim text-outline px-1.5 py-0.5 rounded font-label-caps text-[9px]">
+            Y{yr}
+          </span>
         ))}
       </div>
-      <div className="notices-mirror-card-title">{n.title}</div>
-      {(n.details.date || n.details.time || n.details.location) && (
-        <div className="notices-mirror-details">
-          {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
-          {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
-          {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
+      
+      <h4 className="font-headline-md text-[17px] font-semibold leading-snug mb-2 group-hover:text-primary transition-colors text-white">
+        {n.title}
+      </h4>
+
+      {n.details && (n.details.date || n.details.time || n.details.location) && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {n.details.date && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Date: {n.details.date}
+            </div>
+          )}
+          {n.details.time && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Time: {n.details.time}
+            </div>
+          )}
+          {n.details.location && (
+            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
+              Where: {n.details.location}
+            </div>
+          )}
         </div>
       )}
-      <div className="notices-mirror-card-body" dangerouslySetInnerHTML={{ __html: n.notice }} />
+
+      <p className="font-body-md text-xs text-on-surface-variant line-clamp-3 mb-3 leading-relaxed">
+        {previewText}
+      </p>
+
       {n.contact && (
-        <div className="notices-mirror-contact">Contact: {n.contact}</div>
+        <div className="font-label-caps text-[10px] text-outline-variant flex items-center gap-1 select-none">
+          <span className="material-symbols-outlined text-[13px]">person</span>
+          Contact: {n.contact}
+        </div>
       )}
-    </div>
+    </motion.article>
   );
 }
 
@@ -114,9 +154,12 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const [showSettings, setShowSettings] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
 
-  // Mirror auto-scroll
+  // Mirror auto-scroll (for edit mode)
   const scrollRef = useRef(null);
   const scrollState = useRef({ scrollInterval: null, holdTimer: null });
+
+  // Mirror paginated mode state (for readonly/dashboard mode)
+  const [mirrorPage, setMirrorPage] = useState(0);
 
   // ─── ResizeObserver: detect wide layout for 2-col ────────────────────────────
   useEffect(() => {
@@ -265,6 +308,15 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return () => { clearTimeout(init); cleanup(); };
   }, [readonly, loading, error, sorted.length, scrollSpeed]);
 
+  // ─── Mirror page auto-advance (paginated mode) ────────────────────────────────
+  useEffect(() => {
+    if (!readonly || sorted.length === 0) return;
+    const id = setInterval(() => {
+      setMirrorPage(p => (p + 1) % sorted.length);
+    }, 8000);
+    return () => clearInterval(id);
+  }, [readonly, sorted.length]);
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   const toggleExpand = (id) => {
     setExpandedIds(prev => {
@@ -315,57 +367,184 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   };
   const fetchedAtLabel = formatFetchedAt(fetchedAt);
 
-  // ─── MIRROR MODE ─────────────────────────────────────────────────────────────
+  // ─── MIRROR / READONLY MODE ───────────────────────────────────────────────
+  // Paginated: one notice visible at a time with dot indicator + gesture hint
   if (readonly) {
-    // Split: urgent notices always go full-width at top, normal notices fill 2 cols
-    const urgentNotices = sorted.filter(n => n.importance === 'high');
-    const normalNotices = sorted.filter(n => n.importance !== 'high');
-    const useGrid = isWide && normalNotices.length >= 2;
+    const current = sorted[mirrorPage] || null;
+    const colors = current ? (CATEGORY_COLORS[current.category] || CATEGORY_COLORS['General']) : CATEGORY_COLORS['General'];
+    const isUrgent = current?.importance === 'high';
+    const accent = isUrgent ? '#ef4444' : colors.accent;
 
     return (
-      <div className="notices-mirror-root" ref={containerRef}>
-        {/* Header strip */}
-        <div className="notices-mirror-header">
-          <span className="notices-mirror-title">Daily Notices</span>
-          <span className="notices-mirror-count">
-            {sorted.length} notice{sorted.length !== 1 ? 's' : ''}
-            {keywordFilter && <span className="notices-filter-pill" style={{ marginLeft: '6px' }}>"{keywordFilter}"</span>}
-          </span>
-        </div>
-
-        {/* Last updated label */}
-        {fetchedAtLabel && (
-          <div className="notices-fetched-at">Updated: {fetchedAtLabel}</div>
-        )}
-
-        {/* Scrolling list */}
-        <div className="notices-mirror-scroll" ref={scrollRef}>
-          {sorted.length === 0 ? (
-            <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px' }}>
-              No notices match your settings.
-            </div>
-          ) : (
-            <>
-              {/* Urgent notices — full width, large cards */}
-              {urgentNotices.length > 0 && (
-                <div className="notices-urgent-strip">
-                  {urgentNotices.map(n => (
-                    <NoticeCard key={n.id} n={n} urgent />
-                  ))}
-                </div>
-              )}
-              {/* Normal notices — 2-col when wide enough */}
-              {normalNotices.length > 0 && (
-                <div className={useGrid ? 'notices-mirror-grid' : undefined}>
-                  {normalNotices.map(n => (
-                    <NoticeCard key={n.id} n={n} />
-                  ))}
-                </div>
-              )}
-            </>
+      <section
+        className="h-full flex flex-col select-none"
+        ref={containerRef}
+        style={{ fontFamily: "'Hanken Grotesk', sans-serif" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-2">
+          <h3 style={{
+            fontSize: '20px',
+            fontWeight: 700,
+            color: '#a5b4fc',
+            letterSpacing: '0.3px',
+            fontFamily: "'Hanken Grotesk', sans-serif",
+          }}>Notices</h3>
+          {fetchedAtLabel && (
+            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
+              Updated: {fetchedAtLabel}
+            </span>
+          )}
+          {sorted.length > 0 && (
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
+              {mirrorPage + 1} / {sorted.length}
+            </span>
           )}
         </div>
-      </div>
+
+        {/* Thin divider */}
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', margin: '0' }} />
+
+        {/* Single notice card */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {sorted.length === 0 ? (
+            <div style={{ padding: '32px 20px', opacity: 0.5, textAlign: 'center', fontSize: '14px' }}>
+              No notices available today.
+            </div>
+          ) : current ? (
+            <motion.div
+              key={mirrorPage}
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.35 }}
+              style={{
+                padding: '18px 18px 14px',
+                borderLeft: `3px solid ${accent}`,
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Badge row */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: colors.text,
+                  background: colors.bg,
+                  borderRadius: '6px',
+                  padding: '3px 10px',
+                }}>
+                  {current.category}
+                </span>
+                {isUrgent && (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#f87171',
+                    background: 'rgba(239,68,68,0.18)',
+                    borderRadius: '6px',
+                    padding: '3px 10px',
+                  }}>
+                    URGENT
+                  </span>
+                )}
+              </div>
+
+              {/* Title */}
+              <div style={{
+                fontSize: '20px',
+                fontWeight: 700,
+                color: '#f8fafc',
+                lineHeight: 1.3,
+                wordBreak: 'break-word',
+              }}>
+                {current.title}
+              </div>
+
+              {/* Detail chips */}
+              {(current.details?.date || current.details?.location) && (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  {current.details?.date && (
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
+                      Date: {current.details.date}
+                    </span>
+                  )}
+                  {current.details?.location && (
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
+                      Where: {current.details.location}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Body text */}
+              <p style={{
+                fontSize: '13px',
+                color: '#94a3b8',
+                lineHeight: 1.55,
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 5,
+                WebkitBoxOrient: 'vertical',
+              }}>
+                {buildPreview(current.notice, 320)}
+              </p>
+
+              {/* Contact */}
+              {current.contact && (
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                  ✦ Contact: {current.contact}
+                </div>
+              )}
+            </motion.div>
+          ) : null}
+        </div>
+
+        {/* Dot indicator */}
+        {sorted.length > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', padding: '6px 16px 4px' }}>
+            {sorted.slice(0, 7).map((_, i) => (
+              <div
+                key={i}
+                onClick={() => setMirrorPage(i)}
+                style={{
+                  width: i === mirrorPage ? '20px' : '6px',
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: i === mirrorPage ? 'rgba(165,180,252,0.85)' : 'rgba(255,255,255,0.2)',
+                  cursor: 'pointer',
+                  transition: 'width 0.3s ease, background 0.3s ease',
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Gesture footer */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '8px 16px 18px',
+          gap: '4px',
+        }}>
+          {/* GIF placeholder — replace src with actual GIF path */}
+          {/* <img src="/assets/gesture_left.gif" alt="" style={{ height: '80px' }} /> */}
+          <span className="material-symbols-outlined animate-pulse"
+            style={{ fontSize: '48px', color: 'rgba(165,180,252,0.55)' }}
+            data-icon="swipe_left"
+          >swipe_left</span>
+          <span style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: 'rgba(148,163,184,0.65)',
+            letterSpacing: '1px',
+          }}>Swipe left for more</span>
+        </div>
+      </section>
     );
   }
 

@@ -8,12 +8,15 @@ from html.parser import HTMLParser
 
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QScrollArea, QWidget, QGridLayout
+    QWidget, QSizePolicy, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QFont
-from .base_widget import Widget
+from PyQt6.QtCore import Qt, QTimer, QMovie
+from PyQt6.QtGui import QFont, QFontDatabase
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTML helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 class _HTMLTextExtractor(HTMLParser):
     def __init__(self):
@@ -49,10 +52,14 @@ def extract_details(html):
         r'\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(\s+\d{4})?\b',
         text, re.I,
     ) or re.search(r'\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b', text, re.I)
-    time_m = re.search(r'\b\d{1,2}([:.]?\d{2})?\s*(am|pm)\b', text, re.I) or re.search(r'\b\d{1,2}:\d{2}\b', text)
+    time_m = re.search(r'\b\d{1,2}([:.]?\d{2})?\s*(am|pm)\b', text, re.I) \
+             or re.search(r'\b\d{1,2}:\d{2}\b', text)
     room_m = (
         re.search(r'\b(Room|Rm|Classroom)\s+([A-Za-z0-9-]+)\b', text, re.I)
-        or re.search(r'\b(Library|Auditorium|Hall|Gymnasium|Gym|Main Field|Pool|Music Suite|Performing Arts Centre|PAC)\b', text, re.I)
+        or re.search(
+            r'\b(Library|Auditorium|Hall|Gymnasium|Gym|Main Field|Pool|'
+            r'Music Suite|Performing Arts Centre|PAC)\b', text, re.I
+        )
     )
     if date_m:
         details['date'] = date_m.group(0).strip()
@@ -64,18 +71,19 @@ def extract_details(html):
 
 
 def format_fetched_at(iso_str):
-    """Parse ISO8601 timestamp and return human-readable string like 'Tue 1 Jul, 11:33 AM'."""
     if not iso_str:
         return None
     try:
-        # Handle offset-aware ISO strings (Python 3.7+ fromisoformat handles most cases)
         dt = datetime.fromisoformat(iso_str)
-        return dt.strftime('%-d %b, %I:%M %p').lstrip('0') if hasattr(dt, 'strftime') else None
+        return dt.strftime('%d %b, %I:%M %p').lstrip('0')
     except Exception:
         return None
 
 
-# Category color accents (border-left color)
+# ─────────────────────────────────────────────────────────────────────────────
+# Category colour palette
+# ─────────────────────────────────────────────────────────────────────────────
+
 CAT_COLORS = {
     'General':       '#94a3b8',
     'Sports':        '#22c55e',
@@ -86,15 +94,141 @@ CAT_COLORS = {
     'Service':       '#14b8a6',
 }
 
-# Widget width threshold for 2-column layout (pixels)
-TWO_COL_MIN_WIDTH = 600
+CAT_PILL_STYLES = {
+    'General':       ('rgba(148,163,184,0.18)', '#cbd5e1'),
+    'Sports':        ('rgba(34,197,94,0.18)',   '#4ade80'),
+    'Meetings':      ('rgba(139,92,246,0.18)',  '#a78bfa'),
+    'Academic':      ('rgba(59,130,246,0.18)',  '#60a5fa'),
+    'Careers':       ('rgba(251,191,36,0.18)',  '#fde047'),
+    'Arts & Culture':('rgba(244,63,94,0.18)',   '#fb7185'),
+    'Service':       ('rgba(20,184,166,0.18)',  '#2dd4bf'),
+}
+
+FONT_FAMILY = 'Hanken Grotesk'
 
 
-class NoticesWidget(Widget):
-    def __init__(self, x, y, w, h, api_url='https://api.smartmirror.me',
+# ─────────────────────────────────────────────────────────────────────────────
+# Individual notice card page
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_card_widget(notice, urgent=False):
+    """Build a single notice card as a QWidget (used in the stacked pager)."""
+    category = notice.get('category', 'General')
+    is_urgent = urgent or notice.get('importance', 'normal') == 'high'
+
+    pill_bg, pill_fg = CAT_PILL_STYLES.get(
+        category, ('rgba(148,163,184,0.18)', '#cbd5e1')
+    )
+    accent = '#ef4444' if is_urgent else CAT_COLORS.get(category, '#94a3b8')
+
+    card = QFrame()
+    card.setObjectName('NoticeCard')
+    card.setStyleSheet(f"""
+        #NoticeCard {{
+            background-color: transparent;
+            border: none;
+            border-left: 3px solid {accent};
+            border-radius: 0px;
+        }}
+    """)
+
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(18, 14, 18, 14)
+    lay.setSpacing(8)
+
+    # ── Badge row ──────────────────────────────────────────────────────────
+    badge_row = QHBoxLayout()
+    badge_row.setSpacing(8)
+
+    cat_badge = QLabel(category)
+    cat_badge.setStyleSheet(
+        f'font-family: "{FONT_FAMILY}"; font-size: 11px; font-weight: 700; '
+        f'color: {pill_fg}; background-color: {pill_bg}; '
+        f'border-radius: 6px; padding: 3px 10px; border: none;'
+    )
+    badge_row.addWidget(cat_badge)
+
+    if is_urgent:
+        urg_badge = QLabel('URGENT')
+        urg_badge.setStyleSheet(
+            f'font-family: "{FONT_FAMILY}"; font-size: 11px; font-weight: 700; '
+            'color: #f87171; background-color: rgba(239,68,68,0.18); '
+            'border-radius: 6px; padding: 3px 10px; border: none;'
+        )
+        badge_row.addWidget(urg_badge)
+
+    badge_row.addStretch()
+    lay.addLayout(badge_row)
+
+    # ── Title ──────────────────────────────────────────────────────────────
+    title_lbl = QLabel(notice.get('title', ''))
+    title_lbl.setWordWrap(True)
+    title_lbl.setStyleSheet(
+        f'font-family: "{FONT_FAMILY}"; font-size: 20px; font-weight: 700; '
+        'color: #f8fafc; background: transparent; border: none; line-height: 1.3;'
+    )
+    lay.addWidget(title_lbl)
+
+    # ── Date / location chips ──────────────────────────────────────────────
+    details = extract_details(notice.get('notice', ''))
+    chips_to_show = []
+    if details.get('date'):
+        chips_to_show.append(f"Date: {details['date']}")
+    if details.get('location'):
+        chips_to_show.append(f"Where: {details['location']}")
+
+    if chips_to_show:
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+        for text in chips_to_show:
+            chip = QLabel(text)
+            chip.setStyleSheet(
+                f'font-family: "{FONT_FAMILY}"; font-size: 11px; font-weight: 600; '
+                'color: #c084fc; background: transparent; border: none;'
+            )
+            chip_row.addWidget(chip)
+        chip_row.addStretch()
+        lay.addLayout(chip_row)
+
+    # ── Body text ─────────────────────────────────────────────────────────
+    body_text = strip_html(notice.get('notice', ''))
+    if body_text:
+        # Truncate to ~4 lines worth
+        if len(body_text) > 320:
+            body_text = body_text[:320].rsplit(' ', 1)[0] + '…'
+        body_lbl = QLabel(body_text)
+        body_lbl.setWordWrap(True)
+        body_lbl.setStyleSheet(
+            f'font-family: "{FONT_FAMILY}"; font-size: 13px; color: #94a3b8; '
+            'background: transparent; border: none; line-height: 1.5;'
+        )
+        lay.addWidget(body_lbl)
+
+    # ── Contact ────────────────────────────────────────────────────────────
+    if notice.get('contact'):
+        contact_lbl = QLabel(f"✦ Contact: {notice['contact']}")
+        contact_lbl.setStyleSheet(
+            f'font-family: "{FONT_FAMILY}"; font-size: 11px; color: #64748b; '
+            'background: transparent; border: none;'
+        )
+        lay.addWidget(contact_lbl)
+
+    lay.addStretch()
+    return card
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NoticesWidget — paginated (one notice visible at a time)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class NoticesWidget(QFrame):
+    def __init__(self, x=0, y=0, w=100, h=100,
+                 api_url='https://api.smartmirror.me',
                  keyword_filter='', scroll_speed=0.5,
-                 year_filter='All', cat_filters=None):
-        super().__init__(x, y, w, h, "", chromeless=True)
+                 year_filter='All', cat_filters=None,
+                 parent=None):
+        super().__init__(parent)
+        self.setGeometry(x, y, w, h)
         self.api_url = api_url
         self.keyword_filter = keyword_filter.strip().lower() if keyword_filter else ''
         self.scroll_speed = float(scroll_speed) if scroll_speed else 0.5
@@ -102,103 +236,149 @@ class NoticesWidget(Widget):
         self.cat_filters = cat_filters
         self.notices = []
         self.fetched_at = None
-        self.error_msg = ""
+        self.error_msg = ''
         self._lock = threading.Lock()
+        self._page = 0          # current notice index
+        self._filtered = []     # cached filtered list
+        self._auto_advance_paused_until = time.time() + 6.0
 
-        self.setup_ui_elements()
-        self._scroll_paused_until = time.time() + 4.0
-        self._start_fetch()
+        # ── Frame style ──────────────────────────────────────────────────
+        self.setObjectName('NoticesWidget')
+        self.setStyleSheet("""
+            #NoticesWidget {
+                background-color: rgba(13, 18, 30, 200);
+                border: none;
+                border-radius: 16px;
+            }
+        """)
 
-    def setup_ui_elements(self):
-        # We enforce a clean layout regardless of main_layout orientation
-        self.container_layout = QVBoxLayout()
-        self.container_layout.setContentsMargins(0, 0, 0, 0)
-        self.container_layout.setSpacing(6)
-        
-        # Header layout
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(14, 8, 14, 4)
+        # ── Root layout ──────────────────────────────────────────────────
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.title_label = QLabel("DAILY NOTICES", self)
+        # ── Header ───────────────────────────────────────────────────────
+        header = QWidget()
+        header.setStyleSheet('background: transparent;')
+        hdr_lay = QHBoxLayout(header)
+        hdr_lay.setContentsMargins(18, 14, 18, 6)
+        hdr_lay.setSpacing(8)
+
+        self.title_label = QLabel('Notices')
         self.title_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #e6e6e6; letter-spacing: 2px;"
+            f'font-family: "{FONT_FAMILY}"; font-size: 20px; font-weight: 700; '
+            'color: #a5b4fc; letter-spacing: 0.3px; background: transparent; border: none;'
         )
 
-        self.count_label = QLabel("0 notices", self)
-        self.count_label.setStyleSheet("font-size: 12px; color: #666666;")
-        self.count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.page_label = QLabel('')
+        self.page_label.setStyleSheet(
+            f'font-family: "{FONT_FAMILY}"; font-size: 11px; color: rgba(255,255,255,40); '
+            'background: transparent; border: none;'
+        )
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        header_layout.addWidget(self.title_label)
-        header_layout.addWidget(self.count_label)
-        self.container_layout.addLayout(header_layout)
+        hdr_lay.addWidget(self.title_label)
+        hdr_lay.addStretch()
+        hdr_lay.addWidget(self.page_label)
+        root.addWidget(header)
 
-        # Last-updated label
-        self.fetched_at_label = QLabel("", self)
+        # ── Fetched-at label ─────────────────────────────────────────────
+        self.fetched_at_label = QLabel('')
         self.fetched_at_label.setStyleSheet(
-            "font-size: 10px; color: rgba(255,255,255,80); padding: 0 14px 4px;"
+            f'font-family: "{FONT_FAMILY}"; font-size: 10px; color: rgba(255,255,255,45); '
+            'padding: 0 18px 4px; background: transparent; border: none;'
         )
         self.fetched_at_label.setVisible(False)
-        self.container_layout.addWidget(self.fetched_at_label)
-        
-        # Separator line
-        self.sep_line = QFrame(self)
-        self.sep_line.setFrameShape(QFrame.Shape.HLine)
-        self.sep_line.setStyleSheet("background-color: rgba(255, 255, 255, 18); max-height: 1px; border: none;")
-        self.container_layout.addWidget(self.sep_line)
-        
-        # Scroll Area
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("background: transparent; border: none;")
+        root.addWidget(self.fetched_at_label)
 
-        self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background: transparent;")
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(14, 8, 14, 8)
-        self.content_layout.setSpacing(8)
+        # ── Divider ──────────────────────────────────────────────────────
+        div = QWidget()
+        div.setFixedHeight(1)
+        div.setStyleSheet('background: rgba(255,255,255,0.07); margin: 0;')
+        root.addWidget(div)
 
-        self.scroll_area.setWidget(self.content_widget)
-        self.container_layout.addWidget(self.scroll_area)
-        
-        self.main_layout.addLayout(self.container_layout)
+        # ── Stacked widget (one card visible at a time) ───────────────────
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet('background: transparent;')
+        root.addWidget(self.stack, 1)
 
-        # Timers
+        # ── Dot indicator ────────────────────────────────────────────────
+        self.dot_row = QWidget()
+        self.dot_row.setStyleSheet('background: transparent;')
+        dot_lay = QHBoxLayout(self.dot_row)
+        dot_lay.setContentsMargins(16, 6, 16, 6)
+        dot_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dot_lay = dot_lay
+        root.addWidget(self.dot_row)
+
+        # ── Gesture footer ───────────────────────────────────────────────
+        self.gesture_footer = QWidget()
+        self.gesture_footer.setStyleSheet('background: transparent;')
+        foot_lay = QVBoxLayout(self.gesture_footer)
+        foot_lay.setContentsMargins(16, 8, 16, 18)
+        foot_lay.setSpacing(4)
+        foot_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # GIF label — large placeholder for gesture animation
+        # To use: movie = QMovie('path/to/gesture_left.gif')
+        #          self.gif_label.setMovie(movie); movie.start()
+        self.gif_label = QLabel()
+        self.gif_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.gif_label.setMinimumHeight(100)
+        self.gif_label.setMaximumHeight(120)
+        self.gif_label.setStyleSheet('background: transparent; border: none;')
+        foot_lay.addWidget(self.gif_label)
+
+        gesture_lbl = QLabel('Swipe left for more')
+        gesture_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gesture_lbl.setStyleSheet(
+            f'font-family: "{FONT_FAMILY}"; font-size: 12px; font-weight: 600; '
+            'color: rgba(148,163,184,0.65); letter-spacing: 1px; '
+            'background: transparent; border: none;'
+        )
+        foot_lay.addWidget(gesture_lbl)
+
+        root.addWidget(self.gesture_footer)
+
+        # ── Timers ───────────────────────────────────────────────────────
         self.fetch_timer = QTimer(self)
         self.fetch_timer.timeout.connect(self._start_fetch)
-        self.fetch_timer.start(600_000)  # every 10 min
+        self.fetch_timer.start(600_000)
 
-        self.scroll_timer = QTimer(self)
-        self.scroll_timer.timeout.connect(self._auto_scroll)
-        self.scroll_timer.start(25)
+        # Auto-advance to next notice every ~8 seconds
+        self._advance_timer = QTimer(self)
+        self._advance_timer.timeout.connect(self._auto_advance)
+        self._advance_timer.start(8000)
+
+        self._start_fetch()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────────
 
     def scroll_by_pixels(self, delta_y):
-        bar = self.scroll_area.verticalScrollBar()
-        bar.setValue(bar.value() + delta_y)
-        self._scroll_paused_until = time.time() + 5.0
-
-    def on_orientation_changed(self):
-        # When orientation is changed, re-setup layout and rebuild the UI
-        self.setup_ui_elements()
-        self.update_ui()
+        """Gesture scroll: positive = go to next notice, negative = previous."""
+        if delta_y > 0:
+            self._go_next()
+        else:
+            self._go_prev()
+        self._auto_advance_paused_until = time.time() + 8.0
 
     def apply_theme(self, primary_color, secondary_color, font_family):
-        super().apply_theme(primary_color, secondary_color, font_family)
-        font = QFont(font_family)
-        if hasattr(self, 'count_label'):
-            self.count_label.setFont(font)
         self.update_ui()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Fetch
+    # ──────────────────────────────────────────────────────────────────────
 
     def _start_fetch(self):
         threading.Thread(target=self._fetch_notices, daemon=True).start()
 
     def _fetch_notices(self):
         try:
-            res = requests.get(f"{self.api_url}/api/notices", timeout=10)
+            res = requests.get(f'{self.api_url}/api/notices', timeout=10)
             res.raise_for_status()
             data = res.json()
-            # Handle both {fetchedAt, notices:[]} wrapper and legacy bare array
             if isinstance(data, list):
                 notices = data
                 fetched_at = None
@@ -208,27 +388,31 @@ class NoticesWidget(Widget):
             with self._lock:
                 self.notices = notices
                 self.fetched_at = fetched_at
-                self.error_msg = ""
+                self.error_msg = ''
         except Exception as e:
-            print(f"[NoticesWidget] Failed to fetch notices: {e}")
+            print(f'[NoticesWidget] fetch error: {e}')
             with self._lock:
-                self.error_msg = "No notices available"
+                self.error_msg = 'No notices available'
                 self.notices = []
                 self.fetched_at = None
         QTimer.singleShot(0, self.update_ui)
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Filtering
+    # ──────────────────────────────────────────────────────────────────────
+
     def _passes_filter(self, notice):
         if self.year_filter and self.year_filter != 'All':
-            target_years = notice.get('targetYears') or notice.get('target_years') or ['All']
+            target_years = (notice.get('targetYears')
+                            or notice.get('target_years') or ['All'])
             if not isinstance(target_years, list):
                 target_years = [target_years]
-            target_years_str = [str(y) for y in target_years]
-            if 'All' not in target_years_str and self.year_filter not in target_years_str:
+            if 'All' not in [str(y) for y in target_years] \
+                    and self.year_filter not in [str(y) for y in target_years]:
                 return False
 
         if self.cat_filters is not None:
-            category = notice.get('category', 'General')
-            if category not in self.cat_filters:
+            if notice.get('category', 'General') not in self.cat_filters:
                 return False
 
         if not self.keyword_filter:
@@ -241,230 +425,111 @@ class NoticesWidget(Widget):
         ]).lower()
         return self.keyword_filter in haystack
 
-    def _build_card(self, notice, urgent=False):
-        category = notice.get('category', 'General')
-        is_urgent = urgent or notice.get('importance', 'normal') == 'high'
-        border_color = '#ef4444' if is_urgent else CAT_COLORS.get(category, '#94a3b8')
+    # ──────────────────────────────────────────────────────────────────────
+    # Dot indicator helpers
+    # ──────────────────────────────────────────────────────────────────────
 
-        card = QFrame()
-        card.setObjectName("NoticeCard")
-        if is_urgent:
-            card.setStyleSheet(f"""
-                #NoticeCard {{
-                    background-color: rgba(239, 68, 68, 0.07);
-                    border: 1px solid rgba(239, 68, 68, 0.18);
-                    border-left: 4px solid {border_color};
-                    border-radius: 10px;
-                }}
-            """)
-        else:
-            card.setStyleSheet(f"""
-                #NoticeCard {{
-                    background-color: rgba(255, 255, 255, 6);
-                    border: 1px solid rgba(255, 255, 255, 18);
-                    border-left: 3px solid {border_color};
-                    border-radius: 10px;
-                }}
-            """)
-        # Setup horizontal layout for notices in horizontal widgets, stack vertically in vertical widgets
-        if self.orientation == "horizontal":
-            card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(12, 12, 12, 12)
-            card_layout.setSpacing(14)
-            
-            # Left side badge + title details
-            left_side = QWidget()
-            left_layout = QVBoxLayout(left_side)
-            left_layout.setContentsMargins(0, 0, 0, 0)
-            left_layout.setSpacing(4)
-            
-            badge_lbl = QLabel("URGENT" if is_urgent else category.upper())
-            badge_lbl.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {'#fca5a5' if is_urgent else border_color};")
-            left_layout.addWidget(badge_lbl)
-            
-            title_lbl = QLabel(notice.get('title', ''))
-            title_lbl.setWordWrap(True)
-            title_lbl.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {'#fca5a5' if is_urgent else '#f2f2f2'};")
-            left_layout.addWidget(title_lbl)
-            
-            # Details chip if present
-            details = extract_details(notice.get('notice', ''))
-            if details:
-                det_row = QHBoxLayout()
-                det_row.setSpacing(6)
-                for label, key in [('Date', 'date'), ('Time', 'time'), ('Where', 'location')]:
-                    if details.get(key):
-                        chip = QLabel(f"{label}: {details[key]}")
-                        chip.setStyleSheet("""
-                            font-size: 10px;
-                            color: #bfbfbf;
-                            background-color: rgba(255, 255, 255, 15);
-                            border-radius: 8px;
-                            padding: 2px 6px;
-                        """)
-                        det_row.addWidget(chip)
-                det_row.addStretch()
-                left_layout.addLayout(det_row)
-            
-            card_layout.addWidget(left_side, 1)
-            
-            # Right side body description
-            body_lbl = QLabel(strip_html(notice.get('notice', '')))
-            body_lbl.setWordWrap(True)
-            body_lbl.setStyleSheet("font-size: 12px; color: #b8b8b8; line-height: 1.4;")
-            card_layout.addWidget(body_lbl, 1)
-        else:
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(12 if not is_urgent else 14, 12 if not is_urgent else 14, 12, 10)
-            card_layout.setSpacing(6 if not is_urgent else 8)
+    def _rebuild_dots(self, count, current):
+        # Clear existing dots
+        while self.dot_lay.count():
+            item = self.dot_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-            # Badge & target years row
-            row = QHBoxLayout()
-            badge_lbl = QLabel("URGENT" if is_urgent else category.upper())
-            badge_lbl.setStyleSheet(
-                f"font-size: 10px; font-weight: bold; "
-                f"color: {'#fca5a5' if is_urgent else border_color};"
-            )
-            row.addWidget(badge_lbl)
-
-            years = notice.get('targetYears', ['All'])
-            years_str = "Y" + ", Y".join([str(y) for y in years]) if 'All' not in years else "All"
-            years_lbl = QLabel(years_str)
-            years_lbl.setStyleSheet("font-size: 10px; color: #666666;")
-            years_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-            row.addWidget(years_lbl)
-            card_layout.addLayout(row)
-
-            # Title — larger font for urgent
-            title_lbl = QLabel(notice.get('title', ''))
-            title_lbl.setWordWrap(True)
-            if is_urgent:
-                title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #fca5a5;")
+        max_dots = 7
+        for i in range(min(count, max_dots)):
+            dot = QLabel()
+            is_active = (i == current) or (i == max_dots - 1 and current >= max_dots - 1)
+            if is_active:
+                dot.setFixedSize(20, 6)
+                dot.setStyleSheet(
+                    'background: rgba(165,180,252,0.85); border-radius: 3px; border: none;'
+                )
             else:
-                title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #f2f2f2;")
-            card_layout.addWidget(title_lbl)
+                dot.setFixedSize(6, 6)
+                dot.setStyleSheet(
+                    'background: rgba(255,255,255,0.2); border-radius: 3px; border: none;'
+                )
+            self.dot_lay.addWidget(dot)
 
-            # Details chips
-            details = extract_details(notice.get('notice', ''))
-            if details:
-                det_row = QHBoxLayout()
-                det_row.setSpacing(6)
-                for label, key in [('Date', 'date'), ('Time', 'time'), ('Where', 'location')]:
-                    if details.get(key):
-                        chip = QLabel(f"{label}: {details[key]}")
-                        chip.setStyleSheet("""
-                            font-size: 10px;
-                            color: #bfbfbf;
-                            background-color: rgba(255, 255, 255, 15);
-                            border-radius: 8px;
-                            padding: 2px 6px;
-                        """)
-                        det_row.addWidget(chip)
-                det_row.addStretch()
-                card_layout.addLayout(det_row)
-
-            # Body text
-            body_text = strip_html(notice.get('notice', ''))
-            body_lbl = QLabel(body_text)
-            body_lbl.setWordWrap(True)
-            if is_urgent:
-                body_lbl.setStyleSheet("font-size: 13px; color: rgba(255,220,220,0.82); line-height: 1.4;")
-            else:
-                body_lbl.setStyleSheet("font-size: 12px; color: #b8b8b8; line-height: 1.4;")
-            card_layout.addWidget(body_lbl)
-
-            if notice.get('contact'):
-                contact_lbl = QLabel(f"Contact: {notice['contact']}")
-                contact_lbl.setStyleSheet("font-size: 11px; color: #666666;")
-                card_layout.addWidget(contact_lbl)
-
-        return card
+    # ──────────────────────────────────────────────────────────────────────
+    # UI update
+    # ──────────────────────────────────────────────────────────────────────
 
     def update_ui(self):
-        # Clear existing content
-        while self.content_layout.count():
-            child = self.content_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        # Clear stack
+        while self.stack.count():
+            w = self.stack.widget(0)
+            self.stack.removeWidget(w)
+            w.deleteLater()
 
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
-            filtered.sort(key=lambda n: (n.get('importance', 'normal') != 'high'))
+            filtered.sort(key=lambda n: n.get('importance', 'normal') != 'high')
             error_msg = self.error_msg
             fetched_at = self.fetched_at
 
-        self.count_label.setText(f"{len(filtered)} notice{'s' if len(filtered) != 1 else ''}")
+        self._filtered = filtered
 
-        # Last-updated label
         label_text = format_fetched_at(fetched_at)
         if label_text:
-            self.fetched_at_label.setText(f"Updated: {label_text}")
+            self.fetched_at_label.setText(f'Updated: {label_text}')
             self.fetched_at_label.setVisible(True)
         else:
             self.fetched_at_label.setVisible(False)
 
         if not filtered:
-            msg = error_msg or "No notices available today."
-            lbl = QLabel(msg, self)
-            lbl.setStyleSheet("font-size: 12px; color: rgba(255, 255, 255, 180); padding: 10px;")
-            self.content_layout.addWidget(lbl)
+            msg = error_msg or 'No notices available today.'
+            lbl = QLabel(msg)
+            lbl.setStyleSheet(
+                f'font-family: "{FONT_FAMILY}"; font-size: 14px; '
+                'color: rgba(255,255,255,150); padding: 30px; '
+                'background: transparent; border: none;'
+            )
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
+            self.stack.addWidget(lbl)
+            self.page_label.setText('')
+            self._rebuild_dots(0, 0)
             return
 
-        urgent = [n for n in filtered if n.get('importance', 'normal') == 'high']
-        normal = [n for n in filtered if n.get('importance', 'normal') != 'high']
+        # Clamp page
+        self._page = max(0, min(self._page, len(filtered) - 1))
 
-        # Determine if we should use 2-column layout
-        widget_width = self.width()
-        use_two_col = widget_width >= TWO_COL_MIN_WIDTH and len(normal) >= 2
+        # Build all card pages
+        for notice in filtered:
+            card = _make_card_widget(notice)
+            self.stack.addWidget(card)
 
-        # Urgent notices — always full-width at the top
-        for notice in urgent:
-            card = self._build_card(notice, urgent=True)
-            self.content_layout.addWidget(card)
+        self.stack.setCurrentIndex(self._page)
+        self.page_label.setText(f'{self._page + 1} / {len(filtered)}')
+        self._rebuild_dots(len(filtered), self._page)
 
-        if urgent and normal:
-            # Small spacer between urgent and normal section
-            spacer_line = QFrame()
-            spacer_line.setFrameShape(QFrame.Shape.HLine)
-            spacer_line.setStyleSheet("background: rgba(255,255,255,12); max-height: 1px; border: none; margin: 2px 0;")
-            self.content_layout.addWidget(spacer_line)
+        self._auto_advance_paused_until = time.time() + 6.0
 
-        # Normal notices — 2-col grid or single column
-        if use_two_col:
-            grid_widget = QWidget()
-            grid_widget.setStyleSheet("background: transparent;")
-            grid = QGridLayout(grid_widget)
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setSpacing(8)
-            for i, notice in enumerate(normal):
-                card = self._build_card(notice)
-                grid.addWidget(card, i // 2, i % 2)
-            # Distribute columns equally
-            grid.setColumnStretch(0, 1)
-            grid.setColumnStretch(1, 1)
-            self.content_layout.addWidget(grid_widget)
-        else:
-            for notice in normal:
-                card = self._build_card(notice)
-                self.content_layout.addWidget(card)
+    # ──────────────────────────────────────────────────────────────────────
+    # Pagination
+    # ──────────────────────────────────────────────────────────────────────
 
-        self.content_layout.addStretch()
-
-        self._scroll_paused_until = time.time() + 4.0
-        self.scroll_area.verticalScrollBar().setValue(0)
-
-    def _auto_scroll(self):
-        now = time.time()
-        if now < self._scroll_paused_until:
+    def _go_next(self):
+        if not self._filtered:
             return
-        bar = self.scroll_area.verticalScrollBar()
-        max_val = bar.maximum()
-        if max_val <= 0:
-            return
+        self._page = (self._page + 1) % len(self._filtered)
+        self.stack.setCurrentIndex(self._page)
+        self.page_label.setText(f'{self._page + 1} / {len(self._filtered)}')
+        self._rebuild_dots(len(self._filtered), self._page)
 
-        new_val = bar.value() + 1
-        if new_val >= max_val:
-            bar.setValue(0)
-            self._scroll_paused_until = now + 2.0
-        else:
-            bar.setValue(new_val)
+    def _go_prev(self):
+        if not self._filtered:
+            return
+        self._page = (self._page - 1) % len(self._filtered)
+        self.stack.setCurrentIndex(self._page)
+        self.page_label.setText(f'{self._page + 1} / {len(self._filtered)}')
+        self._rebuild_dots(len(self._filtered), self._page)
+
+    def _auto_advance(self):
+        if time.time() < self._auto_advance_paused_until:
+            return
+        if not self._filtered:
+            return
+        self._go_next()

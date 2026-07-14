@@ -1,16 +1,16 @@
 :root {
-  /* Global Fonts */
-  --font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+/* Fonts */
+--font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
-  /* Theme Backgrounds and Text */
-  --bg-color: #0a0a0c;
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  
-  /* Glassmorphism Panel Variables */
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-hover: rgba(255, 255, 255, 0.08);
+/* Theme Backgrounds and Text */
+--bg-color: #060608;
+--text-primary: #ffffff;
+--text-secondary: rgba(255, 255, 255, 0.6);
+
+/* Glassmorphism Panel Variables — freeform (transparent) for dashboard */
+--glass-bg: transparent;
+--glass-border: rgba(255, 255, 255, 0.06);
+--glass-hover: rgba(255, 255, 255, 0.06);
 
   /* Accent Settings (Changed all Blue accents to White) */
   --accent: #ffffff;
