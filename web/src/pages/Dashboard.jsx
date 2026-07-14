@@ -77,7 +77,7 @@ export default function Dashboard() {
 
   return (
     <div className="h-screen w-full flex flex-col bg-background text-on-background font-body-md overflow-hidden relative">
-      {/* Background Ambient Glow Orbs */}
+      {/* Background Ambient Glow Orbs — darker/more subtle */}
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         <motion.div 
           animate={{
@@ -86,7 +86,7 @@ export default function Dashboard() {
             y: [0, -15, 25, 0],
           }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary rounded-full blur-[140px] opacity-10"
+          className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary rounded-full blur-[160px] opacity-[0.07]"
         />
         <motion.div 
           animate={{
@@ -95,7 +95,7 @@ export default function Dashboard() {
             y: [0, 20, -15, 0],
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-tertiary rounded-full blur-[140px] opacity-10"
+          className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-tertiary rounded-full blur-[160px] opacity-[0.07]"
         />
       </div>
 
@@ -128,27 +128,26 @@ export default function Dashboard() {
         {/* Bento Grid layout */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 flex-1 min-h-[500px]">
           
-          {/* Left Column: Notices */}
+          {/* Left Column: Notices — freeform, no background */}
           <motion.section 
             ref={noticesRef}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5 }}
-            className="md:col-span-4 glass-panel rounded-xl flex flex-col relative overflow-hidden h-full min-h-[400px] border border-outline-variant/35"
+            className="md:col-span-4 flex flex-col relative h-full min-h-[400px]"
           >
             <DailyNoticesWidget widget={{}} readonly={true} />
           </motion.section>
 
           {/* Middle Column: Clock (top) & Featured News (bottom) */}
           <div ref={kingsWeekRef} className="md:col-span-5 flex flex-col gap-6 h-full">
-            {/* Clock Widget */}
+            {/* Clock Widget — no background */}
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="glass-panel rounded-xl flex flex-col items-center justify-center p-6 relative overflow-hidden group border border-outline-variant/35"
+              className="flex flex-col items-center justify-center p-6 relative overflow-hidden group min-h-[120px]"
             >
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
               <Clock />
             </motion.div>
 
@@ -156,13 +155,13 @@ export default function Dashboard() {
             <KingsWeekWidget />
           </div>
 
-          {/* Right Column: Timetable */}
+          {/* Right Column: Timetable — freeform, no background */}
           <motion.section 
             ref={timetableRef}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5 }}
-            className="md:col-span-3 glass-panel rounded-xl flex flex-col relative overflow-hidden h-full min-h-[400px] border border-outline-variant/35"
+            className="md:col-span-3 flex flex-col relative h-full min-h-[400px]"
           >
             <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
           </motion.section>

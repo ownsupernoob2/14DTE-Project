@@ -154,9 +154,12 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const [showSettings, setShowSettings] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
 
-  // Mirror auto-scroll
+  // Mirror auto-scroll (for edit mode)
   const scrollRef = useRef(null);
   const scrollState = useRef({ scrollInterval: null, holdTimer: null });
+
+  // Mirror paginated mode state (for readonly/dashboard mode)
+  const [mirrorPage, setMirrorPage] = useState(0);
 
   // ─── ResizeObserver: detect wide layout for 2-col ────────────────────────────
   useEffect(() => {
@@ -305,6 +308,15 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return () => { clearTimeout(init); cleanup(); };
   }, [readonly, loading, error, sorted.length, scrollSpeed]);
 
+  // ─── Mirror page auto-advance (paginated mode) ────────────────────────────────
+  useEffect(() => {
+    if (!readonly || sorted.length === 0) return;
+    const id = setInterval(() => {
+      setMirrorPage(p => (p + 1) % sorted.length);
+    }, 8000);
+    return () => clearInterval(id);
+  }, [readonly, sorted.length]);
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   const toggleExpand = (id) => {
     setExpandedIds(prev => {
@@ -355,39 +367,182 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   };
   const fetchedAtLabel = formatFetchedAt(fetchedAt);
 
-  // ─── MIRROR MODE ─────────────────────────────────────────────────────────────
+  // ─── MIRROR / READONLY MODE ───────────────────────────────────────────────
+  // Paginated: one notice visible at a time with dot indicator + gesture hint
   if (readonly) {
-    return (
-      <section className="h-full flex flex-col relative overflow-hidden w-full select-none" ref={containerRef}>
-        {/* Sticky Header */}
-        <div className="p-4 border-b border-outline-variant/30 bg-surface-container-high/50 sticky top-0 z-10 backdrop-blur-md flex justify-between items-center select-none">
-          <h3 className="font-headline-md text-xl font-semibold text-primary">Notices</h3>
-          <span className="material-symbols-outlined text-outline text-xl" data-icon="campaign">campaign</span>
-        </div>
+    const current = sorted[mirrorPage] || null;
+    const colors = current ? (CATEGORY_COLORS[current.category] || CATEGORY_COLORS['General']) : CATEGORY_COLORS['General'];
+    const isUrgent = current?.importance === 'high';
+    const accent = isUrgent ? '#ef4444' : colors.accent;
 
-        {/* Scrollable Notices List */}
-        <div 
-          className="p-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1 pb-[25vh]" 
-          ref={scrollRef}
-          style={{ scrollBehavior: 'smooth' }}
-        >
-          {sorted.length === 0 ? (
-            <div className="opacity-50 italic text-center p-6 text-sm text-outline">
-              No notices match your settings.
-            </div>
-          ) : (
-            sorted.map(n => (
-              <NoticeCard key={n.id} n={n} />
-            ))
+    return (
+      <section
+        className="h-full flex flex-col select-none"
+        ref={containerRef}
+        style={{ fontFamily: "'Hanken Grotesk', sans-serif" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-2">
+          <h3 style={{
+            fontSize: '20px',
+            fontWeight: 700,
+            color: '#a5b4fc',
+            letterSpacing: '0.3px',
+            fontFamily: "'Hanken Grotesk', sans-serif",
+          }}>Notices</h3>
+          {fetchedAtLabel && (
+            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
+              Updated: {fetchedAtLabel}
+            </span>
+          )}
+          {sorted.length > 0 && (
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
+              {mirrorPage + 1} / {sorted.length}
+            </span>
           )}
         </div>
 
-        {/* Swipe Gesture Hint Overlay */}
-        <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-surface-container-low via-surface-container-low/80 to-transparent p-4 flex flex-col items-center justify-end pb-8 h-[20vh] pointer-events-none z-20">
-          <div className="flex flex-col items-center text-primary animate-pulse scale-110">
-            <span className="material-symbols-outlined text-4xl" data-icon="swipe_left">swipe_left</span>
-            <span className="font-label-caps text-[10px] mt-1 font-bold tracking-wider uppercase">Swipe left for more</span>
+        {/* Thin divider */}
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', margin: '0' }} />
+
+        {/* Single notice card */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {sorted.length === 0 ? (
+            <div style={{ padding: '32px 20px', opacity: 0.5, textAlign: 'center', fontSize: '14px' }}>
+              No notices available today.
+            </div>
+          ) : current ? (
+            <motion.div
+              key={mirrorPage}
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.35 }}
+              style={{
+                padding: '18px 18px 14px',
+                borderLeft: `3px solid ${accent}`,
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Badge row */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: colors.text,
+                  background: colors.bg,
+                  borderRadius: '6px',
+                  padding: '3px 10px',
+                }}>
+                  {current.category}
+                </span>
+                {isUrgent && (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#f87171',
+                    background: 'rgba(239,68,68,0.18)',
+                    borderRadius: '6px',
+                    padding: '3px 10px',
+                  }}>
+                    URGENT
+                  </span>
+                )}
+              </div>
+
+              {/* Title */}
+              <div style={{
+                fontSize: '20px',
+                fontWeight: 700,
+                color: '#f8fafc',
+                lineHeight: 1.3,
+                wordBreak: 'break-word',
+              }}>
+                {current.title}
+              </div>
+
+              {/* Detail chips */}
+              {(current.details?.date || current.details?.location) && (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  {current.details?.date && (
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
+                      Date: {current.details.date}
+                    </span>
+                  )}
+                  {current.details?.location && (
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
+                      Where: {current.details.location}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Body text */}
+              <p style={{
+                fontSize: '13px',
+                color: '#94a3b8',
+                lineHeight: 1.55,
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 5,
+                WebkitBoxOrient: 'vertical',
+              }}>
+                {buildPreview(current.notice, 320)}
+              </p>
+
+              {/* Contact */}
+              {current.contact && (
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                  ✦ Contact: {current.contact}
+                </div>
+              )}
+            </motion.div>
+          ) : null}
+        </div>
+
+        {/* Dot indicator */}
+        {sorted.length > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', padding: '6px 16px 4px' }}>
+            {sorted.slice(0, 7).map((_, i) => (
+              <div
+                key={i}
+                onClick={() => setMirrorPage(i)}
+                style={{
+                  width: i === mirrorPage ? '20px' : '6px',
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: i === mirrorPage ? 'rgba(165,180,252,0.85)' : 'rgba(255,255,255,0.2)',
+                  cursor: 'pointer',
+                  transition: 'width 0.3s ease, background 0.3s ease',
+                }}
+              />
+            ))}
           </div>
+        )}
+
+        {/* Gesture footer */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '8px 16px 18px',
+          gap: '4px',
+        }}>
+          {/* GIF placeholder — replace src with actual GIF path */}
+          {/* <img src="/assets/gesture_left.gif" alt="" style={{ height: '80px' }} /> */}
+          <span className="material-symbols-outlined animate-pulse"
+            style={{ fontSize: '48px', color: 'rgba(165,180,252,0.55)' }}
+            data-icon="swipe_left"
+          >swipe_left</span>
+          <span style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: 'rgba(148,163,184,0.65)',
+            letterSpacing: '1px',
+          }}>Swipe left for more</span>
         </div>
       </section>
     );
