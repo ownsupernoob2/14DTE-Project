@@ -167,66 +167,47 @@ class SmartMirrorPro(QMainWindow):
         self.banner_frame.setObjectName("BannerFrame")
         self.banner_frame.setStyleSheet("""
             #BannerFrame {
-                background-color: rgba(153, 27, 27, 0.95);
-                border: none;
-                border-radius: 12px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a0d0d, stop:1 #1a0505);
+                border-bottom: 1px solid #4a1414;
             }
         """)
-        self.banner_frame.setFixedHeight(68)
+        self.banner_frame.setFixedHeight(48)
         self.banner_frame.hide()
 
         lay = QHBoxLayout(self.banner_frame)
-        lay.setContentsMargins(18, 10, 18, 10)
-        lay.setSpacing(14)
+        lay.setContentsMargins(24, 6, 24, 6)
+        lay.setSpacing(12)
 
-        self.warn_icon = QLabel("⚠", self.banner_frame)
-        self.warn_icon.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; font-size: 20px; '
-            'background: transparent; border: none; color: #fca5a5;'
+        self.tag_lbl = QLabel("Notice", self.banner_frame)
+        self.tag_lbl.setStyleSheet(
+            'font-family: "Segoe UI", sans-serif; font-size: 11px; font-weight: 700; '
+            'color: #1a0000; background-color: #ff4d4d; border-radius: 3px; padding: 2px 8px;'
         )
-        self.warn_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.warn_icon)
+        lay.addWidget(self.tag_lbl)
 
-        text_container = QWidget(self.banner_frame)
-        text_container.setStyleSheet("background: transparent; border: none;")
-        text_lay = QVBoxLayout(text_container)
-        text_lay.setContentsMargins(0, 0, 0, 0)
-        text_lay.setSpacing(3)
-
-        self.banner_title = QLabel("IMPORTANT MESSAGE / NOTICE", text_container)
-        self.banner_title.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; color: #fca5a5; '
-            'font-size: 11px; font-weight: 700; letter-spacing: 1.5px;'
-        )
-        text_lay.addWidget(self.banner_title)
-
-        self.banner_label = QLabel(text_container)
+        self.banner_label = QLabel(self.banner_frame)
         self.banner_label.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; color: #ffffff; '
-            'font-size: 13px; font-weight: 500;'
+            'font-family: "Segoe UI", sans-serif; color: #ffdcdc; '
+            'font-size: 14px; font-weight: 500;'
         )
-        text_lay.addWidget(self.banner_label)
-
-        lay.addWidget(text_container, 1)
+        lay.addWidget(self.banner_label, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: user layout (floating glassmorphic cards)
+    # Build: user layout (matching new-style.html 2-column grid)
     # ─────────────────────────────────────────────────────────────────────
     def _build_user_layout(self):
         self.user_container = QWidget(self.central_widget)
-        self.user_container.setStyleSheet("background: transparent;")
+        self.user_container.setStyleSheet("background: #000000;")
 
-        # ── Left column: Notices ──────────────────────────────────────────
+        # Left column: Notices (34%)
         self.notices_widget = NoticesWidget(
             api_url=API_URL, parent=self.user_container
         )
 
-        # ── Center column: Clock (top) + Kings Week (bottom) ─────────────
+        # Right top: Clock header row
         self.clock_widget = ClockWidget(parent=self.user_container)
 
-        self.kings_week_widget = KingsWeekWidget(self.user_container)
-
-        # ── Right column: Timetable ───────────────────────────────────────
+        # Right main: Timetable Class Focus block (66%)
         self.timetable_widget = TimetableWidget(
             api_url=API_URL, parent=self.user_container
         )
@@ -234,32 +215,24 @@ class SmartMirrorPro(QMainWindow):
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position all user layout elements given the window size."""
-        banner_h = self.banner_frame.height() + 16 if not self.banner_frame.isHidden() else 0
-        margin   = 16
-        top      = banner_h + margin
+        """Position user layout elements matching new-style.html 34% / 66% split."""
+        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        top = banner_h
 
-        self.user_container.setGeometry(0, 0, w, h)
+        self.user_container.setGeometry(0, top, w, h - top)
 
-        # 3 columns — side panels 27% each, center fills the rest
-        col_w    = int((w - margin * 4) * 0.27)
-        center_w = w - col_w * 2 - margin * 4
+        left_w = int(w * 0.34)
+        right_w = w - left_w
 
-        # Notices (left column)
-        self.notices_widget.setGeometry(margin, top, col_w, h - top - margin)
+        # Left column: Notices
+        self.notices_widget.setGeometry(0, 0, left_w, h - top)
 
-        # Clock (center top) — taller so Kings Week gets ample image space
-        clock_h = int(h * 0.22)
-        self.clock_widget.setGeometry(margin * 2 + col_w, top, center_w, clock_h)
+        # Right top: Clock row
+        self.clock_widget.setGeometry(left_w + 34, 22, right_w - 68, 70)
 
-        # Kings Week (center bottom)
-        kw_y = top + clock_h + margin
-        self.kings_week_widget.setGeometry(
-            margin * 2 + col_w, kw_y, center_w, h - kw_y - margin
-        )
+        # Right main: Timetable Class Focus
+        self.timetable_widget.setGeometry(left_w + 34, 100, right_w - 68, h - top - 120)
 
-        # Timetable (right column)
-        self.timetable_widget.setGeometry(w - margin - col_w, top, col_w, h - top - margin)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: guest layout (clock + notices + prompt)

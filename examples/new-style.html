@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Mirror — Layout Concept</title>
+    <style>
+        :root {
+            --bg: #000000;
+            --panel: #0a0a0a;
+            --line: #1c1c1c;
+            --text-hi: #ffffff;
+            --text-mid: #d0d0d0;
+            --text-low: #8f8f8f;
+
+            --urgent: #ff4d4d;
+            --warn: #ffb020;
+            --ok: #35d07f;
+            --now: #4fc3ff;
+
+            --font-display: 'Segoe UI', system-ui, sans-serif;
+            --font-mono: 'Consolas', 'SFMono-Regular', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: var(--bg);
+            color: var(--text-hi);
+            font-family: var(--font-display);
+            overflow: hidden;
+        }
+
+        #stage {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ---------- DEMO CONTROLS (not part of mirror UI) ---------- */
+        #demo-controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 999;
+            display: flex;
+            gap: 6px;
+            background: rgba(20, 20, 20, 0.9);
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid #262626;
+        }
+
+        #demo-controls button {
+            background: #161616;
+            color: #ccc;
+            border: 1px solid #2a2a2a;
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: var(--font-display);
+        }
+
+        #demo-controls button.active {
+            background: var(--now);
+            color: #000;
+            border-color: var(--now);
+            font-weight: 600;
+        }
+
+        /* ---------- TOP BANNER ---------- */
+        #banner {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 28px;
+            background: linear-gradient(90deg, #3a0d0d, #1a0505);
+            border-bottom: 1px solid #4a1414;
+            color: #ffdcdc;
+            font-size: 15px;
+            letter-spacing: 0.2px;
+        }
+
+        #banner.show {
+            display: flex;
+        }
+
+        #banner .tag {
+            background: var(--urgent);
+            color: #1a0000;
+            font-weight: 700;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            padding: 3px 8px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        /* ---------- MAIN GRID ---------- */
+        #main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 34% 66%;
+            min-height: 0;
+        }
+
+        /* ================= LEFT: NOTICES ================= */
+        #notices-panel {
+            border-right: 1px solid var(--line);
+            padding: 22px 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        #notices-panel .panel-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 14px;
+        }
+
+        #notices-panel .panel-head h2 {
+            font-size: 22px;
+            letter-spacing: 0.02em;
+            text-transform: none;
+            color: var(--text-hi);
+            font-weight: 700;
+            margin: 0;
+        }
+
+        #notices-panel .panel-head .count {
+            font-size: 13px;
+            color: var(--text-mid);
+            font-family: var(--font-mono);
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            font-size: 14px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1px solid #333;
+            color: var(--text-mid);
+            background: transparent;
+        }
+
+        .filter-chip.on {
+            border-color: var(--now);
+            color: var(--now);
+        }
+
+        #notice-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow: hidden;
+            flex: 1;
+        }
+
+        .notice-card {
+            border-left: 3px solid var(--text-low);
+            background: var(--panel);
+            padding: 10px 12px;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .notice-card.urgent {
+            border-left-color: var(--urgent);
+        }
+
+        .notice-card.medium {
+            border-left-color: var(--warn);
+        }
+
+        .notice-card.low {
+            border-left-color: #3a3a3a;
+        }
+
+        .notice-card .meta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 11px;
+            color: var(--text-mid);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .notice-card.urgent .meta {
+            color: var(--urgent);
+        }
+
+        .notice-card.medium .meta {
+            color: var(--warn);
+        }
+
+        .notice-card .title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-hi);
+            margin-bottom: 3px;
+        }
+
+        .notice-card .body {
+            font-size: 13px;
+            color: var(--text-mid);
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* ================= RIGHT: CLASS FOCUS ================= */
+        #focus-panel {
+            display: flex;
+            flex-direction: column;
+            padding: 22px 34px;
+            min-height: 0;
+        }
+
+        #clock-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            color: var(--text-mid);
+            font-family: var(--font-mono);
+            margin-bottom: 8px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 20px;
+        }
+
+        #clock-row #date-label {
+            font-size: 18px;
+            color: var(--text-mid);
+        }
+
+        #clock-row #time {
+            color: var(--text-hi);
+            font-size: 44px;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+
+        #class-focus {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 34px;
+        }
+
+        .eyebrow {
+            font-size: 14px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--now);
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        #subject {
+            font-size: 112px;
+            font-weight: 700;
+            line-height: 0.95;
+            letter-spacing: -0.01em;
+            margin: 0 0 22px 0;
+        }
+
+        #details-row {
+            display: flex;
+            gap: 44px;
+            margin-bottom: 4px;
+        }
+
+        .detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .detail .k {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mid);
+            margin-bottom: 4px;
+        }
+
+        .detail .v {
+            font-size: 30px;
+            font-weight: 700;
+            color: var(--text-hi);
+        }
+
+        #next-block {
+            border-top: 1px solid var(--line);
+            padding-top: 26px;
+            display: flex;
+            align-items: baseline;
+            gap: 20px;
+        }
+
+        #next-block .eyebrow {
+            color: var(--text-low);
+            margin-bottom: 0;
+            flex-shrink: 0;
+            width: 90px;
+        }
+
+        #next-subject {
+            font-size: 40px;
+            font-weight: 700;
+            color: var(--text-hi);
+        }
+
+        #next-meta {
+            font-size: 16px;
+            color: var(--text-mid);
+        }
+
+        #countdown {
+            font-family: var(--font-mono);
+        }
+
+        #countdown.warn {
+            color: var(--warn);
+        }
+
+        #countdown.urgent {
+            color: var(--urgent);
+        }
+
+        /* ================= GUEST STATE ================= */
+        #guest-cta {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            flex: 1;
+            gap: 14px;
+        }
+
+        #guest-cta .glyph {
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            border: 2px solid var(--text-low);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--text-low);
+            margin-bottom: 6px;
+        }
+
+        #guest-cta h1 {
+            font-size: 22px;
+            font-weight: 600;
+            margin: 0;
+            color: var(--text-hi);
+        }
+
+        #guest-cta p {
+            font-size: 13px;
+            color: var(--text-mid);
+            margin: 0;
+            max-width: 320px;
+        }
+
+        #guest-cta .url {
+            margin-top: 10px;
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--now);
+            letter-spacing: 0.02em;
+        }
+
+        /* ================= IDLE STATE ================= */
+        #idle-view {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100%;
+        }
+
+        #idle-view #idle-time {
+            font-family: var(--font-mono);
+            font-size: 72px;
+            font-weight: 300;
+            color: #2a2a2a;
+            letter-spacing: 0.02em;
+        }
+
+        #idle-view #idle-date {
+            font-size: 14px;
+            color: #1e1e1e;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-top: 6px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="demo-controls">
+        <button data-state="idle">Idle</button>
+        <button data-state="guest">Guest</button>
+        <button data-state="user" class="active">Recognized</button>
+    </div>
+
+    <div id="idle-view">
+        <div id="idle-time">--:--</div>
+        <div id="idle-date">—</div>
+    </div>
+
+    <div id="stage">
+        <div id="banner">
+            <span class="tag">Notice</span>
+            <span>All students must attend the special assembly at 2:00pm today regarding new campus security
+                protocols.</span>
+        </div>
+
+        <div id="main">
+            <!-- LEFT: NOTICES -->
+            <div id="notices-panel">
+                <div class="panel-head">
+                    <h2>Notices</h2>
+                    <span class="count">6 today</span>
+                </div>
+                <div class="filter-row">
+                    <span class="filter-chip on">All</span>
+                    <span class="filter-chip">Academic</span>
+                    <span class="filter-chip">Sports</span>
+                    <span class="filter-chip">Arts</span>
+                </div>
+                <div id="notice-list">
+                    <div class="notice-card urgent">
+                        <div class="meta"><span>Urgent · Today</span></div>
+                        <div class="title">Room change: 13PHY</div>
+                        <div class="body">Period 2 physics has moved from Lab 2 to Lab 4 for today only.</div>
+                    </div>
+                    <div class="notice-card medium">
+                        <div class="meta"><span>Academic · 14 Aug</span></div>
+                        <div class="title">University of Otago Scholarships now open</div>
+                        <div class="body">Applications close 14th August. See Mrs Campbell for details.</div>
+                    </div>
+                    <div class="notice-card medium">
+                        <div class="meta"><span>Arts &amp; Culture · Today</span></div>
+                        <div class="title">Itinerant music lessons</div>
+                        <div class="body">Room 26 window updated. Drums with Andrew today.</div>
+                    </div>
+                    <div class="notice-card low">
+                        <div class="meta"><span>Service · 30 Jul</span></div>
+                        <div class="title">Open Night volunteers needed</div>
+                        <div class="body">See your teacher to have your name added to the list.</div>
+                    </div>
+                    <div class="notice-card low">
+                        <div class="meta"><span>General</span></div>
+                        <div class="title">Library books overdue reminder</div>
+                        <div class="body">Return any overdue books to the library by Friday.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: FOCUS -->
+            <div id="focus-panel">
+                <div id="clock-row">
+                    <span id="date-label">Wed 15 Jul</span>
+                    <span id="time">--:--</span>
+                </div>
+
+                <div id="class-focus">
+                    <div>
+                        <div class="eyebrow">Current class</div>
+                        <h1 id="subject">13DTE</h1>
+                        <div id="details-row">
+                            <div class="detail">
+                                <span class="k">Room</span>
+                                <span class="v">T5</span>
+                            </div>
+                            <div class="detail">
+                                <span class="k">Ends</span>
+                                <span class="v">1:00pm</span>
+                            </div>
+                            <div class="detail">
+                                <span class="k">Left</span>
+                                <span class="v" id="countdown">19m</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="next-block">
+                        <div class="eyebrow">Next</div>
+                        <div>
+                            <span id="next-subject">13PHY</span>
+                            <div id="next-meta">Lab 4 · 1:00pm</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="guest-cta">
+                    <div class="glyph">＋</div>
+                    <h1>Not recognized</h1>
+                    <p>Register your face on the site to see your timetable and personal notices here.</p>
+                    <div class="url">smartmirror.me/register</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---- demo state switching ----
+        const buttons = document.querySelectorAll('#demo-controls button');
+        const banner = document.getElementById('banner');
+        const idleView = document.getElementById('idle-view');
+        const stage = document.getElementById('stage');
+        const classFocus = document.getElementById('class-focus');
+        const guestCta = document.getElementById('guest-cta');
+        const noticesPanel = document.getElementById('notices-panel');
+
+        function setState(state) {
+            buttons.forEach(b => b.classList.toggle('active', b.dataset.state === state));
+
+            if (state === 'idle') {
+                idleView.style.display = 'flex';
+                stage.style.display = 'none';
+                return;
+            }
+            idleView.style.display = 'none';
+            stage.style.display = 'flex';
+
+            // Notices are public — shown in both guest and recognized states.
+            // Only the right-hand panel (class/timetable) depends on being signed in.
+            noticesPanel.classList.remove('hidden');
+            banner.classList.add('show');
+
+            if (state === 'guest') {
+                classFocus.style.display = 'none';
+                guestCta.style.display = 'flex';
+            } else {
+                classFocus.style.display = 'flex';
+                guestCta.style.display = 'none';
+            }
+        }
+
+        buttons.forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+
+        // ---- live clock ----
+        function pad(n) { return n.toString().padStart(2, '0'); }
+        function updateClock() {
+            const now = new Date();
+            const t = pad(now.getHours()) + ':' + pad(now.getMinutes());
+            document.getElementById('time').textContent = t;
+            document.getElementById('idle-time').textContent = t;
+            document.getElementById('idle-date').textContent = now.toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'long' });
+            document.getElementById('date-label').textContent = now.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' });
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        // ---- countdown demo (minute-level, not a per-second ticker) ----
+        // Real use happens at class change / break, not mid-lesson, so this is
+        // a quiet secondary detail — not the hero element.
+        let remainingMinutes = 19;
+        const countdownEl = document.getElementById('countdown');
+
+        function updateCountdown() {
+            if (remainingMinutes < 0) { remainingMinutes = 0; }
+            countdownEl.textContent = remainingMinutes + 'm';
+
+            let cls = '';
+            if (remainingMinutes <= 2) { cls = 'urgent'; }
+            else if (remainingMinutes <= 5) { cls = 'warn'; }
+            countdownEl.className = cls;
+        }
+        updateCountdown();
+        setInterval(() => { remainingMinutes--; updateCountdown(); }, 60000);
+
+        setState('user');
+    </script>
+</body>
+
+</html>

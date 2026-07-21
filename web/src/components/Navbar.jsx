@@ -10,11 +10,11 @@ export default function Navbar({ activeTab = 'dashboard', onTabClick }) {
   ]
 
   return (
-    <header className="bg-surface-dim border-b border-outline-variant shadow-sm flex justify-between items-center w-full px-6 h-16 shrink-0 z-50 relative">
+    <header className="bg-[#0a0a0a] border-b border-[#1c1c1c] flex justify-between items-center w-full px-6 h-14 shrink-0 z-50 relative">
       {/* Brand Logo */}
       <div className="flex items-center gap-4">
-        <Link to="/dashboard" className="font-headline-lg text-2xl font-bold text-primary font-body-lg tracking-tight select-none">
-          Smart Mirror
+        <Link to="/dashboard" className="text-xl font-bold text-white tracking-tight select-none flex items-center gap-2">
+          <span className="text-[#4fc3ff]">✦</span> Smart Mirror
         </Link>
       </div>
 
@@ -27,15 +27,15 @@ export default function Navbar({ activeTab = 'dashboard', onTabClick }) {
               <button
                 key={tab.id}
                 onClick={() => onTabClick && onTabClick(tab.id)}
-                className={`relative py-5 px-1 font-body-lg text-sm transition-colors cursor-pointer select-none outline-none ${
-                  isActive ? 'text-primary font-bold' : 'text-on-surface-variant font-medium hover:text-primary'
+                className={`relative py-4 px-1 text-xs uppercase tracking-wider transition-colors cursor-pointer select-none outline-none font-semibold ${
+                  isActive ? 'text-[#4fc3ff]' : 'text-[#8f8f8f] hover:text-[#d0d0d0]'
                 }`}
               >
                 {tab.label}
                 {isActive && (
                   <motion.div
                     layoutId="activeNavbarTab"
-                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#4fc3ff]"
                     transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                   />
                 )}
@@ -46,21 +46,22 @@ export default function Navbar({ activeTab = 'dashboard', onTabClick }) {
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-4">
-        <button
-          aria-label="notifications"
-          className="text-primary hover:bg-surface-container-highest transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"
+      <div className="flex items-center gap-3">
+        <Link
+          to="/simulator"
+          className="text-xs px-3 py-1.5 rounded-full border border-[#333] text-[#d0d0d0] hover:border-[#4fc3ff] hover:text-[#4fc3ff] transition-colors"
         >
-          <span className="material-symbols-outlined text-2xl" data-icon="notifications">notifications</span>
-        </button>
+          Mirror View
+        </Link>
         <Link
           to="/settings"
           aria-label="settings"
-          className="text-primary hover:bg-surface-container-highest transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"
+          className="text-[#8f8f8f] hover:text-white transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"
         >
-          <span className="material-symbols-outlined text-2xl" data-icon="account_circle">account_circle</span>
+          <span className="material-symbols-outlined text-xl" data-icon="account_circle">account_circle</span>
         </Link>
       </div>
     </header>
   )
 }
+
