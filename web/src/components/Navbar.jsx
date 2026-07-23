@@ -48,12 +48,6 @@ export default function Navbar({ activeTab = 'dashboard', onTabClick }) {
       {/* Action buttons */}
       <div className="flex items-center gap-3">
         <Link
-          to="/simulator"
-          className="text-xs px-3 py-1.5 rounded-full border border-[#333] text-[#d0d0d0] hover:border-[#4fc3ff] hover:text-[#4fc3ff] transition-colors"
-        >
-          Mirror View
-        </Link>
-        <Link
           to="/settings"
           aria-label="settings"
           className="text-[#8f8f8f] hover:text-white transition-colors p-2 rounded-full cursor-pointer active:scale-95 flex items-center justify-center"

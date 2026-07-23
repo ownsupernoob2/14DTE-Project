@@ -87,22 +87,22 @@ function NoticeCard({ n, urgent = false }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`bg-[#0a0a0a] rounded-r p-3 border-l-[3px] ${borderClass} flex flex-col gap-1 shadow-sm hover:bg-[#141414] transition-colors cursor-pointer group`}
+      className={`bg-[#0a0a0a] rounded-r p-4 border-l-[4px] ${borderClass} flex flex-col gap-1.5 shadow-sm hover:bg-[#141414] transition-colors cursor-pointer group`}
     >
-      <div className="text-[11px] font-semibold tracking-wider uppercase font-mono flex items-center gap-1.5" style={{ color: metaColor }}>
+      <div className="text-[12px] font-semibold tracking-wider uppercase font-mono flex items-center gap-1.5" style={{ color: metaColor }}>
         <span>{isUrgent ? `URGENT${dateStr}` : `${cat.toUpperCase()}${dateStr}`}</span>
       </div>
       
-      <h4 className="text-[16px] font-bold text-white leading-tight group-hover:text-[#4fc3ff] transition-colors">
+      <h4 className="text-[19px] font-bold text-white leading-tight group-hover:text-[#4fc3ff] transition-colors">
         {n.title}
       </h4>
 
-      <p className="text-[13px] text-[#d0d0d0] leading-relaxed line-clamp-2">
+      <p className="text-[15px] text-[#d0d0d0] leading-relaxed line-clamp-3">
         {previewText}
       </p>
 
       {n.contact && (
-        <div className="text-[10px] text-[#8f8f8f] font-mono mt-0.5">
+        <div className="text-[11px] text-[#8f8f8f] font-mono mt-1">
           See {n.contact}
         </div>
       )}
@@ -345,32 +345,13 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return (
       <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0">
         {/* Header */}
-        <div className="flex items-baseline justify-between mb-3.5">
+        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
           <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
           <span className="text-[13px] text-[#d0d0d0] font-mono">{sorted.length} today</span>
         </div>
 
-        {/* Filter chips */}
-        <div className="flex gap-1.5 mb-4 flex-wrap">
-          {['All', 'Academic', 'Sports', 'Arts'].map((cat) => {
-            const isOn = cat === 'All';
-            return (
-              <button
-                key={cat}
-                className={`text-[14px] px-3 py-1 rounded-full border transition-colors ${
-                  isOn 
-                    ? 'border-[#4fc3ff] text-[#4fc3ff] font-semibold' 
-                    : 'border-[#333333] text-[#d0d0d0] hover:border-[#666]'
-                }`}
-              >
-                {cat}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Notice list */}
-        <div ref={scrollRef} className="flex-1 flex flex-col gap-2.5 overflow-y-auto custom-scrollbar min-h-0 pr-1">
+        {/* Notice list with auto-scroll */}
+        <div ref={scrollRef} className="flex-1 flex flex-col gap-3 overflow-y-auto custom-scrollbar min-h-0 pr-1">
           {sorted.length === 0 ? (
             <div className="py-8 text-center text-[#8f8f8f] text-sm italic">
               No notices available today.

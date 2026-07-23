@@ -84,35 +84,79 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
 
-        {/* 2-Column Split Layout matching new-style.html (34% / 66%) */}
-        <div className="grid grid-cols-1 md:grid-cols-[34%_66%] flex-1 min-h-0 overflow-hidden">
-          
-          {/* LEFT: NOTICES PANEL */}
-          <motion.section 
-            ref={noticesRef}
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4 }}
-            className="flex flex-col h-full min-h-0 bg-[#000000]"
+        {/* Screen Switching based on activeTab */}
+        {activeTab === 'notices' && (
+          <motion.div 
+            key="notices-screen"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0"
           >
-            <DailyNoticesWidget widget={{}} readonly={true} />
-          </motion.section>
-
-          {/* RIGHT: FOCUS & CLOCK PANEL */}
-          <motion.section 
-            ref={timetableRef}
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4 }}
-            className="flex flex-col p-6 md:p-8 h-full min-h-0 bg-[#000000] overflow-y-auto"
-          >
-            <ClockRow />
-            <div className="flex-1 flex flex-col justify-center min-h-0 py-4">
-              <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
+            <div className="max-w-4xl mx-auto h-full flex flex-col">
+              <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#1c1c1c]">
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Notices & Priorities</h1>
+                  <p className="text-sm text-[#8f8f8f] mt-1">Filter, search, and configure notice priorities for your Smart Mirror</p>
+                </div>
+              </div>
+              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden">
+                <DailyNoticesWidget widget={{}} readonly={false} />
+              </div>
             </div>
-          </motion.section>
+          </motion.div>
+        )}
 
-        </div>
+        {activeTab === 'timetable' && (
+          <motion.div 
+            key="timetable-screen"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0"
+          >
+            <div className="max-w-4xl mx-auto h-full flex flex-col">
+              <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#1c1c1c]">
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Timetable Schedule</h1>
+                  <p className="text-sm text-[#8f8f8f] mt-1">View periods, set display modes, and manage your school iCal feed</p>
+                </div>
+              </div>
+              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden">
+                <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={false} />
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {(activeTab === 'dashboard' || (activeTab !== 'notices' && activeTab !== 'timetable')) && (
+          <div className="grid grid-cols-1 md:grid-cols-[48%_52%] flex-1 min-h-0 overflow-hidden">
+            {/* LEFT: NOTICES PANEL */}
+            <motion.section 
+              ref={noticesRef}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.4 }}
+              className="flex flex-col h-full min-h-0 bg-[#000000]"
+            >
+              <DailyNoticesWidget widget={{}} readonly={true} />
+            </motion.section>
+
+            {/* RIGHT: FOCUS & CLOCK PANEL */}
+            <motion.section 
+              ref={timetableRef}
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.4 }}
+              className="flex flex-col p-6 md:p-8 h-full min-h-0 bg-[#000000] overflow-y-auto"
+            >
+              <ClockRow />
+              <div className="flex-1 flex flex-col justify-center min-h-0 py-4">
+                <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
+              </div>
+            </motion.section>
+          </div>
+        )}
       </main>
     </div>
   )
