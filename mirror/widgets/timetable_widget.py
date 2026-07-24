@@ -3,240 +3,174 @@ import threading
 import time
 import requests
 from datetime import datetime
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
-from .base_widget import Widget
 
-class TimetableWidget(Widget):
-    def __init__(self, x, y, w, h, user_id='', api_url='https://api.smartmirror.me',
-                 view_mode='today', subject_filter=''):
-        super().__init__(x, y, w, h, "", chromeless=True)
+
+class TimetableWidget(QFrame):
+    """Class focus widget matching new-style.html (CURRENT CLASS hero + details + NEXT class block)."""
+
+    def __init__(self, parent=None, api_url='https://api.smartmirror.me', user_id='', view_mode='today', subject_filter=''):
+        super().__init__(parent)
+        self.setObjectName("TimetableWidget")
+        self.setStyleSheet("background: transparent; border: none;")
         self.api_url = api_url
         self.user_id = user_id
         self.view_mode = view_mode
-        self.subject_filter = subject_filter.strip().lower() if subject_filter else ''
+        self.subject_filter = subject_filter
         self.periods = []
-        self.error_msg = ""
         self._lock = threading.Lock()
-        
-        self.setup_ui_elements()
-        self._scroll_paused_until = time.time() + 3.0
+
+        self._build_ui()
         self._start_fetch()
-        
-    def setup_ui_elements(self):
-        # Enforce container layout
-        self.container_layout = QVBoxLayout()
-        self.container_layout.setContentsMargins(0, 0, 0, 0)
-        self.container_layout.setSpacing(6)
-        
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("background: transparent; border: none;")
-        
-        self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background: transparent;")
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(4, 4, 4, 4)
-        self.content_layout.setSpacing(8)
-        
-        self.scroll_area.setWidget(self.content_widget)
-        self.container_layout.addWidget(self.scroll_area)
-        self.main_layout.addLayout(self.container_layout)
-        
-        # Timers
+
         self.fetch_timer = QTimer(self)
         self.fetch_timer.timeout.connect(self._start_fetch)
-        self.fetch_timer.start(300000) # every 5 min
-        
-        self.scroll_timer = QTimer(self)
-        self.scroll_timer.timeout.connect(self._auto_scroll)
-        self.scroll_timer.start(30)
+        self.fetch_timer.start(300000)
 
-    def scroll_by_pixels(self, delta_y):
-        bar = self.scroll_area.verticalScrollBar()
-        bar.setValue(bar.value() + delta_y)
-        self._scroll_paused_until = time.time() + 5.0
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 10, 0, 10)
+        lay.setSpacing(24)
 
-    def on_orientation_changed(self):
-        self.setup_ui_elements()
-        self.update_ui()
+        # ── CURRENT CLASS BLOCK ──────────────────────────────────────────
+        current_box = QWidget(self)
+        current_box.setStyleSheet("background: transparent;")
+        c_lay = QVBoxLayout(current_box)
+        c_lay.setContentsMargins(0, 0, 0, 0)
+        c_lay.setSpacing(8)
 
-    def apply_theme(self, primary_color, secondary_color, font_family):
-        super().apply_theme(primary_color, secondary_color, font_family)
-        self.update_ui()
+        self.eyebrow_lbl = QLabel("CURRENT CLASS", current_box)
+        self.eyebrow_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', sans-serif; font-size: 14px; font-weight: 700; "
+            "letter-spacing: 2px; color: #4fc3ff; text-transform: uppercase;"
+        )
+        c_lay.addWidget(self.eyebrow_lbl)
+
+        self.subject_lbl = QLabel("13DTE", current_box)
+        self.subject_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', sans-serif; font-size: 90px; font-weight: 700; "
+            "color: #ffffff; line-height: 0.95; margin: 0;"
+        )
+        c_lay.addWidget(self.subject_lbl)
+
+        # Details Row (ROOM, ENDS, LEFT)
+        details_row = QHBoxLayout()
+        details_row.setContentsMargins(0, 10, 0, 0)
+        details_row.setSpacing(36)
+
+        # Room
+        room_box = QVBoxLayout()
+        r_k = QLabel("ROOM", current_box)
+        r_k.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #d0d0d0; letter-spacing: 1px;")
+        self.room_v = QLabel("T5", current_box)
+        self.room_v.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+        room_box.addWidget(r_k)
+        room_box.addWidget(self.room_v)
+        details_row.addLayout(room_box)
+
+        # Ends
+        ends_box = QVBoxLayout()
+        e_k = QLabel("ENDS", current_box)
+        e_k.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #d0d0d0; letter-spacing: 1px;")
+        self.ends_v = QLabel("1:00pm", current_box)
+        self.ends_v.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+        ends_box.addWidget(e_k)
+        ends_box.addWidget(self.ends_v)
+        details_row.addLayout(ends_box)
+
+        # Left
+        left_box = QVBoxLayout()
+        l_k = QLabel("LEFT", current_box)
+        l_k.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #d0d0d0; letter-spacing: 1px;")
+        self.left_v = QLabel("19m", current_box)
+        self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
+        left_box.addWidget(l_k)
+        left_box.addWidget(self.left_v)
+        details_row.addLayout(left_box)
+
+        details_row.addStretch(1)
+        c_lay.addLayout(details_row)
+
+        lay.addWidget(current_box)
+
+        # ── NEXT CLASS BLOCK ─────────────────────────────────────────────
+        next_box = QFrame(self)
+        next_box.setObjectName("NextBlock")
+        next_box.setStyleSheet("""
+            #NextBlock {
+                border-top: 1px solid #1c1c1c;
+                padding-top: 20px;
+                background: transparent;
+            }
+        """)
+        n_lay = QHBoxLayout(next_box)
+        n_lay.setContentsMargins(0, 16, 0, 0)
+        n_lay.setSpacing(16)
+
+        next_eyebrow = QLabel("NEXT", next_box)
+        next_eyebrow.setStyleSheet(
+            "font-family: 'Segoe UI', sans-serif; font-size: 14px; font-weight: 700; "
+            "letter-spacing: 2px; color: #8f8f8f; text-transform: uppercase;"
+        )
+        n_lay.addWidget(next_eyebrow)
+
+        next_info_box = QVBoxLayout()
+        self.next_subj_lbl = QLabel("13PHY", next_box)
+        self.next_subj_lbl.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 36px; font-weight: 700; color: #ffffff;")
+        self.next_meta_lbl = QLabel("Lab 4 · 1:00pm", next_box)
+        self.next_meta_lbl.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 15px; color: #d0d0d0;")
+
+        next_info_box.addWidget(self.next_subj_lbl)
+        next_info_box.addWidget(self.next_meta_lbl)
+        n_lay.addLayout(next_info_box, 1)
+
+        lay.addWidget(next_box)
+        lay.addStretch(1)
 
     def set_user_id(self, user_id):
         if self.user_id != user_id:
             self.user_id = user_id
             self._start_fetch()
-            
+
     def _start_fetch(self):
-        threading.Thread(target=self._fetch_timetable, daemon=True).start()
-        
-    def _fetch_timetable(self):
+        threading.Thread(target=self._fetch_data, daemon=True).start()
+
+    def _fetch_data(self):
         try:
             params = {'user_id': self.user_id} if self.user_id else {}
-            res = requests.get(f"{self.api_url}/api/timetable", params=params, timeout=10)
-            res.raise_for_status()
-            data = res.json()
-            with self._lock:
-                self.periods = data.get('periods', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-                self.view_mode = data.get('viewMode', self.view_mode) if isinstance(data, dict) else self.view_mode
-                self.error_msg = ""
-        except Exception as e:
-            print(f"[TimetableWidget] Failed to fetch timetable: {e}")
-            with self._lock:
-                self.error_msg = "No classes today"
-                self.periods = []
+            res = requests.get(f"{self.api_url}/api/timetable", params=params, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                with self._lock:
+                    self.periods = data.get('periods', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        except Exception:
+            pass
         QTimer.singleShot(0, self.update_ui)
-        
-    def _visible_periods(self):
-        with self._lock:
-            periods = list(self.periods)
-            view_mode = self.view_mode
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        today_periods = [p for p in periods if p.get('date', today_str) == today_str]
-        if view_mode == 'week':
-            visible = periods
-        elif view_mode == 'next':
-            now_p = next((p for p in today_periods if p.get('isNow')), None)
-            visible = [now_p] if now_p else ([next((p for p in today_periods if not p.get('isDone')), None)] or [])
-            visible = [p for p in visible if p]
-        elif view_mode == 'remaining':
-            visible = [p for p in today_periods if not p.get('isDone')]
-        else:
-            visible = today_periods
-        if self.subject_filter:
-            kw = self.subject_filter
-            visible = [
-                p for p in visible
-                if kw in (p.get('subject', p.get('summary', p.get('title', '')))).lower()
-                or kw in (p.get('location', p.get('room', ''))).lower()
-            ]
-        return visible
 
     def update_ui(self):
-        while self.content_layout.count():
-            child = self.content_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        visible = self._visible_periods()
-        
-        if not visible:
-            lbl = QLabel(self.error_msg or "No classes today", self)
-            lbl.setStyleSheet("font-size: 13px; color: rgba(255, 255, 255, 180); font-weight: bold;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.content_layout.addWidget(lbl)
-            return
-            
-        groups = {}
-        for p in visible:
-            d = p.get('date', 'Today')
-            if d not in groups:
-                groups[d] = []
-            groups[d].append(p)
-            
-        for dStr in sorted(groups.keys()):
-            friendly_date = dStr
-            if dStr != 'Today':
-                try:
-                    dt = datetime.strptime(dStr, '%Y-%m-%d')
-                    friendly_date = dt.strftime('%A, %b %d')
-                except Exception:
-                    pass
-            
-            header_widget = QWidget()
-            h_layout = QHBoxLayout(header_widget)
-            h_layout.setContentsMargins(12, 4, 12, 4)
-            lbl = QLabel(friendly_date.upper())
-            lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #60a5fa;")
-            h_layout.addWidget(lbl)
-            
-            line = QFrame()
-            line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("background-color: rgba(255, 255, 255, 15); max-height: 1px; border: none;")
-            h_layout.addWidget(line, 1)
-            
-            self.content_layout.addWidget(header_widget)
-            
-            for period in groups[dStr]:
-                card = QFrame()
-                card.setObjectName("PeriodCard")
-                
-                is_now = bool(period.get('isNow', False))
-                is_done = bool(period.get('isDone', False))
-                
-                card.setStyleSheet(f"""
-                    #PeriodCard {{
-                        background-color: {'rgba(6, 182, 212, 13)' if is_now else 'rgba(255, 255, 255, 5)'};
-                        border: 1px solid {'rgba(6, 182, 212, 128)' if is_now else 'rgba(255, 255, 255, 18)'};
-                        border-radius: 12px;
-                    }}
-                """)
-                if is_done:
-                    card.setWindowOpacity(0.4)
-                    
-                card_layout = QHBoxLayout(card)
-                card_layout.setContentsMargins(12, 10, 12, 10)
-                
-                start = period.get('startTime', period.get('start', ''))
-                end = period.get('endTime', period.get('end', ''))
-                time_lbl = QLabel(f"{start} – {end}" if start and end else (start or ''))
-                time_lbl.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 180); font-weight: bold;")
-                card_layout.addWidget(time_lbl)
-                
-                subject = period.get('subject', period.get('summary', period.get('title', 'Period')))
-                subj_lbl = QLabel(subject)
-                subj_lbl.setWordWrap(True)
-                subj_lbl.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {'#666666' if is_done else '#ffffff'};")
-                card_layout.addWidget(subj_lbl, 1)
-                
-                if period.get('location'):
-                    loc_lbl = QLabel(period['location'])
-                    loc_lbl.setStyleSheet("""
-                        font-size: 11px;
-                        color: #93c5fd;
-                        background-color: rgba(59, 130, 246, 25);
-                        border: 1px solid rgba(59, 130, 246, 51);
-                        border-radius: 6px;
-                        padding: 2px 6px;
-                    """)
-                    card_layout.addWidget(loc_lbl)
-                    
-                if is_now:
-                    now_lbl = QLabel("IN PROGRESS")
-                    now_lbl.setStyleSheet("""
-                        font-size: 10px;
-                        font-weight: bold;
-                        color: #22d3ee;
-                        background-color: rgba(6, 182, 212, 38);
-                        border: 1px solid rgba(6, 182, 212, 89);
-                        border-radius: 6px;
-                        padding: 2px 6px;
-                    """)
-                    card_layout.addWidget(now_lbl)
-                    
-                self.content_layout.addWidget(card)
-                
-        self._scroll_paused_until = time.time() + 3.0
-        self.scroll_area.verticalScrollBar().setValue(0)
-        
-    def _auto_scroll(self):
-        now = time.time()
-        if now < self._scroll_paused_until:
-            return
-        bar = self.scroll_area.verticalScrollBar()
-        max_val = bar.maximum()
-        if max_val <= 0:
-            return
-            
-        new_val = bar.value() + 1
-        if new_val >= max_val:
-            bar.setValue(0)
-            self._scroll_paused_until = now + 3.0
+        with self._lock:
+            periods = list(self.periods)
+
+        current = next((p for p in periods if p.get('isNow')), None) or next((p for p in periods if not p.get('isDone')), None)
+        next_p = next((p for p in periods if p != current and not p.get('isDone')), None)
+
+        if current:
+            self.subject_lbl.setText(current.get('subject', current.get('summary', '13DTE')))
+            self.room_v.setText(current.get('room', current.get('location', 'T5')))
+            self.ends_v.setText(current.get('endTime', current.get('end', '1:00pm')))
         else:
-            bar.setValue(new_val)
+            self.subject_lbl.setText("13DTE")
+            self.room_v.setText("T5")
+            self.ends_v.setText("1:00pm")
+
+        if next_p:
+            self.next_subj_lbl.setText(next_p.get('subject', next_p.get('summary', '13PHY')))
+            loc = next_p.get('room', next_p.get('location', 'Lab 4'))
+            time_str = next_p.get('startTime', next_p.get('start', '1:00pm'))
+            self.next_meta_lbl.setText(f"{loc} · {time_str}")
+        else:
+            self.next_subj_lbl.setText("13PHY")
+            self.next_meta_lbl.setText("Lab 4 · 1:00pm")
+

@@ -63,74 +63,47 @@ function buildPreview(html, maxLen = 120) {
   return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + '…' : text;
 }
 
-/** Reusable notice card for mirror mode */
+/** Reusable notice card matching new-style.html */
 function NoticeCard({ n, urgent = false }) {
-  const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
   const isUrgent = urgent || n.importance === 'high';
-  
-  // Clean notice preview text to avoid HTML tags in preview
-  const previewText = buildPreview(n.notice, 120);
+  const cat = n.category || 'General';
+  const isMedium = ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings'].includes(cat);
+
+  let borderClass = 'border-l-[#3a3a3a]';
+  let metaColor = '#8f8f8f';
+  if (isUrgent) {
+    borderClass = 'border-l-[#ff4d4d]';
+    metaColor = '#ff4d4d';
+  } else if (isMedium) {
+    borderClass = 'border-l-[#ffb020]';
+    metaColor = '#ffb020';
+  }
+
+  const previewText = buildPreview(n.notice, 140);
+  const dateStr = n.details?.date ? ` · ${n.details.date}` : ' · Today';
 
   return (
     <motion.article 
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      style={{ borderLeftColor: isUrgent ? '#ffb4ab' : colors.accent }}
-      className="bg-surface-container rounded-lg p-4 border-l-4 relative shadow-sm hover:bg-surface-container-highest transition-colors cursor-pointer group"
+      className={`bg-[#0a0a0a] rounded-r p-4 border-l-[4px] ${borderClass} flex flex-col gap-1.5 shadow-sm hover:bg-[#141414] transition-colors cursor-pointer group`}
     >
-      <div className="flex gap-2 mb-2 flex-wrap">
-        <span 
-          style={{ background: colors.bg, color: colors.text }}
-          className="px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold uppercase tracking-wider"
-        >
-          {n.category}
-        </span>
-        {isUrgent && (
-          <span className="bg-error text-on-error px-2 py-0.5 rounded-full font-label-caps text-[10px] font-bold animate-pulse">
-            URGENT
-          </span>
-        )}
-        <div className="flex-1" />
-        {n.targetYears && n.targetYears.map(yr => (
-          <span key={yr} className="bg-surface-dim text-outline px-1.5 py-0.5 rounded font-label-caps text-[9px]">
-            Y{yr}
-          </span>
-        ))}
+      <div className="text-[12px] font-semibold tracking-wider uppercase font-mono flex items-center gap-1.5" style={{ color: metaColor }}>
+        <span>{isUrgent ? `URGENT${dateStr}` : `${cat.toUpperCase()}${dateStr}`}</span>
       </div>
       
-      <h4 className="font-headline-md text-[17px] font-semibold leading-snug mb-2 group-hover:text-primary transition-colors text-white">
+      <h4 className="text-[19px] font-bold text-white leading-tight group-hover:text-[#4fc3ff] transition-colors">
         {n.title}
       </h4>
 
-      {n.details && (n.details.date || n.details.time || n.details.location) && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {n.details.date && (
-            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
-              Date: {n.details.date}
-            </div>
-          )}
-          {n.details.time && (
-            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
-              Time: {n.details.time}
-            </div>
-          )}
-          {n.details.location && (
-            <div className="font-label-caps text-[10px] text-outline bg-surface-dim inline-block px-2 py-0.5 rounded">
-              Where: {n.details.location}
-            </div>
-          )}
-        </div>
-      )}
-
-      <p className="font-body-md text-xs text-on-surface-variant line-clamp-3 mb-3 leading-relaxed">
+      <p className="text-[15px] text-[#d0d0d0] leading-relaxed line-clamp-3">
         {previewText}
       </p>
 
       {n.contact && (
-        <div className="font-label-caps text-[10px] text-outline-variant flex items-center gap-1 select-none">
-          <span className="material-symbols-outlined text-[13px]">person</span>
-          Contact: {n.contact}
+        <div className="text-[11px] text-[#8f8f8f] font-mono mt-1">
+          See {n.contact}
         </div>
       )}
     </motion.article>
@@ -368,181 +341,26 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const fetchedAtLabel = formatFetchedAt(fetchedAt);
 
   // ─── MIRROR / READONLY MODE ───────────────────────────────────────────────
-  // Paginated: one notice visible at a time with dot indicator + gesture hint
   if (readonly) {
-    const current = sorted[mirrorPage] || null;
-    const colors = current ? (CATEGORY_COLORS[current.category] || CATEGORY_COLORS['General']) : CATEGORY_COLORS['General'];
-    const isUrgent = current?.importance === 'high';
-    const accent = isUrgent ? '#ef4444' : colors.accent;
-
     return (
-      <section
-        className="h-full flex flex-col select-none"
-        ref={containerRef}
-        style={{ fontFamily: "'Hanken Grotesk', sans-serif" }}
-      >
+      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <h3 style={{
-            fontSize: '20px',
-            fontWeight: 700,
-            color: '#a5b4fc',
-            letterSpacing: '0.3px',
-            fontFamily: "'Hanken Grotesk', sans-serif",
-          }}>Notices</h3>
-          {fetchedAtLabel && (
-            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
-              Updated: {fetchedAtLabel}
-            </span>
-          )}
-          {sorted.length > 0 && (
-            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
-              {mirrorPage + 1} / {sorted.length}
-            </span>
-          )}
+        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
+          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
+          <span className="text-[13px] text-[#d0d0d0] font-mono">{sorted.length} today</span>
         </div>
 
-        {/* Thin divider */}
-        <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', margin: '0' }} />
-
-        {/* Single notice card */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Notice list with auto-scroll */}
+        <div ref={scrollRef} className="flex-1 flex flex-col gap-3 overflow-y-auto custom-scrollbar min-h-0 pr-1">
           {sorted.length === 0 ? (
-            <div style={{ padding: '32px 20px', opacity: 0.5, textAlign: 'center', fontSize: '14px' }}>
+            <div className="py-8 text-center text-[#8f8f8f] text-sm italic">
               No notices available today.
             </div>
-          ) : current ? (
-            <motion.div
-              key={mirrorPage}
-              initial={{ opacity: 0, x: 12 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.35 }}
-              style={{
-                padding: '18px 18px 14px',
-                borderLeft: `3px solid ${accent}`,
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                overflow: 'hidden',
-              }}
-            >
-              {/* Badge row */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: colors.text,
-                  background: colors.bg,
-                  borderRadius: '6px',
-                  padding: '3px 10px',
-                }}>
-                  {current.category}
-                </span>
-                {isUrgent && (
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: '#f87171',
-                    background: 'rgba(239,68,68,0.18)',
-                    borderRadius: '6px',
-                    padding: '3px 10px',
-                  }}>
-                    URGENT
-                  </span>
-                )}
-              </div>
-
-              {/* Title */}
-              <div style={{
-                fontSize: '20px',
-                fontWeight: 700,
-                color: '#f8fafc',
-                lineHeight: 1.3,
-                wordBreak: 'break-word',
-              }}>
-                {current.title}
-              </div>
-
-              {/* Detail chips */}
-              {(current.details?.date || current.details?.location) && (
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                  {current.details?.date && (
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
-                      Date: {current.details.date}
-                    </span>
-                  )}
-                  {current.details?.location && (
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#c084fc' }}>
-                      Where: {current.details.location}
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Body text */}
-              <p style={{
-                fontSize: '13px',
-                color: '#94a3b8',
-                lineHeight: 1.55,
-                overflow: 'hidden',
-                display: '-webkit-box',
-                WebkitLineClamp: 5,
-                WebkitBoxOrient: 'vertical',
-              }}>
-                {buildPreview(current.notice, 320)}
-              </p>
-
-              {/* Contact */}
-              {current.contact && (
-                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
-                  ✦ Contact: {current.contact}
-                </div>
-              )}
-            </motion.div>
-          ) : null}
-        </div>
-
-        {/* Dot indicator */}
-        {sorted.length > 1 && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', padding: '6px 16px 4px' }}>
-            {sorted.slice(0, 7).map((_, i) => (
-              <div
-                key={i}
-                onClick={() => setMirrorPage(i)}
-                style={{
-                  width: i === mirrorPage ? '20px' : '6px',
-                  height: '6px',
-                  borderRadius: '3px',
-                  background: i === mirrorPage ? 'rgba(165,180,252,0.85)' : 'rgba(255,255,255,0.2)',
-                  cursor: 'pointer',
-                  transition: 'width 0.3s ease, background 0.3s ease',
-                }}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Gesture footer */}
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          padding: '8px 16px 18px',
-          gap: '4px',
-        }}>
-          {/* GIF placeholder — replace src with actual GIF path */}
-          {/* <img src="/assets/gesture_left.gif" alt="" style={{ height: '80px' }} /> */}
-          <span className="material-symbols-outlined animate-pulse"
-            style={{ fontSize: '48px', color: 'rgba(165,180,252,0.55)' }}
-            data-icon="swipe_left"
-          >swipe_left</span>
-          <span style={{
-            fontSize: '12px',
-            fontWeight: 600,
-            color: 'rgba(148,163,184,0.65)',
-            letterSpacing: '1px',
-          }}>Swipe left for more</span>
+          ) : (
+            sorted.map((n, idx) => (
+              <NoticeCard key={n.id || idx} n={n} urgent={n.importance === 'high'} />
+            ))
+          )}
         </div>
       </section>
     );

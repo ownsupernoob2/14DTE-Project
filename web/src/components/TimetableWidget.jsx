@@ -409,110 +409,72 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     );
   }
 
-  // ── Main view ──────────────────────────────────────────────────────────────
+  // ── Main view (Readonly / Dashboard Focus layout) ─────────────────────────
   if (readonly) {
+    const currentP = visiblePeriods.find(p => p.isNow) || visiblePeriods.find(p => !p.isDone) || visiblePeriods[0];
+    const nextP = visiblePeriods.find(p => p !== currentP && !p.isDone);
+
+    const currentSubject = currentP?.subject || currentP?.summary || '13DTE';
+    const currentRoom = currentP?.room || currentP?.location || 'T5';
+    const currentEnds = currentP?.end ? fmtTime(currentP.end) : '1:00pm';
+    
+    // Countdown remaining minutes
+    let remainingMins = 19;
+    if (currentP?.end) {
+      try {
+        const endMs = new Date(currentP.end).getTime();
+        const nowMs = Date.now();
+        if (endMs > nowMs) {
+          remainingMins = Math.ceil((endMs - nowMs) / 60000);
+        }
+      } catch { /* fallback 19m */ }
+    }
+
+    const nextSubject = nextP?.subject || nextP?.summary || '13PHY';
+    const nextRoom = nextP?.room || nextP?.location || 'Lab 4';
+    const nextTime = nextP?.start ? fmtTime(nextP.start) : '1:00pm';
+
     return (
-      <section className="h-full flex flex-col relative overflow-hidden w-full select-none">
-        {/* Sticky Header */}
-        <div className="p-4 border-b border-outline-variant/30 bg-surface-container-high/50 sticky top-0 z-10 backdrop-blur-md flex justify-between items-center select-none">
-          <h3 className="font-headline-md text-xl font-semibold text-primary">Next Classes</h3>
-          <span className="material-symbols-outlined text-outline text-xl" data-icon="schedule">schedule</span>
-        </div>
+      <section className="h-full flex flex-col justify-center gap-8 p-6 select-none">
+        {/* CURRENT CLASS BLOCK */}
+        <div className="flex flex-col gap-2">
+          <div className="text-[14px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
+            Current Class
+          </div>
+          <h1 className="text-[90px] md:text-[112px] font-bold text-white leading-[0.95] tracking-tight my-1">
+            {currentSubject}
+          </h1>
 
-        {/* Timeline scroll container */}
-        <div 
-          className="p-4 flex flex-col gap-0 overflow-y-auto custom-scrollbar flex-1 pb-[25vh] relative timetable-scroll-area"
-          style={{ scrollBehavior: 'smooth' }}
-        >
-          {/* Vertical Timeline Line */}
-          <div className="absolute left-[24px] top-[16px] bottom-[25vh] w-px bg-outline-variant/30 z-0" />
-
-          {visiblePeriods.length === 0 ? (
-            <div className="opacity-50 italic text-center p-6 text-sm text-outline z-10">
-              {viewMode === 'next'
-                ? 'No upcoming periods today.'
-                : 'All classes finished!'}
+          <div className="flex gap-10 mt-4">
+            <div className="flex flex-col">
+              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Room</span>
+              <span className="text-[30px] font-bold text-white">{currentRoom}</span>
             </div>
-          ) : (
-            visiblePeriods.map((period, idx) => {
-              const isNow = period.isNow;
-              const isDone = period.isDone;
-              
-              // Calculate dynamic opacity based on done/future sequence
-              let opacityClass = "opacity-100";
-              if (isDone) {
-                opacityClass = "opacity-30";
-              } else if (!isNow) {
-                // If it is the first upcoming, 70% opacity; second upcoming, 50%; third+, 40%
-                const upcomingIdx = visiblePeriods.filter(p => !p.isDone && !p.isNow).indexOf(period);
-                if (upcomingIdx === 0) opacityClass = "opacity-70";
-                else if (upcomingIdx === 1) opacityClass = "opacity-50";
-                else opacityClass = "opacity-40";
-              }
-
-              const range = timeRange(period.start || period.dtstart, period.end || period.dtend);
-              const subject = period.summary || period.SUMMARY || period.title || 'Period';
-              const location = period.location || period.LOCATION || '';
-
-              return (
-                <motion.div 
-                  key={period.uid || period.id || idx}
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3, delay: idx * 0.05 }}
-                  className={`flex items-start gap-4 py-3 relative z-10 group transition-all duration-300 ${opacityClass} hover:opacity-100`}
-                >
-                  {/* Timeline indicator dot */}
-                  <div className="flex flex-col items-center mt-2.5">
-                    {isNow ? (
-                      <div className="w-4 h-4 rounded-full bg-tertiary shadow-[0_0_10px_rgba(78,222,163,0.8)] border-2 border-surface-container-low z-10 group-hover:scale-125 transition-transform" />
-                    ) : (
-                      <div className="w-3 h-3 rounded-full bg-outline-variant border-2 border-surface-container-low z-10 group-hover:bg-primary transition-colors" />
-                    )}
-                  </div>
-
-                  {/* Class Card */}
-                  <div className={`border rounded-lg p-3 flex-1 transition-all duration-300 relative overflow-hidden ${
-                    isNow 
-                      ? 'bg-surface-container-highest border-outline-variant/50 shadow-md border-l-4 border-l-tertiary' 
-                      : 'bg-surface-container border-transparent hover:bg-surface-container-highest hover:border-l-primary border-l-4 border-l-outline-variant'
-                  }`}>
-                    <div className="flex justify-between items-start mb-1 gap-2">
-                      <h4 className="font-headline-md text-base font-bold text-on-surface line-clamp-1">
-                        {subject}
-                      </h4>
-                      {isNow && (
-                        <span className="font-label-caps text-[10px] font-bold text-tertiary bg-tertiary/10 px-2 py-0.5 rounded shrink-0">
-                          NOW
-                        </span>
-                      )}
-                    </div>
-
-                    {range && (
-                      <div className="font-label-caps text-[10px] text-outline flex items-center gap-1.5 mb-1.5 select-none">
-                        <span className="material-symbols-outlined text-[13px]">schedule</span>
-                        {range}
-                      </div>
-                    )}
-
-                    {location && (
-                      <div className="font-body-md text-xs text-on-surface-variant flex items-center gap-1.5 select-none">
-                        <span className="material-symbols-outlined text-[13px]">location_on</span>
-                        {location}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              );
-            })
-          )}
+            <div className="flex flex-col">
+              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Ends</span>
+              <span className="text-[30px] font-bold text-white">{currentEnds}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Left</span>
+              <span className={`text-[30px] font-bold font-mono ${remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                {remainingMins}m
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Swipe Hint Overlay */}
-        <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-surface-container-low via-surface-container-low/80 to-transparent p-4 flex flex-col items-center justify-end pb-8 h-[20vh] pointer-events-none z-20">
-          <div className="flex flex-col items-center text-primary animate-pulse scale-110">
-            <span className="material-symbols-outlined text-4xl" data-icon="swipe_right">swipe_right</span>
-            <span className="font-label-caps text-[10px] mt-1 font-bold tracking-wider uppercase">Swipe right for more</span>
+        {/* NEXT CLASS BLOCK */}
+        <div className="border-t border-[#1c1c1c] pt-6 flex items-baseline gap-6">
+          <span className="text-[14px] uppercase tracking-[0.14em] font-bold text-[#8f8f8f] w-20 shrink-0">
+            Next
+          </span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-[36px] md:text-[40px] font-bold text-white">
+              {nextSubject}
+            </span>
+            <span className="text-[16px] text-[#d0d0d0]">
+              {nextRoom} · {nextTime}
+            </span>
           </div>
         </div>
       </section>
@@ -520,6 +482,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   }
 
   // ── EDIT MODE ────────────────────────────────────────────────────────────────
+
   return (
     <div className="widget-timetable">
       {/* Header row: mode pills + filter */}

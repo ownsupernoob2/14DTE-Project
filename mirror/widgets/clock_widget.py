@@ -1,31 +1,42 @@
 # mirror/widgets/clock_widget.py
 import datetime
-from PyQt6.QtWidgets import QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QLabel, QHBoxLayout, QFrame, QWidget
 from PyQt6.QtCore import Qt, QTimer
-from .base_widget import Widget
+from PyQt6.QtGui import QFont
 
 
-class ClockWidget(Widget):
-    """Large centered clock — big time on top, dimmer date below."""
+class ClockWidget(QFrame):
+    """Header clock row: Date on left, time on right with bottom line divider matching new-style.html."""
 
-    def __init__(self, x, y, w, h):
-        super().__init__(x, y, w, h, "", chromeless=True)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ClockWidget")
+        self.setStyleSheet("""
+            #ClockWidget {
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #1c1c1c;
+                padding-bottom: 12px;
+            }
+        """)
 
-        self.time_label = QLabel(self)
-        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_label.setStyleSheet(
-            "font-size: 72px; font-weight: 200; color: #ffffff; letter-spacing: -2px; background: transparent; border: none;"
-        )
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 12)
 
-        self.date_label = QLabel(self)
-        self.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.date_label = QLabel("Wed, 22 Jul", self)
         self.date_label.setStyleSheet(
-            "font-size: 16px; color: rgba(255, 255, 255, 140); font-weight: 400; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 18px; color: #d0d0d0; background: transparent; border: none;"
         )
 
-        self.main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.main_layout.addWidget(self.time_label)
-        self.main_layout.addWidget(self.date_label)
+        self.time_label = QLabel("10:36", self)
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.time_label.setStyleSheet(
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 44px; font-weight: 600; color: #ffffff; background: transparent; border: none;"
+        )
+
+        lay.addWidget(self.date_label)
+        lay.addStretch(1)
+        lay.addWidget(self.time_label)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -34,5 +45,13 @@ class ClockWidget(Widget):
 
     def _tick(self):
         now = datetime.datetime.now()
-        self.time_label.setText(now.strftime("%-I:%M %p"))
-        self.date_label.setText(now.strftime("%A, %-d %B %Y"))
+        # Windows strftime: %#d instead of %-d
+        try:
+            day_str = now.strftime("%a, %#d %b")
+        except ValueError:
+            day_str = now.strftime("%a, %d %b")
+        time_str = now.strftime("%H:%M")
+
+        self.date_label.setText(day_str)
+        self.time_label.setText(time_str)
+

@@ -1,25 +1,29 @@
 :root {
-/* Fonts */
---font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* Fonts */
+  --font-display: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Consolas', 'SFMono-Regular', 'JetBrains Mono', monospace;
+  --font-family: var(--font-display);
 
-/* Theme Backgrounds and Text */
---bg-color: #060608;
---text-primary: #ffffff;
---text-secondary: rgba(255, 255, 255, 0.6);
+  /* Theme Backgrounds and Text */
+  --bg-color: #000000;
+  --panel-bg: #0a0a0a;
+  --line-color: #1c1c1c;
+  --text-primary: #ffffff;
+  --text-secondary: #d0d0d0;
+  --text-muted: #8f8f8f;
 
-/* Glassmorphism Panel Variables — freeform (transparent) for dashboard */
---glass-bg: transparent;
---glass-border: rgba(255, 255, 255, 0.06);
---glass-hover: rgba(255, 255, 255, 0.06);
+  /* Accents */
+  --urgent: #ff4d4d;
+  --warn: #ffb020;
+  --ok: #35d07f;
+  --now: #4fc3ff;
+  --accent: #4fc3ff;
+  --accent-hover: #38bdf8;
+  --accent-glow: rgba(79, 195, 255, 0.25);
 
-  /* Accent Settings (Changed all Blue accents to White) */
-  --accent: #ffffff;
-  --accent-hover: #e2e8f0;
-  --accent-glow: rgba(255, 255, 255, 0.2);
-  
-  /* Helper accent styles (previously blue) */
-  --accent-bg-trans: rgba(255, 255, 255, 0.05);
-  --accent-border-trans: rgba(255, 255, 255, 0.18);
-  --accent-glow-trans: rgba(255, 255, 255, 0.1);
-  --accent-text-light: #ffffff;
+  /* Helper accent styles */
+  --glass-bg: #0a0a0a;
+  --glass-border: #1c1c1c;
+  --glass-hover: #141414;
 }
+
