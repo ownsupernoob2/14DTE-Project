@@ -3,10 +3,95 @@ import { useAuth0 } from '@auth0/auth0-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
+/** Format a time string "HH:MM" or ISO datetime to 12-hour "h:mma" */
+function formatTime12h(dateObj, fallbackStr) {
+  if (dateObj && !isNaN(dateObj.getTime())) {
+    return dateObj.toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase().replace(' ', '');
+  }
+  if (!fallbackStr) return '--';
+  const m = String(fallbackStr).match(/(\d{1,2}):(\d{2})/);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${min}${ampm}`;
+  }
+  return fallbackStr;
+}
+
+/** Compute real-time details for a period */
+function getPeriodDetails(p, now = new Date()) {
+  if (!p) return { formattedStart: '--', formattedEnd: '--', remainingMins: 0, isNow: false, isDone: false };
+
+  const rawStart = p.startTime || p.start || p.dtstart;
+  const rawEnd = p.endTime || p.end || p.dtend;
+
+  const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+  const dateStr = p.date || todayStr;
+
+  let startDate = null;
+  let endDate = null;
+
+  if (rawStart) {
+    if (String(rawStart).includes('T')) {
+      startDate = new Date(rawStart);
+    } else {
+      const [h, m] = String(rawStart).split(':').map(Number);
+      const [year, month, day] = dateStr.split('-').map(Number);
+      startDate = new Date(year, month - 1, day, h, m || 0);
+    }
+  }
+
+  if (rawEnd) {
+    if (String(rawEnd).includes('T')) {
+      endDate = new Date(rawEnd);
+    } else {
+      const [h, m] = String(rawEnd).split(':').map(Number);
+      const [year, month, day] = dateStr.split('-').map(Number);
+      endDate = new Date(year, month - 1, day, h, m || 0);
+    }
+  }
+
+  const formattedStart = formatTime12h(startDate, rawStart);
+  const formattedEnd = formatTime12h(endDate, rawEnd);
+
+  const nowMs = now.getTime();
+  let isDone = false;
+  let isNow = false;
+  let remainingMins = 0;
+
+  if (startDate && endDate) {
+    const startMs = startDate.getTime();
+    const endMs = endDate.getTime();
+
+    if (nowMs >= endMs) {
+      isDone = true;
+    } else if (nowMs >= startMs && nowMs < endMs) {
+      isNow = true;
+      remainingMins = Math.max(0, Math.ceil((endMs - nowMs) / 60000));
+    } else {
+      remainingMins = Math.max(0, Math.ceil((endMs - nowMs) / 60000));
+    }
+  } else {
+    isDone = p.isDone || false;
+    isNow = p.isNow || false;
+  }
+
+  return {
+    startDate,
+    endDate,
+    formattedStart,
+    formattedEnd,
+    remainingMins,
+    isNow,
+    isDone
+  };
+}
+
 /** Format a time string "HH:MM" or ISO datetime to "HH:MM" */
 function fmtTime(t) {
   if (!t) return '';
-  // If it's an ISO string, extract HH:MM
   const m = String(t).match(/T?(\d{2}:\d{2})/);
   if (m) return m[1];
   return t;
@@ -24,6 +109,14 @@ function timeRange(start, end) {
 export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
   const { getAccessTokenSilently } = useAuth0();
 
+  // ── Live ticking timer ─────────────────────────────────────────────────────
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
   // ── ICS URL state ──────────────────────────────────────────────────────────
   const [icsUrl, setIcsUrl] = useState(() => localStorage.getItem('timetable_ics_url') || '');
   const [urlInput, setUrlInput] = useState('');
@@ -34,6 +127,11 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   // ── View mode ──────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState(
     () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
+  );
+
+  // ── Layout mode (Minimal vs Odometer) ──────────────────────────────────────
+  const [layoutMode, setLayoutMode] = useState(
+    () => widget.data?.layoutMode || localStorage.getItem('timetable_layout_mode') || 'minimal'
   );
 
   // ── Subject filter ────────────────────────────────────────────────────────
@@ -409,30 +507,119 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     );
   }
 
+  // ── Persist layout mode ──────────────────────────────────────────────────
+  const handleLayoutModeChange = (mode) => {
+    setLayoutMode(mode);
+    localStorage.setItem('timetable_layout_mode', mode);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, layoutMode: mode });
+    }
+  };
+
   // ── Main view (Readonly / Dashboard Focus layout) ─────────────────────────
   if (readonly) {
-    const currentP = visiblePeriods.find(p => p.isNow) || visiblePeriods.find(p => !p.isDone) || visiblePeriods[0];
-    const nextP = visiblePeriods.find(p => p !== currentP && !p.isDone);
+    const processedPeriods = visiblePeriods.map(p => ({
+      ...p,
+      details: getPeriodDetails(p, now)
+    }));
+
+    const currentP = processedPeriods.find(p => p.details.isNow) || 
+                     processedPeriods.find(p => !p.details.isDone) || 
+                     processedPeriods[0];
 
     const currentSubject = currentP?.subject || currentP?.summary || '13DTE';
     const currentRoom = currentP?.room || currentP?.location || 'T5';
-    const currentEnds = currentP?.end ? fmtTime(currentP.end) : '1:00pm';
-    
-    // Countdown remaining minutes
-    let remainingMins = 19;
-    if (currentP?.end) {
-      try {
-        const endMs = new Date(currentP.end).getTime();
-        const nowMs = Date.now();
-        if (endMs > nowMs) {
-          remainingMins = Math.ceil((endMs - nowMs) / 60000);
-        }
-      } catch { /* fallback 19m */ }
+    const currentDetails = currentP ? currentP.details : { formattedEnd: '1:00pm', remainingMins: 19 };
+
+    if (layoutMode === 'odometer') {
+      const pastPeriods = processedPeriods.filter(p => p !== currentP && p.details.isDone);
+      const futurePeriods = processedPeriods.filter(p => p !== currentP && !p.details.isDone);
+
+      return (
+        <section className="h-full flex flex-col justify-center gap-6 p-6 select-none overflow-hidden">
+          {/* PAST CLASSES (Greyed out & smaller at top) */}
+          <div className="flex flex-col gap-2 border-b border-[#1c1c1c] pb-4">
+            <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#666]">
+              Past Classes
+            </div>
+            {pastPeriods.length === 0 ? (
+              <div className="text-[13px] text-[#444] italic">No past classes today</div>
+            ) : (
+              pastPeriods.slice(-2).map((p, idx) => (
+                <div key={p.uid || p.id || idx} className="flex justify-between items-center text-[#555]">
+                  <span className="text-[18px] md:text-[22px] font-semibold line-through text-[#666]">
+                    {p.summary || p.subject}
+                  </span>
+                  <span className="text-[12px] font-mono text-[#555]">
+                    {p.location || p.room || ''} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}–${p.details.formattedEnd}` : ''}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* CURRENT CLASS (BIGGEST IN MIDDLE) */}
+          <div className="flex flex-col gap-2 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
+                Current Class
+              </span>
+              <span className="text-[11px] uppercase tracking-wider bg-[#06b6d4]/20 border border-[#06b6d4]/40 text-[#22d3ee] px-2.5 py-0.5 rounded-full font-bold">
+                In Progress
+              </span>
+            </div>
+
+            <h1 className="text-[72px] md:text-[96px] font-bold text-white leading-[0.95] tracking-tight my-1">
+              {currentSubject}
+            </h1>
+
+            <div className="flex gap-8 md:gap-12 mt-2">
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Room</span>
+                <span className="text-[28px] font-bold text-white">{currentRoom}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Ends</span>
+                <span className="text-[28px] font-bold text-white">{currentDetails.formattedEnd}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Left</span>
+                <span className={`text-[28px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                  {currentDetails.remainingMins}m
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* NEXT / FUTURE CLASSES (Not greyed out, clean at bottom) */}
+          <div className="border-t border-[#1c1c1c] pt-4 flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#8f8f8f]">
+              Next / Upcoming
+            </div>
+            {futurePeriods.length === 0 ? (
+              <div className="text-[13px] text-[#8f8f8f] italic">No upcoming classes today</div>
+            ) : (
+              futurePeriods.slice(0, 2).map((p, idx) => (
+                <div key={p.uid || p.id || idx} className="flex justify-between items-center text-white">
+                  <span className="text-[22px] md:text-[26px] font-bold text-white">
+                    {p.summary || p.subject}
+                  </span>
+                  <span className="text-[14px] text-[#d0d0d0]">
+                    {p.location || p.room || ''} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}` : ''}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      );
     }
 
+    // MINIMAL LAYOUT (Default)
+    const nextP = processedPeriods.find(p => p !== currentP && !p.details.isDone);
     const nextSubject = nextP?.subject || nextP?.summary || '13PHY';
     const nextRoom = nextP?.room || nextP?.location || 'Lab 4';
-    const nextTime = nextP?.start ? fmtTime(nextP.start) : '1:00pm';
+    const nextTime = nextP ? nextP.details.formattedStart : '1:00pm';
 
     return (
       <section className="h-full flex flex-col justify-center gap-8 p-6 select-none">
@@ -452,12 +639,12 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Ends</span>
-              <span className="text-[30px] font-bold text-white">{currentEnds}</span>
+              <span className="text-[30px] font-bold text-white">{currentDetails.formattedEnd}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Left</span>
-              <span className={`text-[30px] font-bold font-mono ${remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                {remainingMins}m
+              <span className={`text-[30px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                {currentDetails.remainingMins}m
               </span>
             </div>
           </div>
@@ -473,7 +660,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
               {nextSubject}
             </span>
             <span className="text-[16px] text-[#d0d0d0]">
-              {nextRoom} · {nextTime}
+              {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
             </span>
           </div>
         </div>
@@ -485,7 +672,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
 
   return (
     <div className="widget-timetable">
-      {/* Header row: mode pills + filter */}
+      {/* Header row: mode pills + layout toggle + filter */}
       <div className="timetable-header" style={{ flexWrap: 'wrap', gap: '6px' }}>
         <div className="timetable-modes">
           {[
@@ -504,6 +691,22 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
               {m.label}
             </button>
           ))}
+        </div>
+
+        {/* Layout mode toggle pill (Minimal vs Odometer) */}
+        <div className="flex items-center gap-1 bg-[#141414] border border-[#262626] rounded-lg p-0.5" title="Switch Timetable Layout">
+          <button
+            className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${layoutMode === 'minimal' ? 'bg-[#4fc3ff] text-black' : 'text-[#8f8f8f] hover:text-white'}`}
+            onClick={() => handleLayoutModeChange('minimal')}
+          >
+            Minimal
+          </button>
+          <button
+            className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${layoutMode === 'odometer' ? 'bg-[#4fc3ff] text-black' : 'text-[#8f8f8f] hover:text-white'}`}
+            onClick={() => handleLayoutModeChange('odometer')}
+          >
+            Odometer
+          </button>
         </div>
         <button
           className={`notices-settings-btn ${showTimetableSettings ? 'active' : ''}`}

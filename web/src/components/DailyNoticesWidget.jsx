@@ -346,7 +346,12 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0">
         {/* Header */}
         <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
-          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
+          <div className="flex items-baseline gap-3">
+            <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
+            {fetchedAtLabel && (
+              <span className="text-[11px] text-[#8f8f8f] font-mono">Updated {fetchedAtLabel}</span>
+            )}
+          </div>
           <span className="text-[13px] text-[#d0d0d0] font-mono">{sorted.length} today</span>
         </div>
 
