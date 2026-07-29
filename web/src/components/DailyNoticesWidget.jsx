@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, Reorder } from 'framer-motion';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -117,13 +117,29 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const [fetchedAt, setFetchedAt] = useState(null);
   const [isWide, setIsWide] = useState(false);
   const containerRef = useRef(null);
+  
+  const getCachedConfig = () => {
+    try {
+      const saved = localStorage.getItem('notices_widget_config');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  };
+  const cachedConfig = getCachedConfig();
 
   // Edit mode controls
   const [searchQuery, setSearchQuery] = useState('');
-  const [yearFilter, setYearFilter] = useState(widget.data?.yearFilter || 'All');
-  const [catFilters, setCatFilters] = useState(() => widget.data?.catFilters ?? ALL_CATEGORIES);
-  const [keywordFilter, setKeywordFilter] = useState(() => widget.data?.keywordFilter || '');
-  const [scrollSpeed, setScrollSpeed] = useState(() => widget.data?.scrollSpeed ?? 0.5);
+  const [yearFilter, setYearFilter] = useState(() => widget.data?.yearFilter || cachedConfig.yearFilter || 'All');
+  const [catFilters, setCatFilters] = useState(() => widget.data?.catFilters ?? cachedConfig.catFilters ?? ALL_CATEGORIES);
+  const [catOrder, setCatOrder] = useState(() => widget.data?.catOrder ?? cachedConfig.catOrder ?? ALL_CATEGORIES);
+  const [keywords, setKeywords] = useState(() => {
+    const kf = widget.data?.keywordFilter ?? cachedConfig.keywordFilter;
+    if (Array.isArray(kf)) return kf;
+    if (typeof kf === 'string' && kf.trim()) return kf.split(',').map(k => k.trim()).filter(Boolean);
+    return [];
+  });
+  const [keywordInput, setKeywordInput] = useState('');
+  const [className, setClassName] = useState(() => widget.data?.className || cachedConfig.className || '');
+  const [scrollSpeed, setScrollSpeed] = useState(() => widget.data?.scrollSpeed ?? cachedConfig.scrollSpeed ?? 0.5);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
 
@@ -188,16 +204,70 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return () => { cancelled = true; };
   }, []);
 
+  // ─── Fetch remote config from server on load ─────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/notices/config`);
+        if (res.ok) {
+          const cfg = await res.json();
+          if (!cancelled && cfg) {
+            if (cfg.yearFilter) setYearFilter(cfg.yearFilter);
+            if (cfg.catFilters) setCatFilters(cfg.catFilters);
+            if (cfg.catOrder) setCatOrder(cfg.catOrder);
+            if (cfg.keywordFilter) {
+              const kf = cfg.keywordFilter;
+              if (Array.isArray(kf)) setKeywords(kf);
+              else if (typeof kf === 'string' && kf.trim()) setKeywords(kf.split(',').map(k => k.trim()).filter(Boolean));
+            }
+            if (cfg.scrollSpeed !== undefined) setScrollSpeed(cfg.scrollSpeed);
+            try { localStorage.setItem('notices_widget_config', JSON.stringify(cfg)); } catch {}
+          }
+        }
+      } catch { /* fallback to local storage */ }
+    };
+    fetchConfig();
+    return () => { cancelled = true; };
+  }, []);
+
   // ─── Sync widget.data ────────────────────────────────────────────────────────
   useEffect(() => {
     if (widget.data?.yearFilter !== undefined) setYearFilter(widget.data.yearFilter);
     if (widget.data?.catFilters !== undefined) setCatFilters(widget.data.catFilters);
-    if (widget.data?.keywordFilter !== undefined) setKeywordFilter(widget.data.keywordFilter);
+    if (widget.data?.catOrder !== undefined) setCatOrder(widget.data.catOrder);
+    if (widget.data?.keywordFilter !== undefined) {
+      const kf = widget.data.keywordFilter;
+      if (Array.isArray(kf)) setKeywords(kf);
+      else if (typeof kf === 'string' && kf.trim()) setKeywords(kf.split(',').map(k => k.trim()).filter(Boolean));
+      else setKeywords([]);
+    }
+    if (widget.data?.className !== undefined) setClassName(widget.data.className);
     if (widget.data?.scrollSpeed !== undefined) setScrollSpeed(widget.data.scrollSpeed);
   }, [widget.data]);
 
-  // ─── Persist settings ───────────────────────────────────────────────────────
+  // ─── Persist settings (local storage + server API) ───────────────────────────
   const saveSettings = (updates) => {
+    try {
+      const current = getCachedConfig();
+      const next = { ...current, ...updates };
+      localStorage.setItem('notices_widget_config', JSON.stringify(next));
+
+      // Push to backend server
+      const payload = {
+        yearFilter: next.yearFilter ?? yearFilter,
+        className: next.className ?? className,
+        catFilters: next.catFilters ?? catFilters,
+        catOrder: next.catOrder ?? catOrder,
+        keywordFilter: next.keywordFilter ?? next.keywords ?? keywords,
+        scrollSpeed: next.scrollSpeed ?? scrollSpeed,
+      };
+      fetch(`${API_URL}/api/notices/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    } catch { /* silent */ }
     if (onUpdateData) onUpdateData({ ...widget.data, ...updates });
   };
 
@@ -225,20 +295,33 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
       if (!haystack.includes(q)) return false;
     }
-    // Keyword filter — applies in both edit and mirror mode
-    if (keywordFilter && keywordFilter.trim()) {
-      const kw = keywordFilter.trim().toLowerCase();
-      const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
-      if (!haystack.includes(kw)) return false;
-    }
     return true;
   });
 
-  // Sort: urgent first
+  // Sort: urgent first, then keyword-boosted matches float up, then category order
+  const keywordTerms = keywords.map(k => k.toLowerCase());
+
+  const getKeywordScore = (n) => {
+    if (keywordTerms.length === 0) return 0;
+    const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
+    return keywordTerms.filter(kw => haystack.includes(kw)).length;
+  };
+
+  const getCatOrderScore = (n) => {
+    const idx = catOrder.indexOf(n.category);
+    return idx === -1 ? catOrder.length : idx;
+  };
+
   const sorted = [...filtered].sort((a, b) => {
+    // 1. Urgent notices first
     if (a.importance === 'high' && b.importance !== 'high') return -1;
     if (b.importance === 'high' && a.importance !== 'high') return 1;
-    return 0;
+    // 2. Keyword matches float to top (more matches = higher)
+    const scoreA = getKeywordScore(a);
+    const scoreB = getKeywordScore(b);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    // 3. Category order from drag list
+    return getCatOrderScore(a) - getCatOrderScore(b);
   });
 
   // ─── Mirror auto-scroll ──────────────────────────────────────────────────────
@@ -373,220 +456,303 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
 
   // ─── EDIT MODE ────────────────────────────────────────────────────────────────
   return (
-    <div className="notices-edit-root">
-      {/* Search + Settings toggle */}
-      <div className="notices-edit-topbar">
-        <div className="notices-edit-search-wrap">
-          <svg className="notices-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-          </svg>
-          <input
-            type="text"
-            placeholder="Search notices..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="notices-edit-search"
-          />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="notices-clear-btn" title="Clear">x</button>
-          )}
+    <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
+            <span className="text-[#4fc3ff]">✦</span> Notices &amp; Alerts
+          </h1>
+          <p className="text-xs text-[#8f8f8f] font-mono mt-1">
+            Configure visual flow, year level targeting, and category filters for the digital signage display.
+          </p>
         </div>
-        <button
-          className={`notices-settings-btn ${showSettings ? 'active' : ''}`}
-          onClick={() => setShowSettings(s => !s)}
-          title="Filter settings"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/>
-          </svg>
-          Filters
-        </button>
+        <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
+          <span>{sorted.length} ACTIVE NOTICES</span>
+          {fetchedAtLabel && <span className="text-[#4fc3ff]">· UPDATED {fetchedAtLabel.toUpperCase()}</span>}
+        </div>
       </div>
 
-      {/* Settings panel */}
-      {showSettings && (
-        <div className="notices-settings-panel">
-          {/* Year tabs */}
-          <div className="notices-setting-row">
-            <span className="notices-setting-label">Year</span>
-            <div className="notices-year-tabs">
-              {YEAR_TABS.map(yr => (
-                <button
-                  key={yr}
-                  className={`notices-year-tab ${yearFilter === yr ? 'active' : ''}`}
-                  onClick={() => { setYearFilter(yr); saveSettings({ yearFilter: yr }); }}
-                >
-                  {yr === 'All' ? 'All' : `Y${yr}`}
-                </button>
-              ))}
+      {/* Main 2-Column Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+        {/* Left Column: Controls & Filters (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          {/* Motion & Sequencing Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                MOTION &amp; SEQUENCING
+              </span>
+              <span className="text-[11px] font-mono font-bold text-[#4fc3ff] uppercase">
+                SPEED: {scrollSpeed <= 0.3 ? 'SLOW' : scrollSpeed <= 0.7 ? 'NORMAL' : 'FAST'} ({scrollSpeed.toFixed(2)}x)
+              </span>
             </div>
-          </div>
 
-          {/* Category toggles */}
-          <div className="notices-setting-row" style={{ alignItems: 'flex-start' }}>
-            <span className="notices-setting-label" style={{ paddingTop: '4px' }}>Categories</span>
-            <div className="notices-cat-toggles">
-              {ALL_CATEGORIES.map(cat => {
-                const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
-                const active = catFilters.includes(cat);
-                return (
-                  <button
-                    key={cat}
-                    className={`notices-cat-chip ${active ? 'active' : ''}`}
-                    style={active ? { background: colors.bg, borderColor: colors.accent, color: colors.text } : {}}
-                    onClick={() => toggleCat(cat)}
-                  >
-                    {CATEGORY_LABELS[cat]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Keyword filter — applies on mirror */}
-          <div className="notices-setting-row">
-            <span className="notices-setting-label">Keyword</span>
-            <div className="notices-keyword-wrap">
+            {/* Slider */}
+            <div className="py-2 flex items-center">
               <input
-                type="text"
-                className="notices-keyword-input"
-                placeholder="Filter by word (applies on mirror)..."
-                value={keywordFilter}
+                type="range"
+                min="0.1"
+                max="2.5"
+                step="0.05"
+                value={scrollSpeed}
                 onChange={e => {
-                  setKeywordFilter(e.target.value);
-                  saveSettings({ keywordFilter: e.target.value });
+                  const v = parseFloat(e.target.value);
+                  setScrollSpeed(v);
+                  saveSettings({ scrollSpeed: v });
                 }}
+                className="w-full h-1 bg-[#1c1c1c] appearance-none cursor-pointer accent-[#4fc3ff]"
               />
-              {keywordFilter && (
-                <button
-                  className="notices-clear-btn"
-                  style={{ position: 'relative', right: 'auto', marginLeft: '4px' }}
-                  onClick={() => { setKeywordFilter(''); saveSettings({ keywordFilter: '' }); }}
-                >
-                  x
-                </button>
-              )}
             </div>
-          </div>
 
-          {/* Scroll speed — mirror only */}
-          <div className="notices-setting-row">
-            <span className="notices-setting-label">Speed</span>
-            <div className="notices-speed-control">
-              {SPEED_PRESETS.map(p => (
+            {/* Presets */}
+            <div className="grid grid-cols-3 gap-2">
+              {SPEED_PRESETS.map((p) => (
                 <button
                   key={p.label}
-                  className={`notices-speed-btn ${scrollSpeed === p.value ? 'active' : ''}`}
                   onClick={() => { setScrollSpeed(p.value); saveSettings({ scrollSpeed: p.value }); }}
+                  className={`py-2 px-3 border font-mono text-xs font-bold rounded-none uppercase transition-colors ${
+                    scrollSpeed === p.value
+                      ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                  }`}
                 >
                   {p.label}
                 </button>
               ))}
-              <div className="notices-speed-slider-wrap">
-                <span className="notices-speed-label">Custom:</span>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="2.5"
-                  step="0.05"
-                  value={scrollSpeed}
-                  className="notices-speed-slider"
-                  onChange={e => {
-                    const v = parseFloat(e.target.value);
-                    setScrollSpeed(v);
-                    saveSettings({ scrollSpeed: v });
-                  }}
-                />
-                <span className="notices-speed-value">{scrollSpeed.toFixed(2)}x</span>
+            </div>
+          </div>
+
+          {/* Audience & Content Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-4">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              AUDIENCE &amp; CONTENT
+            </span>
+
+            {/* Year Level Buttons */}
+            <div className="flex flex-col gap-2">
+              <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
+                YEAR LEVEL TARGETING
+              </label>
+              <div className="grid grid-cols-6 gap-2">
+                {YEAR_TABS.map(yr => {
+                  const active = yearFilter === yr;
+                  return (
+                    <button
+                      key={yr}
+                      onClick={() => {
+                        setYearFilter(yr);
+                        saveSettings({ yearFilter: yr });
+                      }}
+                      className={`py-2 px-1 border font-mono text-xs font-bold rounded-none uppercase transition-colors text-center ${
+                        active
+                          ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                          : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                      }`}
+                    >
+                      {yr === 'All' ? 'ALL' : `Y${yr}`}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Class Name Input for Year 9 or Year 10 */}
+              {(yearFilter === '9' || yearFilter === '10') && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex flex-col gap-1.5 pt-2 border-t border-[#1c1c1c] mt-1"
+                >
+                  <label className="text-[10px] font-mono text-[#4fc3ff] uppercase tracking-wider flex items-center justify-between">
+                    <span>CLASS NAME / FORM CLASS</span>
+                    <span className="text-[9px] text-[#8f8f8f]">e.g. {yearFilter === '9' ? '9SR, 9ST, 9CR, 9EA' : '10TE, 10ST, 10FE'}</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={`e.g. ${yearFilter === '9' ? '9SR' : '10TE'}`}
+                    value={className}
+                    onChange={e => {
+                      const val = e.target.value.toUpperCase().trim();
+                      setClassName(val);
+                      
+                      // Auto-add class code to keyword boost tags if provided
+                      let nextKeywords = keywords;
+                      if (val && !keywords.includes(val.toLowerCase())) {
+                        nextKeywords = [...keywords, val.toLowerCase()];
+                        setKeywords(nextKeywords);
+                      }
+                      
+                      saveSettings({ className: val, keywordFilter: nextKeywords });
+                    }}
+                    className="w-full bg-[#000000] border border-[#4fc3ff]/50 rounded-none px-3 py-2 text-xs text-white uppercase placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
+                  />
+                  <p className="text-[10px] text-[#8f8f8f] font-mono italic">
+                    Entering your class code enables automatic room change alerts and keyword matching for Year {yearFilter} notices.
+                  </p>
+                </motion.div>
+              )}
+            </div>
+
+            {/* Keyword Boost Tag Input */}
+            <div className="flex flex-col gap-2 pt-2 border-t border-[#1c1c1c]">
+              <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
+                KEYWORD BOOST
+              </label>
+
+              {/* Tag pills */}
+              {keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {keywords.map((kw) => (
+                    <motion.span
+                      key={kw}
+                      layout
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="group relative inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1a26] border border-[#4fc3ff]/30 text-[#4fc3ff] font-mono text-[10px] uppercase font-bold select-none"
+                    >
+                      {kw}
+                      <button
+                        onClick={() => {
+                          const next = keywords.filter(k => k !== kw);
+                          setKeywords(next);
+                          saveSettings({ keywordFilter: next });
+                        }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 text-[#4fc3ff] hover:text-white leading-none"
+                        aria-label={`Remove ${kw}`}
+                      >
+                        ✕
+                      </button>
+                    </motion.span>
+                  ))}
+                </div>
+              )}
+
+              {/* Input */}
+              <input
+                type="text"
+                placeholder="Type a keyword and press Enter"
+                value={keywordInput}
+                onChange={e => setKeywordInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const tag = keywordInput.trim().toLowerCase();
+                    if (tag && !keywords.includes(tag)) {
+                      const next = [...keywords, tag];
+                      setKeywords(next);
+                      saveSettings({ keywordFilter: next });
+                    }
+                    setKeywordInput('');
+                  } else if (e.key === 'Backspace' && keywordInput === '' && keywords.length > 0) {
+                    const next = keywords.slice(0, -1);
+                    setKeywords(next);
+                    saveSettings({ keywordFilter: next });
+                  }
+                }}
+                className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2.5 text-xs text-white placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
+              />
+              <p className="text-[11px] text-[#666] font-mono italic">
+                Notices matching these keywords float to the top of the list.
+              </p>
             </div>
           </div>
         </div>
-      )}
 
-      {/* Result count + last updated */}
-      <div className="notices-edit-count">
-        {sorted.length} of {enriched.length} notices
-        {yearFilter !== 'All' && <span className="notices-filter-pill">Year {yearFilter}</span>}
-        {searchQuery && <span className="notices-filter-pill">"{searchQuery}"</span>}
-        {keywordFilter && <span className="notices-filter-pill">kw: "{keywordFilter}"</span>}
-      </div>
-      {fetchedAtLabel && (
-        <div className="notices-fetched-at" style={{ marginBottom: '4px' }}>Updated: {fetchedAtLabel}</div>
-      )}
+        {/* Right Column: Category Order (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* Drag-to-reorder Category List */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                CATEGORY ORDER
+              </span>
+              <span className="text-[10px] font-mono text-[#555] uppercase">DRAG TO REORDER</span>
+            </div>
 
-      {/* Notice list */}
-      <div className="notices-edit-list">
-        {sorted.length === 0 ? (
-          <div style={{ opacity: 0.5, fontStyle: 'italic', textAlign: 'center', padding: '24px', fontSize: '0.85em' }}>
-            No notices match your filters.
-          </div>
-        ) : (
-          sorted.map(n => {
-            const colors = CATEGORY_COLORS[n.category] || CATEGORY_COLORS['General'];
-            const isUrgent = n.importance === 'high';
-            const isExpanded = expandedIds.has(n.id);
-            const preview = buildPreview(n.notice, 110);
-            const hasMore = (n.notice || '').replace(/<[^>]*>/g, ' ').trim().length > 110;
-
-            return (
-              <div
-                key={n.id}
-                className={`notices-edit-card ${isUrgent ? 'urgent' : ''}`}
-                style={{ borderLeftColor: isUrgent ? '#ef4444' : colors.accent }}
-              >
-                {/* Card header */}
-                <div className="notices-edit-card-header">
-                  <div className="notices-edit-badges">
-                    <span className="notices-edit-badge-cat" style={{ background: colors.bg, color: colors.text }}>
-                      {n.category}
-                    </span>
-                    {isUrgent && <span className="notices-edit-badge-urgent">URGENT</span>}
-                    {n.targetYears.map(yr => (
-                      <span key={yr} className="notices-edit-badge-year">Y{yr}</span>
-                    ))}
-                  </div>
-                  {n.contact && (
-                    <span className="notices-edit-contact">{n.contact}</span>
-                  )}
-                </div>
-
-                {/* Title */}
-                <div className="notices-edit-card-title">{n.title}</div>
-
-                {/* Detail chips */}
-                {(n.details.date || n.details.time || n.details.location || n.details.deadline) && (
-                  <div className="notices-edit-details">
-                    {n.details.date     && <span className="notices-detail-chip">Date: {n.details.date}</span>}
-                    {n.details.time     && <span className="notices-detail-chip">Time: {n.details.time}</span>}
-                    {n.details.location && <span className="notices-detail-chip">Where: {n.details.location}</span>}
-                    {n.details.deadline && <span className="notices-detail-chip deadline">Deadline: {n.details.deadline}</span>}
-                  </div>
-                )}
-
-                {/* Body / expand */}
-                {isExpanded ? (
-                  <div
-                    className="notices-edit-card-body expanded"
-                    dangerouslySetInnerHTML={{ __html: n.notice }}
-                  />
-                ) : (
-                  <div className="notices-edit-card-preview">{preview}</div>
-                )}
-
-                {/* Expand toggle */}
-                {hasMore && (
-                  <button
-                    className="notices-expand-btn"
-                    onClick={() => toggleExpand(n.id)}
+            <Reorder.Group
+              axis="y"
+              values={catOrder}
+              onReorder={(newOrder) => {
+                setCatOrder(newOrder);
+                saveSettings({ catOrder: newOrder });
+              }}
+              className="flex flex-col gap-1.5"
+            >
+              {catOrder.map((cat) => {
+                const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
+                return (
+                  <Reorder.Item
+                    key={cat}
+                    value={cat}
+                    className="flex items-center justify-between px-3 py-2.5 border bg-[#000000] border-[#1c1c1c] cursor-grab active:cursor-grabbing border-l-4 group"
+                    style={{ borderLeftColor: colors.accent }}
+                    whileDrag={{
+                      scale: 1.02,
+                      backgroundColor: '#141414',
+                      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                      zIndex: 50,
+                    }}
                   >
-                    {isExpanded ? 'Show less' : 'Read more'}
-                  </button>
-                )}
-              </div>
-            );
-          })
-        )}
+                    <div className="flex items-center gap-2.5">
+                      <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="text-[#555] group-hover:text-[#8f8f8f] transition-colors shrink-0">
+                        <circle cx="2" cy="2" r="1.5" fill="currentColor"/>
+                        <circle cx="8" cy="2" r="1.5" fill="currentColor"/>
+                        <circle cx="2" cy="7" r="1.5" fill="currentColor"/>
+                        <circle cx="8" cy="7" r="1.5" fill="currentColor"/>
+                        <circle cx="2" cy="12" r="1.5" fill="currentColor"/>
+                        <circle cx="8" cy="12" r="1.5" fill="currentColor"/>
+                      </svg>
+                      <span className="text-xs font-mono font-bold uppercase text-white">{cat}</span>
+                    </div>
+                    <span
+                      className="text-[10px] font-mono uppercase"
+                      style={{ color: colors.accent, opacity: 0.7 }}
+                    >
+                      {catOrder.indexOf(cat) + 1}
+                    </span>
+                  </Reorder.Item>
+                );
+              })}
+            </Reorder.Group>
+
+            <p className="text-[11px] font-mono text-[#555] italic border-t border-[#1c1c1c] pt-2">
+              Order determines priority on the mirror display. Drag rows to reorder.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Actions Bar */}
+      <div className="flex items-center justify-between pt-4 border-t border-[#1c1c1c] mt-6 shrink-0">
+        <span className="text-xs font-mono text-[#666]">
+          CHANGES AUTO-SAVED TO LOCAL CONFIG
+        </span>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setCatFilters(ALL_CATEGORIES);
+              setCatOrder(ALL_CATEGORIES);
+              setYearFilter('All');
+              setClassName('');
+              setKeywords([]);
+              setKeywordInput('');
+              setScrollSpeed(0.5);
+              saveSettings({ catFilters: ALL_CATEGORIES, catOrder: ALL_CATEGORIES, yearFilter: 'All', className: '', keywordFilter: [], scrollSpeed: 0.5 });
+            }}
+            className="px-4 py-2 border border-[#1c1c1c] hover:border-[#333] text-[#8f8f8f] hover:text-white font-mono text-xs font-bold rounded-none uppercase transition-colors"
+          >
+            RESET
+          </button>
+          <button
+            onClick={() => saveSettings({ catFilters, catOrder, yearFilter, className, keywordFilter: keywords, scrollSpeed })}
+            className="px-5 py-2 bg-[#4fc3ff] text-black hover:bg-[#7dd3fc] font-mono text-xs font-bold rounded-none uppercase transition-colors"
+          >
+            APPLY
+          </button>
+        </div>
       </div>
     </div>
   );

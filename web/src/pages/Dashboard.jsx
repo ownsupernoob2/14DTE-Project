@@ -91,21 +91,9 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0 flex flex-col"
+            className="flex-1 bg-[#0d0f12] overflow-y-auto min-h-0 flex flex-col"
           >
-            <div className="max-w-5xl mx-auto w-full h-full flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#1c1c1c] shrink-0">
-                <div>
-                  <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-                    Notices Customisation
-                  </h1>
-                  <p className="text-sm text-[#8f8f8f] mt-1">Configure categories, year levels, search keywords, and scroll speeds for your Smart Mirror</p>
-                </div>
-              </div>
-              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden flex flex-col min-h-0">
-                <DailyNoticesWidget widget={{}} readonly={false} />
-              </div>
-            </div>
+            <DailyNoticesWidget widget={{}} readonly={false} />
           </motion.div>
         )}
 
@@ -115,21 +103,9 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0 flex flex-col"
+            className="flex-1 bg-[#0d0f12] overflow-y-auto min-h-0 flex flex-col"
           >
-            <div className="max-w-5xl mx-auto w-full h-full flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#1c1c1c] shrink-0">
-                <div>
-                  <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-                    Timetable Customisation
-                  </h1>
-                  <p className="text-sm text-[#8f8f8f] mt-1">Manage ICS URL calendar feed, period filters, and toggle display layout (Minimal vs. Odometer)</p>
-                </div>
-              </div>
-              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden flex flex-col min-h-0">
-                <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={false} />
-              </div>
-            </div>
+            <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={false} />
           </motion.div>
         )}
 

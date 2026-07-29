@@ -537,35 +537,32 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
 
       return (
         <section className="h-full flex flex-col justify-center gap-6 p-6 select-none overflow-hidden">
-          {/* PAST CLASSES (Greyed out & smaller at top) */}
-          <div className="flex flex-col gap-2 border-b border-[#1c1c1c] pb-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#666]">
-              Past Classes
+          {/* ROOM CHANGE / TARGETED NOTICE ALERT (Replaces Past Classes) */}
+          <motion.div 
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-[#1a0a0a] border border-[#ff4d4d]/40 rounded-none p-3.5 flex flex-col gap-1.5 shadow-lg"
+          >
+            <div className="flex items-center justify-between font-mono text-[11px] font-bold tracking-wider">
+              <span className="text-[#ff4d4d] uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#ff4d4d] animate-pulse"></span>
+                ROOM CHANGE ALERT · YEAR 12
+              </span>
+              <span className="text-[#8f8f8f]">TODAY</span>
             </div>
-            {pastPeriods.length === 0 ? (
-              <div className="text-[13px] text-[#444] italic">No past classes today</div>
-            ) : (
-              pastPeriods.slice(-2).map((p, idx) => (
-                <div key={p.uid || p.id || idx} className="flex justify-between items-center text-[#555]">
-                  <span className="text-[18px] md:text-[22px] font-semibold line-through text-[#666]">
-                    {p.summary || p.subject}
-                  </span>
-                  <span className="text-[12px] font-mono text-[#555]">
-                    {p.location || p.room || ''} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}–${p.details.formattedEnd}` : ''}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
+            <div className="text-[14px] font-bold text-white leading-snug">
+              13DTE Period 3 moved from <span className="line-through text-[#8f8f8f]">Lab 2</span> → <span className="text-[#4fc3ff] underline font-mono">T5</span>
+            </div>
+            <div className="text-[11px] text-[#8f8f8f] font-mono">
+              Notice for Year 12 & 13 Students · See Mr Smith
+            </div>
+          </motion.div>
 
           {/* CURRENT CLASS (BIGGEST IN MIDDLE) */}
           <div className="flex flex-col gap-2 py-2">
             <div className="flex items-center justify-between">
               <span className="text-[13px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
                 Current Class
-              </span>
-              <span className="text-[11px] uppercase tracking-wider bg-[#06b6d4]/20 border border-[#06b6d4]/40 text-[#22d3ee] px-2.5 py-0.5 rounded-full font-bold">
-                In Progress
               </span>
             </div>
 
@@ -671,139 +668,150 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   // ── EDIT MODE ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="widget-timetable">
-      {/* Header row: mode pills + layout toggle + filter */}
-      <div className="timetable-header" style={{ flexWrap: 'wrap', gap: '6px' }}>
-        <div className="timetable-modes">
-          {[
-            { id: 'today',     label: 'Today' },
-            { id: 'tomorrow',  label: 'Tomorrow' },
-            { id: 'next',      label: 'Next' },
-            { id: 'remaining', label: 'Left' },
-            { id: 'week',      label: 'Week' },
-          ].map(m => (
-            <button
-              key={m.id}
-              className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
-              onClick={() => handleViewModeChange(m.id)}
-              style={{ padding: '4px 10px', fontSize: '0.75em' }}
-            >
-              {m.label}
-            </button>
-          ))}
+    <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
+            <span className="text-[#4fc3ff]">✦</span> Timetable Configuration
+          </h1>
+          <p className="text-xs text-[#8f8f8f] font-mono mt-1">
+            Configure calendar feed source URL, layout display modes, and schedule filtering.
+          </p>
         </div>
-
-        {/* Layout mode toggle pill (Minimal vs Odometer) */}
-        <div className="flex items-center gap-1 bg-[#141414] border border-[#262626] rounded-lg p-0.5" title="Switch Timetable Layout">
-          <button
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${layoutMode === 'minimal' ? 'bg-[#4fc3ff] text-black' : 'text-[#8f8f8f] hover:text-white'}`}
-            onClick={() => handleLayoutModeChange('minimal')}
-          >
-            Minimal
-          </button>
-          <button
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition-colors ${layoutMode === 'odometer' ? 'bg-[#4fc3ff] text-black' : 'text-[#8f8f8f] hover:text-white'}`}
-            onClick={() => handleLayoutModeChange('odometer')}
-          >
-            Odometer
-          </button>
+        <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
+          <span>{visiblePeriods.length} PERIODS LOADED</span>
+          <span className="text-[#4fc3ff]">· LIVE ICS SYNC</span>
         </div>
-        <button
-          className={`notices-settings-btn ${showTimetableSettings ? 'active' : ''}`}
-          onClick={() => setShowTimetableSettings(s => !s)}
-          style={{ fontSize: '0.75em', padding: '4px 8px' }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/>
-          </svg>
-          Filter
-        </button>
-        <button
-          className="notices-settings-btn"
-          onClick={handleClearUrl}
-          title="Change ICS URL"
-          style={{ fontSize: '0.75em', padding: '4px 8px' }}
-        >
-          ICS URL
-        </button>
       </div>
 
-      {/* Subject filter panel */}
-      {showTimetableSettings && (
-        <div className="timetable-filter-panel">
-          <div className="notices-setting-row">
-            <span className="notices-setting-label">Subject</span>
-            <div className="notices-keyword-wrap" style={{ flex: 1 }}>
+      {/* Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+        {/* Left Column: Calendar Source & Settings (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* Calendar Source Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              CALENDAR SOURCE (.ICS)
+            </span>
+            <div className="flex items-center gap-0">
               <input
                 type="text"
-                className="notices-keyword-input"
-                placeholder="Filter by subject or room (applies on mirror)..."
-                value={subjectFilter}
-                onChange={e => handleSubjectFilterChange(e.target.value)}
+                value={urlInput || icsUrl}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="https://calendar-feed-url.ics"
+                className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2 text-xs text-white font-mono placeholder-[#555] focus:outline-none focus:border-[#4fc3ff]"
               />
-              {subjectFilter && (
-                <button
-                  className="notices-clear-btn"
-                  style={{ position: 'relative', right: 'auto', marginLeft: '4px' }}
-                  onClick={() => handleSubjectFilterChange('')}
-                >
-                  x
-                </button>
-              )}
+              <button
+                onClick={handleSaveUrl}
+                disabled={saving}
+                className="bg-[#4fc3ff] text-black font-mono font-bold px-4 py-2 text-xs uppercase rounded-none hover:bg-[#7dd3fc] transition-colors shrink-0"
+              >
+                {saving ? 'SAVING...' : 'LOAD'}
+              </button>
+            </div>
+            <p className="text-[11px] font-mono text-[#666]">
+              Paste direct iCal/ICS link from Google, Outlook, or Apple Calendar.
+            </p>
+          </div>
+
+          {/* Display Mode Selector Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              DISPLAY LAYOUT MODE
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleLayoutModeChange('minimal')}
+                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
+                  layoutMode === 'minimal'
+                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                }`}
+              >
+                <span>MINIMAL</span>
+                <span className="text-[10px] opacity-80 font-normal">CLEAN LIST</span>
+              </button>
+
+              <button
+                onClick={() => handleLayoutModeChange('odometer')}
+                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
+                  layoutMode === 'odometer'
+                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                }`}
+              >
+                <span>ODOMETER</span>
+                <span className="text-[10px] opacity-80 font-normal">FOCUS TIMER</span>
+              </button>
             </div>
           </div>
         </div>
-      )}
 
-      {/* Period list */}
-      <div className="timetable-scroll-area">
-        {visiblePeriods.length === 0 ? (
-          <div style={{
-            opacity: 0.5,
-            fontStyle: 'italic',
-            fontSize: '0.85em',
-            padding: '16px 0',
-            textAlign: 'center',
-          }}>
-            {viewMode === 'next'
-              ? 'No upcoming periods today.'
-              : viewMode === 'remaining'
-              ? 'All periods done for today!'
-              : viewMode === 'tomorrow'
-              ? 'No periods scheduled tomorrow.'
-              : 'No periods scheduled today.'}
+        {/* Right Column: Timetable Preview & List (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 min-h-[350px]">
+          <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2 mb-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+              TIMETABLE SCHEDULE LIST
+            </span>
+            <div className="flex gap-1">
+              {['today', 'tomorrow', 'week'].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => handleViewModeChange(m)}
+                  className={`px-3 py-1 font-mono text-[10px] font-bold uppercase rounded-none border transition-colors ${
+                    viewMode === m
+                      ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
-        ) : (
-          (() => {
-            const groups = {};
-            visiblePeriods.forEach(p => {
-              const d = p.date || 'Today';
-              if (!groups[d]) groups[d] = [];
-              groups[d].push(p);
-            });
-            const sortedDates = Object.keys(groups).sort();
-            return sortedDates.map(dStr => {
-              let formattedDate = dStr;
-              if (dStr !== 'Today') {
-                try {
-                  const [year, month, day] = dStr.split('-').map(Number);
-                  const dateObj = new Date(year, month - 1, day);
-                  formattedDate = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-                } catch (e) {
-                  formattedDate = dStr;
-                }
-              }
-              return (
-                <div key={dStr} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div className="timetable-day-header">{formattedDate}</div>
-                  {groups[dStr].map((period, idx) => (
-                    <PeriodCard key={period.uid || period.id || idx} period={period} />
-                  ))}
+
+          <div className="flex-1 bg-[#000000] border border-[#1c1c1c] rounded-none p-3 overflow-y-auto custom-scrollbar flex flex-col gap-2 min-h-[220px]">
+            {visiblePeriods.length === 0 ? (
+              <div className="m-auto text-center font-mono text-xs text-[#666] uppercase italic py-8">
+                No scheduled classes found in current feed.
+              </div>
+            ) : (
+              visiblePeriods.map((period, idx) => (
+                <div
+                  key={period.uid || period.id || idx}
+                  className={`p-3 border font-mono flex items-center justify-between text-xs rounded-none transition-colors ${
+                    period.isNow
+                      ? 'bg-[#0a0a0a] border-l-4 border-l-[#4fc3ff] border-[#1c1c1c] text-white'
+                      : 'bg-[#0a0a0a] border-[#1c1c1c] text-[#d0d0d0]'
+                  }`}
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-bold text-white text-sm">
+                      {period.summary || period.subject || 'Period'}
+                    </span>
+                    <span className="text-[11px] text-[#8f8f8f]">
+                      {timeRange(period.start || period.dtstart, period.end || period.dtend)}
+                    </span>
+                  </div>
+                  {period.location && (
+                    <span className="bg-[#1c1c1c] border border-[#333] px-2.5 py-1 text-[11px] font-mono text-[#4fc3ff]">
+                      {period.location}
+                    </span>
+                  )}
                 </div>
-              );
-            });
-          })()
-        )}
+              ))
+            )}
+          </div>
+
+          {/* Force Refresh Button */}
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full mt-3 bg-[#000000] hover:bg-[#141414] text-[#d0d0d0] border border-[#1c1c1c] font-mono font-bold py-2.5 px-4 text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-2 transition-colors"
+          >
+            ↻ FORCE REFRESH FEED
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -828,13 +836,10 @@ function PeriodCard({ period }) {
       {/* Subject */}
       <div className="timetable-subject">{subject}</div>
 
-      {/* Badges area: location + in-progress */}
+      {/* Badges area: location */}
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
         {location && (
           <span className="timetable-location">{location}</span>
-        )}
-        {period.isNow && (
-          <span className="timetable-now-badge">IN PROGRESS</span>
         )}
       </div>
     </div>
