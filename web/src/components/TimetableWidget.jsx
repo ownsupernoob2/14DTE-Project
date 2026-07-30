@@ -3,10 +3,95 @@ import { useAuth0 } from '@auth0/auth0-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
+/** Format a time string "HH:MM" or ISO datetime to 12-hour "h:mma" */
+function formatTime12h(dateObj, fallbackStr) {
+  if (dateObj && !isNaN(dateObj.getTime())) {
+    return dateObj.toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase().replace(' ', '');
+  }
+  if (!fallbackStr) return '--';
+  const m = String(fallbackStr).match(/(\d{1,2}):(\d{2})/);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${min}${ampm}`;
+  }
+  return fallbackStr;
+}
+
+/** Compute real-time details for a period */
+function getPeriodDetails(p, now = new Date()) {
+  if (!p) return { formattedStart: '--', formattedEnd: '--', remainingMins: 0, isNow: false, isDone: false };
+
+  const rawStart = p.startTime || p.start || p.dtstart;
+  const rawEnd = p.endTime || p.end || p.dtend;
+
+  const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+  const dateStr = p.date || todayStr;
+
+  let startDate = null;
+  let endDate = null;
+
+  if (rawStart) {
+    if (String(rawStart).includes('T')) {
+      startDate = new Date(rawStart);
+    } else {
+      const [h, m] = String(rawStart).split(':').map(Number);
+      const [year, month, day] = dateStr.split('-').map(Number);
+      startDate = new Date(year, month - 1, day, h, m || 0);
+    }
+  }
+
+  if (rawEnd) {
+    if (String(rawEnd).includes('T')) {
+      endDate = new Date(rawEnd);
+    } else {
+      const [h, m] = String(rawEnd).split(':').map(Number);
+      const [year, month, day] = dateStr.split('-').map(Number);
+      endDate = new Date(year, month - 1, day, h, m || 0);
+    }
+  }
+
+  const formattedStart = formatTime12h(startDate, rawStart);
+  const formattedEnd = formatTime12h(endDate, rawEnd);
+
+  const nowMs = now.getTime();
+  let isDone = false;
+  let isNow = false;
+  let remainingMins = 0;
+
+  if (startDate && endDate) {
+    const startMs = startDate.getTime();
+    const endMs = endDate.getTime();
+
+    if (nowMs >= endMs) {
+      isDone = true;
+    } else if (nowMs >= startMs && nowMs < endMs) {
+      isNow = true;
+      remainingMins = Math.max(0, Math.ceil((endMs - nowMs) / 60000));
+    } else {
+      remainingMins = Math.max(0, Math.ceil((endMs - nowMs) / 60000));
+    }
+  } else {
+    isDone = p.isDone || false;
+    isNow = p.isNow || false;
+  }
+
+  return {
+    startDate,
+    endDate,
+    formattedStart,
+    formattedEnd,
+    remainingMins,
+    isNow,
+    isDone
+  };
+}
+
 /** Format a time string "HH:MM" or ISO datetime to "HH:MM" */
 function fmtTime(t) {
   if (!t) return '';
-  // If it's an ISO string, extract HH:MM
   const m = String(t).match(/T?(\d{2}:\d{2})/);
   if (m) return m[1];
   return t;
@@ -24,6 +109,14 @@ function timeRange(start, end) {
 export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
   const { getAccessTokenSilently } = useAuth0();
 
+  // ── Live ticking timer ─────────────────────────────────────────────────────
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
   // ── ICS URL state ──────────────────────────────────────────────────────────
   const [icsUrl, setIcsUrl] = useState(() => localStorage.getItem('timetable_ics_url') || '');
   const [urlInput, setUrlInput] = useState('');
@@ -34,6 +127,11 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   // ── View mode ──────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState(
     () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
+  );
+
+  // ── Layout mode (Minimal vs Odometer) ──────────────────────────────────────
+  const [layoutMode, setLayoutMode] = useState(
+    () => widget.data?.layoutMode || localStorage.getItem('timetable_layout_mode') || 'minimal'
   );
 
   // ── Subject filter ────────────────────────────────────────────────────────
@@ -409,30 +507,116 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     );
   }
 
+  // ── Persist layout mode ──────────────────────────────────────────────────
+  const handleLayoutModeChange = (mode) => {
+    setLayoutMode(mode);
+    localStorage.setItem('timetable_layout_mode', mode);
+    if (onUpdateData) {
+      onUpdateData({ ...widget.data, layoutMode: mode });
+    }
+  };
+
   // ── Main view (Readonly / Dashboard Focus layout) ─────────────────────────
   if (readonly) {
-    const currentP = visiblePeriods.find(p => p.isNow) || visiblePeriods.find(p => !p.isDone) || visiblePeriods[0];
-    const nextP = visiblePeriods.find(p => p !== currentP && !p.isDone);
+    const processedPeriods = visiblePeriods.map(p => ({
+      ...p,
+      details: getPeriodDetails(p, now)
+    }));
+
+    const currentP = processedPeriods.find(p => p.details.isNow) || 
+                     processedPeriods.find(p => !p.details.isDone) || 
+                     processedPeriods[0];
 
     const currentSubject = currentP?.subject || currentP?.summary || '13DTE';
     const currentRoom = currentP?.room || currentP?.location || 'T5';
-    const currentEnds = currentP?.end ? fmtTime(currentP.end) : '1:00pm';
-    
-    // Countdown remaining minutes
-    let remainingMins = 19;
-    if (currentP?.end) {
-      try {
-        const endMs = new Date(currentP.end).getTime();
-        const nowMs = Date.now();
-        if (endMs > nowMs) {
-          remainingMins = Math.ceil((endMs - nowMs) / 60000);
-        }
-      } catch { /* fallback 19m */ }
+    const currentDetails = currentP ? currentP.details : { formattedEnd: '1:00pm', remainingMins: 19 };
+
+    if (layoutMode === 'odometer') {
+      const pastPeriods = processedPeriods.filter(p => p !== currentP && p.details.isDone);
+      const futurePeriods = processedPeriods.filter(p => p !== currentP && !p.details.isDone);
+
+      return (
+        <section className="h-full flex flex-col justify-center gap-6 p-6 select-none overflow-hidden">
+          {/* ROOM CHANGE / TARGETED NOTICE ALERT (Replaces Past Classes) */}
+          <motion.div 
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-[#1a0a0a] border border-[#ff4d4d]/40 rounded-none p-3.5 flex flex-col gap-1.5 shadow-lg"
+          >
+            <div className="flex items-center justify-between font-mono text-[11px] font-bold tracking-wider">
+              <span className="text-[#ff4d4d] uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#ff4d4d] animate-pulse"></span>
+                ROOM CHANGE ALERT · YEAR 12
+              </span>
+              <span className="text-[#8f8f8f]">TODAY</span>
+            </div>
+            <div className="text-[14px] font-bold text-white leading-snug">
+              13DTE Period 3 moved from <span className="line-through text-[#8f8f8f]">Lab 2</span> → <span className="text-[#4fc3ff] underline font-mono">T5</span>
+            </div>
+            <div className="text-[11px] text-[#8f8f8f] font-mono">
+              Notice for Year 12 & 13 Students · See Mr Smith
+            </div>
+          </motion.div>
+
+          {/* CURRENT CLASS (BIGGEST IN MIDDLE) */}
+          <div className="flex flex-col gap-2 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
+                Current Class
+              </span>
+            </div>
+
+            <h1 className="text-[72px] md:text-[96px] font-bold text-white leading-[0.95] tracking-tight my-1">
+              {currentSubject}
+            </h1>
+
+            <div className="flex gap-8 md:gap-12 mt-2">
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Room</span>
+                <span className="text-[28px] font-bold text-white">{currentRoom}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Ends</span>
+                <span className="text-[28px] font-bold text-white">{currentDetails.formattedEnd}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Left</span>
+                <span className={`text-[28px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                  {currentDetails.remainingMins}m
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* NEXT / FUTURE CLASSES (Not greyed out, clean at bottom) */}
+          <div className="border-t border-[#1c1c1c] pt-4 flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#8f8f8f]">
+              Next / Upcoming
+            </div>
+            {futurePeriods.length === 0 ? (
+              <div className="text-[13px] text-[#8f8f8f] italic">No upcoming classes today</div>
+            ) : (
+              futurePeriods.slice(0, 2).map((p, idx) => (
+                <div key={p.uid || p.id || idx} className="flex justify-between items-center text-white">
+                  <span className="text-[22px] md:text-[26px] font-bold text-white">
+                    {p.summary || p.subject}
+                  </span>
+                  <span className="text-[14px] text-[#d0d0d0]">
+                    {p.location || p.room || ''} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}` : ''}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      );
     }
 
+    // MINIMAL LAYOUT (Default)
+    const nextP = processedPeriods.find(p => p !== currentP && !p.details.isDone);
     const nextSubject = nextP?.subject || nextP?.summary || '13PHY';
     const nextRoom = nextP?.room || nextP?.location || 'Lab 4';
-    const nextTime = nextP?.start ? fmtTime(nextP.start) : '1:00pm';
+    const nextTime = nextP ? nextP.details.formattedStart : '1:00pm';
 
     return (
       <section className="h-full flex flex-col justify-center gap-8 p-6 select-none">
@@ -452,12 +636,12 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Ends</span>
-              <span className="text-[30px] font-bold text-white">{currentEnds}</span>
+              <span className="text-[30px] font-bold text-white">{currentDetails.formattedEnd}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Left</span>
-              <span className={`text-[30px] font-bold font-mono ${remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                {remainingMins}m
+              <span className={`text-[30px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                {currentDetails.remainingMins}m
               </span>
             </div>
           </div>
@@ -473,7 +657,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
               {nextSubject}
             </span>
             <span className="text-[16px] text-[#d0d0d0]">
-              {nextRoom} · {nextTime}
+              {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
             </span>
           </div>
         </div>
@@ -484,123 +668,150 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   // ── EDIT MODE ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="widget-timetable">
-      {/* Header row: mode pills + filter */}
-      <div className="timetable-header" style={{ flexWrap: 'wrap', gap: '6px' }}>
-        <div className="timetable-modes">
-          {[
-            { id: 'today',     label: 'Today' },
-            { id: 'tomorrow',  label: 'Tomorrow' },
-            { id: 'next',      label: 'Next' },
-            { id: 'remaining', label: 'Left' },
-            { id: 'week',      label: 'Week' },
-          ].map(m => (
-            <button
-              key={m.id}
-              className={`notices-tab${viewMode === m.id ? ' active' : ''}`}
-              onClick={() => handleViewModeChange(m.id)}
-              style={{ padding: '4px 10px', fontSize: '0.75em' }}
-            >
-              {m.label}
-            </button>
-          ))}
+    <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
+            <span className="text-[#4fc3ff]">✦</span> Timetable Configuration
+          </h1>
+          <p className="text-xs text-[#8f8f8f] font-mono mt-1">
+            Configure calendar feed source URL, layout display modes, and schedule filtering.
+          </p>
         </div>
-        <button
-          className={`notices-settings-btn ${showTimetableSettings ? 'active' : ''}`}
-          onClick={() => setShowTimetableSettings(s => !s)}
-          style={{ fontSize: '0.75em', padding: '4px 8px' }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/>
-          </svg>
-          Filter
-        </button>
-        <button
-          className="notices-settings-btn"
-          onClick={handleClearUrl}
-          title="Change ICS URL"
-          style={{ fontSize: '0.75em', padding: '4px 8px' }}
-        >
-          ICS URL
-        </button>
+        <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
+          <span>{visiblePeriods.length} PERIODS LOADED</span>
+          <span className="text-[#4fc3ff]">· LIVE ICS SYNC</span>
+        </div>
       </div>
 
-      {/* Subject filter panel */}
-      {showTimetableSettings && (
-        <div className="timetable-filter-panel">
-          <div className="notices-setting-row">
-            <span className="notices-setting-label">Subject</span>
-            <div className="notices-keyword-wrap" style={{ flex: 1 }}>
+      {/* Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+        {/* Left Column: Calendar Source & Settings (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* Calendar Source Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              CALENDAR SOURCE (.ICS)
+            </span>
+            <div className="flex items-center gap-0">
               <input
                 type="text"
-                className="notices-keyword-input"
-                placeholder="Filter by subject or room (applies on mirror)..."
-                value={subjectFilter}
-                onChange={e => handleSubjectFilterChange(e.target.value)}
+                value={urlInput || icsUrl}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="https://calendar-feed-url.ics"
+                className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2 text-xs text-white font-mono placeholder-[#555] focus:outline-none focus:border-[#4fc3ff]"
               />
-              {subjectFilter && (
-                <button
-                  className="notices-clear-btn"
-                  style={{ position: 'relative', right: 'auto', marginLeft: '4px' }}
-                  onClick={() => handleSubjectFilterChange('')}
-                >
-                  x
-                </button>
-              )}
+              <button
+                onClick={handleSaveUrl}
+                disabled={saving}
+                className="bg-[#4fc3ff] text-black font-mono font-bold px-4 py-2 text-xs uppercase rounded-none hover:bg-[#7dd3fc] transition-colors shrink-0"
+              >
+                {saving ? 'SAVING...' : 'LOAD'}
+              </button>
+            </div>
+            <p className="text-[11px] font-mono text-[#666]">
+              Paste direct iCal/ICS link from Google, Outlook, or Apple Calendar.
+            </p>
+          </div>
+
+          {/* Display Mode Selector Section */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              DISPLAY LAYOUT MODE
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleLayoutModeChange('minimal')}
+                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
+                  layoutMode === 'minimal'
+                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                }`}
+              >
+                <span>MINIMAL</span>
+                <span className="text-[10px] opacity-80 font-normal">CLEAN LIST</span>
+              </button>
+
+              <button
+                onClick={() => handleLayoutModeChange('odometer')}
+                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
+                  layoutMode === 'odometer'
+                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                }`}
+              >
+                <span>ODOMETER</span>
+                <span className="text-[10px] opacity-80 font-normal">FOCUS TIMER</span>
+              </button>
             </div>
           </div>
         </div>
-      )}
 
-      {/* Period list */}
-      <div className="timetable-scroll-area">
-        {visiblePeriods.length === 0 ? (
-          <div style={{
-            opacity: 0.5,
-            fontStyle: 'italic',
-            fontSize: '0.85em',
-            padding: '16px 0',
-            textAlign: 'center',
-          }}>
-            {viewMode === 'next'
-              ? 'No upcoming periods today.'
-              : viewMode === 'remaining'
-              ? 'All periods done for today!'
-              : viewMode === 'tomorrow'
-              ? 'No periods scheduled tomorrow.'
-              : 'No periods scheduled today.'}
+        {/* Right Column: Timetable Preview & List (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 min-h-[350px]">
+          <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2 mb-3">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+              TIMETABLE SCHEDULE LIST
+            </span>
+            <div className="flex gap-1">
+              {['today', 'tomorrow', 'week'].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => handleViewModeChange(m)}
+                  className={`px-3 py-1 font-mono text-[10px] font-bold uppercase rounded-none border transition-colors ${
+                    viewMode === m
+                      ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
-        ) : (
-          (() => {
-            const groups = {};
-            visiblePeriods.forEach(p => {
-              const d = p.date || 'Today';
-              if (!groups[d]) groups[d] = [];
-              groups[d].push(p);
-            });
-            const sortedDates = Object.keys(groups).sort();
-            return sortedDates.map(dStr => {
-              let formattedDate = dStr;
-              if (dStr !== 'Today') {
-                try {
-                  const [year, month, day] = dStr.split('-').map(Number);
-                  const dateObj = new Date(year, month - 1, day);
-                  formattedDate = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-                } catch (e) {
-                  formattedDate = dStr;
-                }
-              }
-              return (
-                <div key={dStr} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div className="timetable-day-header">{formattedDate}</div>
-                  {groups[dStr].map((period, idx) => (
-                    <PeriodCard key={period.uid || period.id || idx} period={period} />
-                  ))}
+
+          <div className="flex-1 bg-[#000000] border border-[#1c1c1c] rounded-none p-3 overflow-y-auto custom-scrollbar flex flex-col gap-2 min-h-[220px]">
+            {visiblePeriods.length === 0 ? (
+              <div className="m-auto text-center font-mono text-xs text-[#666] uppercase italic py-8">
+                No scheduled classes found in current feed.
+              </div>
+            ) : (
+              visiblePeriods.map((period, idx) => (
+                <div
+                  key={period.uid || period.id || idx}
+                  className={`p-3 border font-mono flex items-center justify-between text-xs rounded-none transition-colors ${
+                    period.isNow
+                      ? 'bg-[#0a0a0a] border-l-4 border-l-[#4fc3ff] border-[#1c1c1c] text-white'
+                      : 'bg-[#0a0a0a] border-[#1c1c1c] text-[#d0d0d0]'
+                  }`}
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-bold text-white text-sm">
+                      {period.summary || period.subject || 'Period'}
+                    </span>
+                    <span className="text-[11px] text-[#8f8f8f]">
+                      {timeRange(period.start || period.dtstart, period.end || period.dtend)}
+                    </span>
+                  </div>
+                  {period.location && (
+                    <span className="bg-[#1c1c1c] border border-[#333] px-2.5 py-1 text-[11px] font-mono text-[#4fc3ff]">
+                      {period.location}
+                    </span>
+                  )}
                 </div>
-              );
-            });
-          })()
-        )}
+              ))
+            )}
+          </div>
+
+          {/* Force Refresh Button */}
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full mt-3 bg-[#000000] hover:bg-[#141414] text-[#d0d0d0] border border-[#1c1c1c] font-mono font-bold py-2.5 px-4 text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-2 transition-colors"
+          >
+            ↻ FORCE REFRESH FEED
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -625,13 +836,10 @@ function PeriodCard({ period }) {
       {/* Subject */}
       <div className="timetable-subject">{subject}</div>
 
-      {/* Badges area: location + in-progress */}
+      {/* Badges area: location */}
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
         {location && (
           <span className="timetable-location">{location}</span>
-        )}
-        {period.isNow && (
-          <span className="timetable-now-badge">IN PROGRESS</span>
         )}
       </div>
     </div>

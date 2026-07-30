@@ -20,6 +20,27 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Global App Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 9999px;
+  border: 1px solid #1c1c1c;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4fc3ff;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #262626 #050505;
+}
+
 
 a {
   text-decoration: none;

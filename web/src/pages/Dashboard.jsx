@@ -91,19 +91,9 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0"
+            className="flex-1 bg-[#0d0f12] overflow-y-auto min-h-0 flex flex-col"
           >
-            <div className="max-w-4xl mx-auto h-full flex flex-col">
-              <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#1c1c1c]">
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Notices & Priorities</h1>
-                  <p className="text-sm text-[#8f8f8f] mt-1">Filter, search, and configure notice priorities for your Smart Mirror</p>
-                </div>
-              </div>
-              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden">
-                <DailyNoticesWidget widget={{}} readonly={false} />
-              </div>
-            </div>
+            <DailyNoticesWidget widget={{}} readonly={false} />
           </motion.div>
         )}
 
@@ -113,19 +103,9 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex-1 p-6 bg-[#000000] overflow-y-auto min-h-0"
+            className="flex-1 bg-[#0d0f12] overflow-y-auto min-h-0 flex flex-col"
           >
-            <div className="max-w-4xl mx-auto h-full flex flex-col">
-              <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#1c1c1c]">
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Timetable Schedule</h1>
-                  <p className="text-sm text-[#8f8f8f] mt-1">View periods, set display modes, and manage your school iCal feed</p>
-                </div>
-              </div>
-              <div className="flex-1 bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 overflow-hidden">
-                <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={false} />
-              </div>
-            </div>
+            <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={false} />
           </motion.div>
         )}
 
