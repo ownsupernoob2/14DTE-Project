@@ -81,3 +81,44 @@ self.setup_user_layout()
   File "/home/raspi/14DTE-Project/mirror/widgets/base_widget.py", line 72, in set_orientation
     QWidget().setLayout(self.main_layout)
 NameError: name 'QWidget' is not defined. Did you mean: 'Widget'?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+============================================================
+[CAMERA] RPi mode — opening /dev/video10
+Traceback (most recent call last):
+  File "/home/raspi/14DTE-Project/mirror/smart_mirror_pro.py", line 17, in <module>
+    from widgets.notices_widget import NoticesWidget
+  File "/home/raspi/14DTE-Project/mirror/widgets/__init__.py", line 4, in <module>
+    from .notices_widget import NoticesWidget
+  File "/home/raspi/14DTE-Project/mirror/widgets/notices_widget.py", line 13, in <module>
+    from PyQt6.QtCore import Qt, QTimer, QMovie
+ImportError: cannot import name 'QMovie' from 'PyQt6.QtCore' (/home/raspi/.pyenv/versions/3.10.7/lib/python3.10/site-packages/PyQt6/QtCore.abi3.so)
+[CAMERA] Opened successfully.
+[FAISS] Downloading vector encodings and user map from server...
