@@ -45,13 +45,10 @@ class ClockWidget(QFrame):
 
     def _tick(self):
         now = datetime.datetime.now()
-        # Windows strftime: %#d instead of %-d
-        try:
-            day_str = now.strftime("%a, %#d %b")
-        except ValueError:
-            day_str = now.strftime("%a, %d %b")
+        day_str = f"{now.strftime('%a')}, {now.day} {now.strftime('%b')}"
         time_str = now.strftime("%H:%M")
 
         self.date_label.setText(day_str)
         self.time_label.setText(time_str)
+
 

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QWidget, QSizePolicy, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QTimer, QMovie
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase
 
 
