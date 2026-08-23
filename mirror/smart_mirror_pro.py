@@ -3,7 +3,6 @@ import sys
 import os
 import json
 import time
-import math
 import threading
 import requests
 from PyQt6.QtWidgets import (
@@ -11,7 +10,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter, QFont, QImage, QFontDatabase
+from PyQt6.QtGui import QFont, QFontDatabase
 
 from config import *
 from widgets.notices_widget import NoticesWidget
@@ -22,74 +21,16 @@ from widgets.kings_week_widget import KingsWeekWidget
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
-HANKEN_FONT = 'Hanken Grotesk'
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Animated background canvas
-# ─────────────────────────────────────────────────────────────────────────────
-class BackgroundCanvas(QWidget):
-    """Full-screen background painted with animated radial gradient orbs."""
-
-    _ORBS = [
-        (0.20, 0.50, 0.55, 109,  40, 217, 31),   # purple
-        (0.80, 0.30, 0.50,  56, 189, 248, 23),   # sky-blue
-    ]
-    _DRIFT_PERIOD = 18.0
-    _DRIFT_AMP    = 0.03
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.glow_enabled = True
-        self._t0 = time.time()
-
-        self._redraw_timer = QTimer(self)
-        self._redraw_timer.timeout.connect(self.update)
-        self._redraw_timer.start(33)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w, h = self.width(), self.height()
-        painter.fillRect(self.rect(), QColor(5, 5, 8))
-
-        if not self.glow_enabled:
-            painter.end()
-            return
-
-        t      = time.time() - self._t0
-        phases = [0.0, math.pi * 0.6]
-
-        for i, (bcx, bcy, r_pct, r, g, b, max_a) in enumerate(self._ORBS):
-            phase = phases[i]
-            cx = (bcx + self._DRIFT_AMP * math.sin(2 * math.pi * t / self._DRIFT_PERIOD + phase)) * w
-            cy = (bcy + self._DRIFT_AMP * math.cos(2 * math.pi * t / self._DRIFT_PERIOD + phase * 1.3)) * h
-            radius = r_pct * max(w, h)
-
-            grad = QRadialGradient(cx, cy, radius)
-            grad.setColorAt(0.0, QColor(r, g, b, max_a))
-            grad.setColorAt(1.0, QColor(r, g, b, 0))
-
-            painter.setBrush(grad)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(
-                int(cx - radius), int(cy - radius),
-                int(radius * 2),  int(radius * 2),
-            )
-
-        painter.end()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main smart mirror window  — fixed layout matching the sketch
+# Main smart mirror window — clean 2-column layout matching web screenshot
 # ─────────────────────────────────────────────────────────────────────────────
 class SmartMirrorPro(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Smart Mirror")
-        self.setStyleSheet("background-color: #050508;")
+        self.setStyleSheet("background-color: #000000;")
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         hk_id = QFontDatabase.addApplicationFont(
@@ -102,16 +43,13 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Central widget ────────────────────────────────────────────────
         self.central_widget = QWidget(self)
+        self.central_widget.setStyleSheet("background-color: #000000;")
         self.setCentralWidget(self.central_widget)
-
-        # ── Animated background ───────────────────────────────────────────
-        self.bg_canvas = BackgroundCanvas(self.central_widget)
-        self.bg_canvas.lower()
 
         # ── Important-message banner (full width, top) ────────────────────
         self._build_banner()
 
-        # ── User layout (fixed 3-column deck) ────────────────────────────
+        # ── User layout (matching web screenshot: notices left, focus right) ─
         self._build_user_layout()
 
         # ── Guest screen (clock + notices + onboarding) ───────────────────
@@ -193,13 +131,13 @@ class SmartMirrorPro(QMainWindow):
         lay.addWidget(self.banner_label, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: user layout (matching new-style.html 2-column grid)
+    # Build: user layout (matching web screenshot: 34% / 66% 2-column)
     # ─────────────────────────────────────────────────────────────────────
     def _build_user_layout(self):
         self.user_container = QWidget(self.central_widget)
         self.user_container.setStyleSheet("background: #000000;")
 
-        # Left column: Notices (34%)
+        # Left column: Notices
         self.notices_widget = NoticesWidget(
             api_url=API_URL, parent=self.user_container
         )
@@ -207,7 +145,7 @@ class SmartMirrorPro(QMainWindow):
         # Right top: Clock header row
         self.clock_widget = ClockWidget(parent=self.user_container)
 
-        # Right main: Timetable Class Focus block (66%)
+        # Right main: Timetable Class Focus block
         self.timetable_widget = TimetableWidget(
             api_url=API_URL, parent=self.user_container
         )
@@ -215,7 +153,7 @@ class SmartMirrorPro(QMainWindow):
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position user layout elements matching new-style.html 34% / 66% split."""
+        """Position user layout elements matching web screenshot."""
         banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
         top = banner_h
 
@@ -224,84 +162,73 @@ class SmartMirrorPro(QMainWindow):
         left_w = int(w * 0.34)
         right_w = w - left_w
 
-        # Left column: Notices
+        # Left column: Notices (with vertical right border)
         self.notices_widget.setGeometry(0, 0, left_w, h - top)
 
         # Right top: Clock row
-        self.clock_widget.setGeometry(left_w + 34, 22, right_w - 68, 70)
+        self.clock_widget.setGeometry(left_w + 34, 20, right_w - 68, 65)
 
         # Right main: Timetable Class Focus
-        self.timetable_widget.setGeometry(left_w + 34, 100, right_w - 68, h - top - 120)
+        self.timetable_widget.setGeometry(left_w + 34, 90, right_w - 68, h - top - 100)
+
 
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: guest layout (clock + notices + prompt)
+    # Build: guest layout (clock + notices + onboarding)
     # ─────────────────────────────────────────────────────────────────────
     def _build_guest_layout(self):
-        """
-        Guest layout (sketch design):
-        ─────────────────────────────────────────────────────
-        │  [IMPORTANT MESSAGE / NOTICE banner — full width] │
-        ├─────────────────┬───────────────────────────────── │
-        │  Notices        │     12:00  2/07/2026            │
-        │  (left column)  │     (centered clock)            │
-        ├─────────────────┴───────────────────────────────── │
-        │  STAND IN FRONT OF THE MIRROR  (hint strip)       │
-        ─────────────────────────────────────────────────────
-        """
         self.guest_container = QWidget(self.central_widget)
-        self.guest_container.setStyleSheet("background: transparent;")
+        self.guest_container.setStyleSheet("background: #000000;")
 
-        outer = QVBoxLayout(self.guest_container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        # Left: notices panel
+        self.guest_notices = NoticesWidget(api_url=API_URL, parent=self.guest_container)
 
-        # ── Content row: notices left, clock right ────────────────────────
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(0)
+        # Right top: clock
+        self.guest_clock = ClockWidget(parent=self.guest_container)
 
-        # Left: notices panel (no extra background — uses widget's own style)
-        self.guest_notices = NoticesWidget(api_url=API_URL)
-        content_row.addWidget(self.guest_notices, 1)
-
-        # Center/Right: clock
-        self.guest_clock = ClockWidget()
-        content_row.addWidget(self.guest_clock, 2)
-
-        outer.addLayout(content_row, 1)
-
-        # ── Bottom hint strip ─────────────────────────────────────────────
-        hint = QFrame()
-        hint.setObjectName('GuestHint')
-        hint.setStyleSheet("""
+        # Right bottom hint strip
+        self.guest_hint = QFrame(self.guest_container)
+        self.guest_hint.setObjectName('GuestHint')
+        self.guest_hint.setStyleSheet("""
             #GuestHint {
                 background: rgba(96, 165, 250, 0.08);
                 border: 1px solid rgba(96, 165, 250, 0.18);
                 border-radius: 0px;
             }
         """)
-        hint.setFixedHeight(52)
-        h_lay = QHBoxLayout(hint)
+        h_lay = QHBoxLayout(self.guest_hint)
         h_lay.setContentsMargins(24, 0, 24, 0)
 
-        hint_icon = QLabel('◎')
+        hint_icon = QLabel('◎', self.guest_hint)
         hint_icon.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; font-size: 16px; '
-            'color: #60a5fa; background: transparent; border: none;'
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; "
+            "color: #60a5fa; background: transparent; border: none;"
         )
         h_lay.addWidget(hint_icon)
 
-        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF')
+        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF', self.guest_hint)
         title.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; font-size: 12px; font-weight: 700; '
-            'color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;'
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
+            "color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_lay.addWidget(title, 1)
 
-        outer.addWidget(hint)
         self.guest_container.hide()
+
+    def _apply_guest_layout(self, w, h):
+        """Position guest layout elements."""
+        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        top = banner_h
+
+        self.guest_container.setGeometry(0, top, w, h - top)
+
+        left_w = int(w * 0.34)
+        right_w = w - left_w
+
+        self.guest_notices.setGeometry(0, 0, left_w, h - top)
+        self.guest_clock.setGeometry(left_w + 34, 20, right_w - 68, 65)
+        self.guest_hint.setGeometry(left_w + 34, h - top - 70, right_w - 68, 50)
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -310,17 +237,11 @@ class SmartMirrorPro(QMainWindow):
         super().resizeEvent(event)
         w, h = self.width(), self.height()
 
-        if hasattr(self, 'bg_canvas'):
-            self.bg_canvas.setGeometry(0, 0, w, h)
-
         if hasattr(self, 'banner_frame'):
             self.banner_frame.setGeometry(16, 16, w - 32, self.banner_frame.height())
 
         if hasattr(self, 'guest_container') and not self.guest_container.isHidden():
-            banner_h = self.banner_frame.height() + 16 if not self.banner_frame.isHidden() else 0
-            self.guest_container.setGeometry(0, banner_h, w, h - banner_h)
-        elif hasattr(self, 'guest_container'):
-            self.guest_container.setGeometry(0, 0, w, h)
+            self._apply_guest_layout(w, h)
 
         if hasattr(self, 'user_container') and not self.user_container.isHidden():
             self._apply_user_layout(w, h)
@@ -350,8 +271,10 @@ class SmartMirrorPro(QMainWindow):
         else:
             self.banner_frame.hide()
         # Re-apply layout in case banner height changed
-        if not self.user_container.isHidden():
+        if hasattr(self, 'user_container') and not self.user_container.isHidden():
             self._apply_user_layout(self.width(), self.height())
+        elif hasattr(self, 'guest_container') and not self.guest_container.isHidden():
+            self._apply_guest_layout(self.width(), self.height())
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture polling
@@ -380,7 +303,6 @@ class SmartMirrorPro(QMainWindow):
         if gesture == "scroll" and scroll_delta != 0:
             if self._last_state == 'user':
                 self.notices_widget.scroll_by_pixels(scroll_delta)
-                self.timetable_widget.scroll_by_pixels(scroll_delta)
             elif self._last_state == 'guest':
                 self.guest_notices.scroll_by_pixels(scroll_delta)
 
@@ -430,7 +352,7 @@ class SmartMirrorPro(QMainWindow):
         fonts  = theme.get("fonts", {})
         primary     = colors.get("primary", "#3b82f6")
         secondary   = colors.get("secondary", "#10b981")
-        font_family = fonts.get("family", "Outfit")
+        font_family = fonts.get("family", "Segoe UI")
 
         for widget in [self.notices_widget, self.clock_widget, self.timetable_widget]:
             if hasattr(widget, 'apply_theme'):
@@ -486,7 +408,6 @@ class SmartMirrorPro(QMainWindow):
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
         """Fade out whatever is currently visible, then apply + fade in new state."""
-        # Find the currently visible container (if any)
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container
@@ -494,26 +415,23 @@ class SmartMirrorPro(QMainWindow):
             visible = self.guest_container
 
         def apply_new():
-            # Hide everything first
             self.user_container.hide()
             self.guest_container.hide()
             if visible:
                 visible.setGraphicsEffect(None)
 
             if new_state == 'user' and new_user_id not in ('', 'idle'):
-                self.bg_canvas.glow_enabled = True
                 self.timetable_widget.set_user_id(new_user_id)
                 self._apply_user_theme(fdata.get('config', {}))
                 self._apply_user_layout(self.width(), self.height())
                 self._fade_in(self.user_container)
 
             elif new_state == 'guest':
-                self.bg_canvas.glow_enabled = True
                 self.timetable_widget.set_user_id('')
+                self._apply_guest_layout(self.width(), self.height())
                 self._fade_in(self.guest_container)
 
             else:  # idle
-                self.bg_canvas.glow_enabled = False
                 self._transitioning = False   # nothing to fade in
 
         if visible:
@@ -531,3 +449,4 @@ if __name__ == '__main__':
     mirror = SmartMirrorPro()
     mirror.show()
     sys.exit(app.exec())
+
