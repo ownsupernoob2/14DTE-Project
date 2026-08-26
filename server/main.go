@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -17,6 +18,8 @@ func init() {
 	os.MkdirAll("faces", 0755)
 	os.MkdirAll("temp", 0755)
 	os.MkdirAll("encodings", 0755)
+	// Per-user widget layouts and barcode links live here.
+	os.MkdirAll("data", 0755)
 }
 
 func main() {
@@ -38,6 +41,16 @@ func main() {
 	e.POST("/api/verify-face", verifyFace)
 	e.GET("/api/download-index", downloadIndex)
 
+	// Mirror barcode sign-in. Unauthenticated like verify-face, but a barcode is
+	// guessable in a way a face is not, so cap attempts per source IP.
+	e.POST("/api/verify-barcode", verifyBarcode, middleware.RateLimiterWithConfig(
+		middleware.RateLimiterConfig{
+			Store: middleware.NewRateLimiterMemoryStoreWithConfig(
+				middleware.RateLimiterMemoryStoreConfig{Rate: 1, Burst: 10, ExpiresIn: time.Minute},
+			),
+		},
+	))
+
 	// Protected routes (JWT middleware)
 	protected := e.Group("/api")
 	protected.Use(EnsureValidToken())
@@ -53,6 +66,11 @@ func main() {
 
 	// Legacy single-image face upload (kept for backward compatibility)
 	protected.POST("/users/me/face", uploadFace)
+
+	// Student ID / barcode sign-in — the web links a code, the mirror resolves it
+	protected.PUT("/users/me/barcode", saveBarcode)
+	protected.GET("/users/me/barcode", getBarcode)
+	protected.DELETE("/users/me/barcode", deleteBarcode)
 
 	// Dashboard/Widget routes
 	protected.GET("/dashboard", getDashboard)
