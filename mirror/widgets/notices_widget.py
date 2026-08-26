@@ -193,15 +193,15 @@ class NoticesWidget(QFrame):
         self._auto_scroll_paused_until = time.time() + 4.0
         self._hold_bottom_until = 0.0
 
+        # Gesture state. A tap holds the list still indefinitely (so you can
+        # finish reading a long notice); that is separate from the short
+        # automatic pause a manual scroll gives you.
+        self._scroll_paused = False
+        self._gesture_active = False
+
         # ── Frame style ──────────────────────────────────────────────────
         self.setObjectName('NoticesWidget')
-        self.setStyleSheet("""
-            #NoticesWidget {
-                background-color: #000000;
-                border: none;
-                border-right: 1px solid #1c1c1c;
-            }
-        """)
+        self._apply_frame_style()
 
         # ── Root layout ──────────────────────────────────────────────────
         root = QVBoxLayout(self)
@@ -232,6 +232,26 @@ class NoticesWidget(QFrame):
         hdr_lay.addWidget(self.fetched_at_label)
 
         hdr_lay.addStretch(1)
+
+        # Gesture affordance: lights up while a hand is over this column, so it
+        # is obvious which panel the gestures are driving.
+        self.gesture_dot = QLabel('●')
+        self.gesture_dot.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 10px; "
+            "color: #4fc3ff; background: transparent; border: none;"
+        )
+        self.gesture_dot.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.gesture_dot.hide()
+        hdr_lay.addWidget(self.gesture_dot)
+
+        self.pause_label = QLabel('')
+        self.pause_label.setStyleSheet(
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 11px; "
+            "font-weight: 700; color: #4fc3ff; letter-spacing: 1px; "
+            "background: transparent; border: none;"
+        )
+        self.pause_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hdr_lay.addWidget(self.pause_label)
 
         # Right: "1 today"
         self.count_label = QLabel('')
@@ -285,10 +305,52 @@ class NoticesWidget(QFrame):
     # ──────────────────────────────────────────────────────────────────────
 
     def scroll_by_pixels(self, delta_y):
-        """Manual scroll (e.g. from hand gesture)."""
+        """Manual scroll (e.g. from hand gesture).
+
+        Works whether or not the list is tap-paused — a deliberate scroll should
+        always move the list.
+        """
         sb = self.scroll_area.verticalScrollBar()
         sb.setValue(sb.value() + int(delta_y))
         self._auto_scroll_paused_until = time.time() + 6.0
+
+    @property
+    def scroll_paused(self):
+        return self._scroll_paused
+
+    def toggle_scroll_pause(self):
+        """Tap handler: hold the list still, or let it resume. Returns the new state."""
+        self._scroll_paused = not self._scroll_paused
+        if not self._scroll_paused:
+            # A beat before it starts moving again, so resuming isn't jarring.
+            self._auto_scroll_paused_until = time.time() + 1.5
+        self.pause_label.setText('PAUSED' if self._scroll_paused else '')
+        return self._scroll_paused
+
+    def set_gesture_active(self, active):
+        """Show/hide the 'your hand is controlling this panel' affordance."""
+        active = bool(active)
+        if active == self._gesture_active:
+            return
+        self._gesture_active = active
+        self.gesture_dot.setVisible(active)
+        self._apply_frame_style()
+
+    def reset_gesture_state(self):
+        """Forget tap-pause and affordance — the mirror changed who it's showing."""
+        self._scroll_paused = False
+        self.pause_label.setText('')
+        self.set_gesture_active(False)
+
+    def _apply_frame_style(self):
+        edge = '#4fc3ff' if self._gesture_active else '#1c1c1c'
+        self.setStyleSheet(f"""
+            #NoticesWidget {{
+                background-color: #000000;
+                border: none;
+                border-right: 1px solid {edge};
+            }}
+        """)
 
     def apply_theme(self, primary_color, secondary_color, font_family):
         pass
@@ -409,7 +471,7 @@ class NoticesWidget(QFrame):
 
     def _auto_scroll_tick(self):
         now = time.time()
-        if now < self._auto_scroll_paused_until:
+        if self._scroll_paused or now < self._auto_scroll_paused_until:
             return
 
         sb = self.scroll_area.verticalScrollBar()

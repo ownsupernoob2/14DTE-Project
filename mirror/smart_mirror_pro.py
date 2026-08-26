@@ -9,18 +9,31 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
 from PyQt6.QtGui import QFont, QFontDatabase
 
 from config import *
 from widgets.notices_widget import NoticesWidget
 from widgets.timetable_widget import TimetableWidget
+from widgets.schedule_peek_widget import SchedulePeekWidget
 from widgets.clock_widget import ClockWidget
 from widgets.kings_week_widget import KingsWeekWidget
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
+
+# Gesture regions, mirroring gesture_engine.py. Duplicated as literals rather
+# than imported so this process never pulls in cv2/mediapipe.
+GESTURE_REGION_LEFT  = 'left'
+GESTURE_REGION_RIGHT = 'right'
+
+# Timetable peek: how long the panel stays up, how wide it is, and its slide.
+PEEK_VISIBLE_MS  = 10_000
+PEEK_WIDTH_FRAC  = 0.42
+PEEK_MIN_WIDTH   = 360
+PEEK_ANIM_IN_MS  = 420
+PEEK_ANIM_OUT_MS = 380
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,6 +87,15 @@ class SmartMirrorPro(QMainWindow):
         self._transitioning    = False   # guard: ignore polls during fade
         self._anim_in          = None    # keep refs alive to prevent GC
         self._anim_out         = None
+
+        # ── Timetable peek (right-side gesture) ───────────────────────────
+        self.peek_panel     = None       # built lazily on first peek
+        self._peek_visible  = False
+        self._peek_anim     = None
+
+        self.peek_timer = QTimer(self)
+        self.peek_timer.setSingleShot(True)
+        self.peek_timer.timeout.connect(self._hide_timetable_peek)
 
         # ── Timers ────────────────────────────────────────────────────────
         self.poll_timer = QTimer(self)
@@ -249,6 +271,10 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'status_dot'):
             self.status_dot.move(w - 20, h - 20)
 
+        # getattr: resizeEvent can fire while __init__ is still building.
+        if getattr(self, '_peek_visible', False) and self.peek_panel is not None:
+            self.peek_panel.setGeometry(self._peek_geometry())
+
     # ─────────────────────────────────────────────────────────────────────
     # Banner polling
     # ─────────────────────────────────────────────────────────────────────
@@ -278,6 +304,10 @@ class SmartMirrorPro(QMainWindow):
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture polling
+    #
+    # gesture_engine.py publishes which broad region of the screen the hand is
+    # in rather than a cursor position, so a gesture acts on whatever panel the
+    # hand is generally over: left = notices, right = timetable peek.
     # ─────────────────────────────────────────────────────────────────────
     def _poll_gestures(self):
         gesture_file = os.path.join(
@@ -292,19 +322,121 @@ class SmartMirrorPro(QMainWindow):
             t = data.get("timestamp", 0.0)
             if t > self.last_gesture_timestamp:
                 self.last_gesture_timestamp = t
-                self._handle_gesture(data.get("gesture"), data.get("scroll_delta", 0))
+                self._handle_gesture(data)
         except Exception:
             pass
 
-    def _handle_gesture(self, gesture, scroll_delta):
-        if self._last_state == 'idle' or not gesture:
+    def _active_notices(self):
+        """The notices panel currently on screen, or None."""
+        if self._last_state == 'user':
+            return self.notices_widget
+        if self._last_state == 'guest':
+            return self.guest_notices
+        return None
+
+    def _handle_gesture(self, data):
+        if self._last_state == 'idle' or self._last_state is None:
             return
 
-        if gesture == "scroll" and scroll_delta != 0:
-            if self._last_state == 'user':
-                self.notices_widget.scroll_by_pixels(scroll_delta)
-            elif self._last_state == 'guest':
-                self.guest_notices.scroll_by_pixels(scroll_delta)
+        present = data.get("present", False)
+        region  = data.get("region") if present else None
+        event   = data.get("event")
+
+        # Affordance first, so the panel lights up as soon as the hand arrives —
+        # before the student has done anything with it.
+        notices = self._active_notices()
+        if notices is not None:
+            notices.set_gesture_active(region == GESTURE_REGION_LEFT)
+
+        if not event:
+            return
+
+        if region == GESTURE_REGION_LEFT and notices is not None:
+            if event == "scroll":
+                delta = data.get("scroll_delta", 0)
+                if delta:
+                    notices.scroll_by_pixels(delta)
+            elif event == "tap":
+                notices.toggle_scroll_pause()
+
+        elif region == GESTURE_REGION_RIGHT:
+            if event == "enter_right":
+                self._show_timetable_peek()
+            elif event == "tap" and self._peek_visible:
+                # Tap to dismiss early instead of waiting out the 10 seconds.
+                self._hide_timetable_peek()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Timetable peek panel
+    # ─────────────────────────────────────────────────────────────────────
+    def _ensure_peek(self):
+        if self.peek_panel is None:
+            self.peek_panel = SchedulePeekWidget(
+                parent=self.central_widget,
+                api_url=API_URL,
+                user_id=self.current_user_id or '',
+            )
+            self.peek_panel.hide()
+        return self.peek_panel
+
+    def _peek_geometry(self, offscreen=False):
+        w, h = self.width(), self.height()
+        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        panel_w = max(PEEK_MIN_WIDTH, int(w * PEEK_WIDTH_FRAC))
+        x = w if offscreen else w - panel_w
+        return QRect(x, banner_h, panel_w, h - banner_h)
+
+    def _show_timetable_peek(self):
+        if self._last_state in (None, 'idle'):
+            return
+
+        panel = self._ensure_peek()
+        # set_user_id only refetches when the user actually changed, so ask for a
+        # refresh ourselves otherwise — the panel is up for 10s and should be current.
+        if not panel.set_user_id(self.current_user_id or ''):
+            panel.refresh()
+
+        if self._peek_visible:
+            # Already up; a second dwell just buys another 10 seconds.
+            self.peek_timer.start(PEEK_VISIBLE_MS)
+            return
+
+        self._peek_visible = True
+        start, end = self._peek_geometry(offscreen=True), self._peek_geometry()
+        panel.setGeometry(start)
+        panel.show()
+        panel.raise_()
+
+        anim = QPropertyAnimation(panel, b"geometry", self)
+        anim.setDuration(PEEK_ANIM_IN_MS)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._peek_anim = anim
+
+        self.peek_timer.start(PEEK_VISIBLE_MS)
+
+    def _hide_timetable_peek(self, animate=True):
+        """Slide the panel back out to the right (or drop it instantly)."""
+        self.peek_timer.stop()
+        if not self._peek_visible or self.peek_panel is None:
+            return
+        self._peek_visible = False
+        panel = self.peek_panel
+
+        if not animate:
+            panel.hide()
+            return
+
+        anim = QPropertyAnimation(panel, b"geometry", self)
+        anim.setDuration(PEEK_ANIM_OUT_MS)
+        anim.setStartValue(panel.geometry())
+        anim.setEndValue(self._peek_geometry(offscreen=True))
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.finished.connect(panel.hide)
+        anim.start()
+        self._peek_anim = anim
 
     # ─────────────────────────────────────────────────────────────────────
     # Fade helpers
@@ -415,6 +547,12 @@ class SmartMirrorPro(QMainWindow):
             visible = self.guest_container
 
         def apply_new():
+            # The peek belongs to whoever was just on screen — drop it outright
+            # rather than sliding it out over a different student's dashboard.
+            self._hide_timetable_peek(animate=False)
+            self.notices_widget.reset_gesture_state()
+            self.guest_notices.reset_gesture_state()
+
             self.user_container.hide()
             self.guest_container.hide()
             if visible:
@@ -422,12 +560,16 @@ class SmartMirrorPro(QMainWindow):
 
             if new_state == 'user' and new_user_id not in ('', 'idle'):
                 self.timetable_widget.set_user_id(new_user_id)
+                if self.peek_panel is not None:
+                    self.peek_panel.set_user_id(new_user_id)
                 self._apply_user_theme(fdata.get('config', {}))
                 self._apply_user_layout(self.width(), self.height())
                 self._fade_in(self.user_container)
 
             elif new_state == 'guest':
                 self.timetable_widget.set_user_id('')
+                if self.peek_panel is not None:
+                    self.peek_panel.set_user_id('')
                 self._apply_guest_layout(self.width(), self.height())
                 self._fade_in(self.guest_container)
 
