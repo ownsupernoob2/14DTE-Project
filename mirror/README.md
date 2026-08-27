@@ -104,6 +104,34 @@ On the physical Raspberry Pi mirror:
 * **[mock_face.py](file:///e:/Code/offical/14DTE-Project/mirror/mock_face.py)**: A state simulator utility that writes mock states to the temp directory (`face_status.json`) to simulate camera/OCR inputs.
 * **[face_recognize.py](file:///e:/Code/offical/14DTE-Project/mirror/face_recognize.py)**: Daemon responsible for camera polling, Haar Cascade face detection, and API-based face verification. Also decodes student ID barcodes held up to the camera and signs that student in.
 * **[barcode_reader.py](file:///e:/Code/offical/14DTE-Project/mirror/barcode_reader.py)**: Student ID barcode decoder. Wraps whichever backend the host has (`cv2.barcode`, `cv2.QRCodeDetector` or `pyzbar`) and only reports a code once it has been read on two separate frames, so a motion-blurred misread cannot sign anyone in.
-* **[gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py)**: MediaPipe-powered gesture daemon. It does **not** emulate a mouse: the screen is split into left / centre / right regions and whichever region your hand is generally in is the one you interact with. Over the notices column an open palm scrolls and a quick pinch taps to hold the list still; dwelling on the right peeks the day's timetable.
-* **[widgets/schedule_peek_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/schedule_peek_widget.py)**: The full-day timetable panel that slides in from the right on a gesture, holds for 10 seconds, then slides back out.
+* **[gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py)**: MediaPipe-powered gesture daemon. It does **not** emulate a mouse: the screen is split into left / centre / right regions and whichever region your hand is generally in is the one you interact with. Over the notices column an open palm scrolls and a quick pinch taps to hold the list still; dwelling on the right peeks the day's timetable. The published palm position is rounded to a coarse cell, which is both what keeps the status file from being rewritten on every frame and what makes the King's Week grid lock cleanly from box to box.
+* **[widgets/schedule_peek_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/schedule_peek_widget.py)**: The full-day timetable panel that slides in from the right on a gesture, holds for 10 seconds, then slides out of the way.
+* **[widgets/kings_week_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/kings_week_widget.py)**: The King's Week grid that waits underneath the timetable. The latest story gets a full-width feature box and the rest follow in pairs below it, all fed by `GET /api/kings-week`. There is no cursor on a mirror, so nothing hovers: the palm position always resolves to the *nearest* box, the scroll comes to rest aligned to a row rather than halfway through one, and a tap grows the story out of its box into a modal.
 * **[config.py](file:///e:/Code/offical/14DTE-Project/mirror/config.py)**: Stores system paths (shared JSON files in the OS temporary folder), UI constants, and color definitions.
+
+### The right-side peek, stage by stage
+
+The right of the screen reveals in two stages, so King's Week is discoverable
+without a second gesture to learn:
+
+1. **Dwell on the right** — the panel slides in with the day's timetable across
+   the top 56% and King's Week visibly waiting below it.
+2. **Scroll down** (or wait 10 seconds) — the timetable slides off the panel's
+   right edge and King's Week grows to fill the column.
+3. **Move your palm** — the nearest box locks in; **tap** to open it.
+4. **Scroll** with a story open goes to that story; **tap** closes it.
+5. **Scroll up** at the top of the grid brings the timetable back.
+6. Twenty seconds with no hand on that side and the whole panel goes away, so
+   one student's browsing is never left stranded on the mirror.
+
+### Tests
+
+All of the below run headless and offline — no camera, no mediapipe, no network:
+
+```bash
+python -m unittest test_barcode_reader test_gesture_engine test_kings_week_widget test_peek_stages
+```
+
+`test_kings_week_widget.py` covers the grid, box locking, snapping and the
+modal; `test_peek_stages.py` drives the real gesture handler with synthetic
+payloads to cover the two-stage reveal end to end.

@@ -16,7 +16,7 @@ from gesture_engine import (
     GestureEngine,
     REGION_LEFT, REGION_CENTER, REGION_RIGHT,
     RIGHT_DWELL_SEC, TAP_MAX_SEC, HAND_LOST_SEC,
-    SCROLL_DEADZONE, HEARTBEAT_SEC,
+    SCROLL_DEADZONE, HEARTBEAT_SEC, POSITION_QUANTUM,
     classify_region,
 )
 
@@ -263,6 +263,27 @@ class TestStatusFile(unittest.TestCase):
         t1 = self._read()['timestamp']
         self.e.write_status(event="tap")
         self.assertGreaterEqual(self._read()['timestamp'], t1)
+
+    def test_moving_a_whole_cell_is_published(self):
+        # The King's Week grid picks a box from hand_y, so a real move has to
+        # reach the mirror without waiting for the heartbeat.
+        self.e.process_landmarks(make_hand(0.8, 0.2), 1000.0)
+        self.e.write_status()
+        before = self._read()
+        self.e.process_landmarks(make_hand(0.8, 0.2 + POSITION_QUANTUM * 2), 1000.1)
+        self.e.write_status()
+        after = self._read()
+        self.assertGreater(after['seq'], before['seq'])
+        self.assertGreater(after['hand_y'], before['hand_y'])
+
+    def test_jitter_inside_one_cell_is_not_published(self):
+        # Sub-cell wobble would otherwise rewrite the file on every frame.
+        self.e.process_landmarks(make_hand(0.8, 0.2), 1000.0)
+        self.e.write_status()
+        before = self._read()['seq']
+        self.e.process_landmarks(make_hand(0.8, 0.2 + POSITION_QUANTUM / 8), 1000.1)
+        self.e.write_status()
+        self.assertEqual(self._read()['seq'], before)
 
 
 if __name__ == '__main__':

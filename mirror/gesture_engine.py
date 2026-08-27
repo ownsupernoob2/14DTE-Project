@@ -11,7 +11,8 @@ region your hand is generally in is the region you are interacting with:
     right  (x > 0.62)  → the timetable peek
 
 Within a region an open palm engages control: moving it up and down scrolls,
-and a quick pinch is a tap. Dwelling in the right region peeks the timetable.
+and a quick pinch is a tap. Dwelling in the right region peeks the timetable,
+which then slides away to reveal the King's Week grid underneath it.
 
 State is published to a JSON file that smart_mirror_pro.py polls, so the
 vision work stays out of the Qt event loop.
@@ -54,6 +55,13 @@ SCROLL_MAX_PX      = 90     # clamp one frame's scroll so a fast wave can't jump
 RIGHT_DWELL_SEC    = 0.45   # palm must settle in the right region before peeking
 HEARTBEAT_SEC      = 0.5    # republish presence at least this often
 HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
+
+# The King's Week grid picks a box from the published palm position, so a move
+# has to be published even when nothing else about the state changed. Rounding
+# to a coarse cell keeps that from becoming a write on every single frame — and
+# it is the same coarseness that makes the grid snap cleanly from box to box
+# instead of hovering between two of them.
+POSITION_QUANTUM   = 1.0 / 24
 
 
 def classify_region(x):
@@ -216,10 +224,17 @@ class GestureEngine:
 
     # ── Publishing ───────────────────────────────────────────────────────────
 
+    def _quantised_position(self):
+        """The palm position rounded to a grid cell, or None with no hand."""
+        if not self.present:
+            return None
+        return (int(self.hand_x / POSITION_QUANTUM),
+                int(self.hand_y / POSITION_QUANTUM))
+
     def write_status(self, event=None, scroll_delta=0, force=False):
         """Publish state, skipping writes that would tell the mirror nothing new."""
         now = time.time()
-        payload = (self.present, self.region, event)
+        payload = (self.present, self.region, event, self._quantised_position())
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):

@@ -93,6 +93,7 @@ The server is the central hub. It handles authentication, stores widget layouts 
 | **Widget Storage** | Each user's widget layout is saved as `data/<user_id>_widgets.json`; CRUD via REST endpoints |
 | **Notices** | Periodically fetches and caches school daily notices (`fetch_notices.py`) |
 | **Timetable** | Parses ICS calendar URLs and returns today's/weekly schedule |
+| **King's Week** | Hourly scrape of the school's weekly publication (`handlers_kingsweek.go`): the edition list comes from `kingshigh.school.nz`, and the latest edition's articles and images from the `hail.to` publication behind it. Cached to `data/kings_week.json` and served from memory |
 
 ### Python Scripts
 
@@ -126,6 +127,7 @@ GET    /api/dashboard/widgets       — Get your widget layout
 PUT    /api/dashboard/widgets/bulk  — Save your full widget layout
 GET    /api/notices                 — Get cached school notices
 GET    /api/timetable               — Get today's/weekly timetable
+GET    /api/kings-week              — Get the scraped King's Week edition + articles
 ```
 
 ### File Storage Layout
@@ -288,6 +290,7 @@ MIRROR_WINDOWED=1   # set to 1 for windowed dev mode
 │   ├── verify.py           # Face verifier (Python)
 │   ├── notices.go          # School notices handler
 │   ├── timetable.go        # ICS timetable parser
+│   ├── handlers_kingsweek.go # King's Week scraper (school site + hail.to)
 │   ├── encodings/          # Per-user face encoding pickles
 │   └── data/               # Per-user widget layout JSON files
 │
