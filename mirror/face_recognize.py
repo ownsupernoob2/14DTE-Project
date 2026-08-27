@@ -40,6 +40,7 @@ except ImportError:
     faiss = None
 
 
+from barcode_reader import BarcodeReader
 from config import FACE_DATA_FILE, VISION_FILE
 from timing_config import (
     IDLE_TIMEOUT_SEC,
@@ -48,6 +49,8 @@ from timing_config import (
     API_POLL_GUEST,
     API_POLL_RECOGNISED,
     HEARTBEAT_INTERVAL,
+    BARCODE_SESSION_SEC,
+    BARCODE_SCAN_EVERY_N_FRAMES,
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -57,9 +60,16 @@ STATE_IDLE  = "idle"
 STATE_GUEST = "guest"
 STATE_USER  = "user"
 
+AUTH_FACE    = "face"
+AUTH_BARCODE = "barcode"
+
 # ── Thread safety for the background API call ────────────────────────────────
 api_lock = threading.Lock()
 api_state = {"busy": False}
+
+# Separate flag: a barcode lookup must not be blocked by an in-flight face call.
+barcode_lock = threading.Lock()
+barcode_state = {"busy": False}
 
 
 
@@ -217,6 +227,41 @@ def verify_face_worker(frame, on_result):
             api_state["busy"] = False
 
 
+def verify_barcode_worker(code, on_result):
+    """Background thread: resolve a scanned student ID to a user + widgets.
+
+    Mirrors verify_face_worker's contract so a successful scan feeds the same
+    state machine a recognised face does.
+    """
+    try:
+        res = requests.post(
+            f"{API_URL}/api/verify-barcode",
+            json={"barcode": code},
+            timeout=5,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            user_id = data.get("user_id", "")
+            if user_id and user_id not in ("", "idle"):
+                print(f"[BARCODE] Sign-in accepted for {user_id}")
+                on_result(user_id, data.get("widgets", []), True)
+                return
+            print("[BARCODE] Server returned no usable user_id.")
+        elif res.status_code == 404:
+            print(f"[BARCODE] {code} is not linked to any account.")
+        elif res.status_code == 429:
+            print("[BARCODE] Rate limited by server — slow down scanning.")
+        else:
+            print(f"[BARCODE] Verify failed: status={res.status_code}")
+        on_result(None, [], False)
+    except Exception as e:
+        print(f"[BARCODE] Verify error: {e}")
+        on_result(None, [], None)
+    finally:
+        with barcode_lock:
+            barcode_state["busy"] = False
+
+
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
     """
     Open the right camera source.
@@ -248,7 +293,7 @@ def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
 
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
-                      session_widgets, in_grace):
+                      session_widgets, in_grace, auth_method=AUTH_FACE):
     """Atomically write the state JSON consumed by smart_mirror_pro.py.
 
     The .tmp file is placed in the same directory as the target so that
@@ -267,6 +312,8 @@ def write_face_status(state, detected, faces_count,
         "timestamp":  time.time(),
         "widgets":    session_widgets if is_recognised else [],
         "in_grace":   in_grace,
+        # How this session was established, so the mirror can label it.
+        "auth_method": auth_method if is_recognised else "",
     }
     # Keep .tmp in same directory as the target so os.replace() is atomic
     # on every platform and never triggers a cross-device / access-denied error.
@@ -295,6 +342,8 @@ def main():
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
     parser.add_argument('--camera-id', default=4, type=int,
                         help="Webcam index for desktop/dev mode (default: 4)")
+    parser.add_argument('--no-barcode', action='store_true',
+                        help="Disable student ID barcode sign-in")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -304,9 +353,19 @@ def main():
     print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s")
     print(f"  Poll IDLE  : {API_POLL_INTERVAL}s  |  GUEST: {API_POLL_GUEST}s  |  USER: {API_POLL_RECOGNISED}s")
     print(f"  Status file: {FACE_DATA_FILE}")
-    print("=" * 60)
 
     cap = open_camera(args.rpi, args.camera_id)
+
+    # ── Barcode sign-in ──────────────────────────────────────────────────────
+    barcode_reader = None
+    barcode_backend = 'disabled'
+    if not args.no_barcode:
+        reader = BarcodeReader()
+        if reader.available:
+            barcode_reader = reader
+            barcode_backend = reader.backend
+    print(f"  Barcode    : {barcode_backend}")
+    print("=" * 60)
 
     # Download and load FAISS index and user map at startup
     download_and_load_index()
@@ -326,16 +385,28 @@ def main():
             pending_result["rec"]     = rec
             pending_result["fresh"]   = True
 
+    # ── Barcode result (separate slot so it cannot be lost to a face result) ──
+    barcode_result = {"user_id": None, "widgets": [], "ok": False, "fresh": False}
+
+    def on_barcode_result(user_id, widgets, ok):
+        with result_lock:
+            barcode_result["user_id"] = user_id
+            barcode_result["widgets"] = list(widgets)
+            barcode_result["ok"]      = bool(ok)
+            barcode_result["fresh"]   = True
+
     # ── State ────────────────────────────────────────────────────────────────
     state              = STATE_IDLE
     session_user_id    = None
     session_user_name  = None
     session_widgets    = []
+    auth_method        = AUTH_FACE
 
     last_face_time     = 0.0
     last_api_call      = 0.0
     last_heartbeat     = 0.0
     unrecognised_since = None   # when the unrecognised streak started
+    barcode_until      = 0.0    # a scan holds the dashboard until this time
 
     detected           = False
     faces_count        = 0
@@ -372,6 +443,43 @@ def main():
             if detected:
                 last_face_time = now
 
+            # ── Barcode scan ─────────────────────────────────────────────────
+            if barcode_reader is not None and frame_counter % BARCODE_SCAN_EVERY_N_FRAMES == 0:
+                code = barcode_reader.detect(frame)
+                if code:
+                    with barcode_lock:
+                        bc_busy = barcode_state["busy"]
+                    if bc_busy:
+                        print(f"[BARCODE] Read {code} while a lookup was in flight — ignoring.")
+                    else:
+                        print(f"[BARCODE] Read {code} — verifying...")
+                        with barcode_lock:
+                            barcode_state["busy"] = True
+                        threading.Thread(target=verify_barcode_worker,
+                                         args=(code, on_barcode_result), daemon=True).start()
+
+            # ── Consume pending barcode result ───────────────────────────────
+            with result_lock:
+                bc_fresh = barcode_result["fresh"]
+                if bc_fresh:
+                    bc_user_id = barcode_result["user_id"]
+                    bc_widgets = barcode_result["widgets"]
+                    bc_ok      = barcode_result["ok"]
+                    barcode_result["fresh"] = False
+
+            if bc_fresh and bc_ok and bc_user_id:
+                if state != STATE_USER or session_user_id != bc_user_id:
+                    print(f"[STATE] {state.upper()} -> USER  (barcode, user={bc_user_id})")
+                state              = STATE_USER
+                session_user_id    = bc_user_id
+                session_user_name  = bc_user_id
+                session_widgets    = bc_widgets
+                auth_method        = AUTH_BARCODE
+                unrecognised_since = None
+                barcode_until      = now + BARCODE_SESSION_SEC
+
+            barcode_active = now < barcode_until
+
             # ── Consume pending API result ───────────────────────────────────
             with result_lock:
                 fresh = pending_result["fresh"]
@@ -390,10 +498,16 @@ def main():
                     session_user_id   = p_user_id
                     session_user_name = p_user_id
                     session_widgets   = p_widgets
+                    auth_method       = AUTH_FACE
                     unrecognised_since = None
+                    # A face beats a stale barcode session for the same person.
+                    barcode_until     = 0.0
 
-                elif p_rec is False:
-                    # Face found but not recognised — start/maintain grace timer
+                elif p_rec is False and not barcode_active:
+                    # Face found but not recognised — start/maintain grace timer.
+                    # Skipped during a barcode session: the student already
+                    # identified themselves, so an unrecognised face (theirs, or a
+                    # passer-by behind them) must not demote them to GUEST.
                     if unrecognised_since is None:
                         unrecognised_since = now
                         print(f"[STATE] Unrecognised face -- grace timer started "
@@ -429,10 +543,13 @@ def main():
 
 
             # ── Timer-driven state transitions ───────────────────────────────
+            # A live barcode session outranks the face timers: the student made a
+            # deliberate gesture to sign in, so it holds for its full duration
+            # even if they look away or their face is never recognised.
 
             # No face for IDLE_TIMEOUT_SEC → go IDLE
             no_face_duration = (now - last_face_time) if last_face_time > 0 else float('inf')
-            if no_face_duration >= IDLE_TIMEOUT_SEC:
+            if no_face_duration >= IDLE_TIMEOUT_SEC and not barcode_active:
                 if state != STATE_IDLE:
                     print(f"[STATE] {state.upper()} -> IDLE  "
                           f"(no face for {no_face_duration:.1f}s)")
@@ -440,19 +557,36 @@ def main():
                 session_user_id   = None
                 session_user_name = None
                 session_widgets   = []
+                auth_method       = AUTH_FACE
                 unrecognised_since = None
 
             # Unrecognised for GUEST_GRACE_SEC → go GUEST
             if (unrecognised_since is not None
-                    and now - unrecognised_since >= GUEST_GRACE_SEC):
+                    and now - unrecognised_since >= GUEST_GRACE_SEC
+                    and not barcode_active):
                 if state != STATE_GUEST:
                     print(f"[STATE] {state.upper()} -> GUEST  "
                           f"(unrecognised for {now - unrecognised_since:.1f}s)")
                     session_user_id   = None
                     session_user_name = None
                     session_widgets   = []
+                    auth_method       = AUTH_FACE
                 state = STATE_GUEST
                 unrecognised_since = None  # grace consumed; stay GUEST via state
+
+            # Barcode session just lapsed with nothing else holding the screen →
+            # drop straight back to IDLE so the next student starts clean.
+            if (auth_method == AUTH_BARCODE and not barcode_active
+                    and state == STATE_USER):
+                print(f"[STATE] USER -> IDLE  (barcode session expired)")
+                state             = STATE_IDLE
+                session_user_id   = None
+                session_user_name = None
+                session_widgets   = []
+                auth_method       = AUTH_FACE
+                if barcode_reader is not None:
+                    # Let the same card sign in again straight away.
+                    barcode_reader.reset()
 
             # ── Compute in_grace for the status dot ──────────────────────────
             in_grace = (unrecognised_since is not None
@@ -462,12 +596,13 @@ def main():
             # ── Write status JSON ────────────────────────────────────────────
             write_face_status(state, detected, faces_count,
                               session_user_id, session_user_name,
-                              session_widgets, in_grace)
+                              session_widgets, in_grace, auth_method)
 
             # ── Periodic console log ─────────────────────────────────────────
             if frame_counter % 90 == 0:
                 print(f"[INFO] state={state}  detected={detected}  "
-                      f"user={session_user_id}  widgets={len(session_widgets)}")
+                      f"user={session_user_id}  via={auth_method}  "
+                      f"widgets={len(session_widgets)}")
 
     except KeyboardInterrupt:
         print("\n[INFO] Shutting down.")

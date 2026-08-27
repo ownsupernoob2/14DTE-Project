@@ -1,0 +1,269 @@
+"""Offline tests for the region-based gesture engine.
+
+No camera and no mediapipe needed — the tracker is stubbed out and synthetic
+landmark sets are fed straight into process_landmarks().
+
+Run from the mirror/ directory:  python -m unittest test_gesture_engine
+"""
+
+import json
+import os
+import tempfile
+import unittest
+
+import gesture_engine
+from gesture_engine import (
+    GestureEngine,
+    REGION_LEFT, REGION_CENTER, REGION_RIGHT,
+    RIGHT_DWELL_SEC, TAP_MAX_SEC, HAND_LOST_SEC,
+    SCROLL_DEADZONE, HEARTBEAT_SEC,
+    classify_region,
+)
+
+
+class _P:
+    """Stand-in for a mediapipe NormalizedLandmark."""
+
+    def __init__(self, x, y, z=0.0):
+        self.x, self.y, self.z = x, y, z
+
+
+def make_hand(px, py, closed=False, pinch=False):
+    """21 landmarks whose palm centre is exactly (px, py).
+
+    closed=True tucks the finger tips below their knuckles (no scroll control);
+    pinch=True brings the thumb tip onto the index tip.
+    """
+    lm = [_P(px, py) for _ in range(21)]
+    tip_y = py + 0.1 if closed else py - 0.1
+    for tip in (8, 12, 16, 20):
+        lm[tip] = _P(px, tip_y)
+    # Thumb tip: on the index tip for a pinch, well clear of it otherwise.
+    lm[4] = _P(px + 0.02, tip_y) if pinch else _P(px + 0.3, py)
+    return lm
+
+
+class StubEngine(GestureEngine):
+    def _init_tracker(self):
+        pass  # no mediapipe, no camera
+
+
+class TestRegions(unittest.TestCase):
+    def test_boundaries(self):
+        self.assertEqual(classify_region(0.0), REGION_LEFT)
+        self.assertEqual(classify_region(0.33), REGION_LEFT)
+        self.assertEqual(classify_region(0.5), REGION_CENTER)
+        self.assertEqual(classify_region(0.7), REGION_RIGHT)
+        self.assertEqual(classify_region(1.0), REGION_RIGHT)
+
+    def test_palm_center_drives_region_not_fingertips(self):
+        # Fingers pointing right from a left-side palm must not drag the region
+        # across — that is the flicker the palm average exists to prevent.
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.2, 0.5), now=1000.0)
+        self.assertEqual(e.region, REGION_LEFT)
+
+
+class TestScroll(unittest.TestCase):
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_first_frame_only_anchors(self):
+        # Arriving in a region must not emit a jump the size of the hand's entry.
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0))
+        self.assertTrue(self.e.engaged)
+
+    def test_open_palm_down_scrolls_down(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.56), 1000.1)
+        self.assertEqual(event, "scroll")
+        self.assertGreater(self.e.scroll_delta, 0)
+
+    def test_open_palm_up_scrolls_up(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.44), 1000.1)
+        self.assertEqual(event, "scroll")
+        self.assertLess(self.e.scroll_delta, 0)
+
+    def test_jitter_inside_deadzone_does_not_scroll(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        tiny = SCROLL_DEADZONE / 2
+        event = self.e.process_landmarks(make_hand(0.2, 0.5 + tiny), 1000.1)
+        self.assertIsNone(event)
+        self.assertEqual(self.e.scroll_delta, 0)
+
+    def test_closed_hand_does_not_scroll(self):
+        # A hand just resting or gesturing at someone shouldn't move the list.
+        self.e.process_landmarks(make_hand(0.2, 0.5, closed=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.7, closed=True), 1000.1)
+        self.assertIsNone(event)
+        self.assertFalse(self.e.engaged)
+
+    def test_region_change_reanchors(self):
+        # Sweeping across columns must not dump one huge scroll into the new one.
+        self.e.process_landmarks(make_hand(0.2, 0.2), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.5, 0.9), 1000.1)
+        self.assertIsNone(event)
+        self.assertEqual(self.e.region, REGION_CENTER)
+
+    def test_scroll_is_clamped(self):
+        self.e.process_landmarks(make_hand(0.2, 0.05), 1000.0)
+        self.e.process_landmarks(make_hand(0.2, 0.95), 1000.1)
+        self.assertLessEqual(abs(self.e.scroll_delta), gesture_engine.SCROLL_MAX_PX)
+
+
+class TestTap(unittest.TestCase):
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_quick_pinch_and_release_taps(self):
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0))
+        event = self.e.process_landmarks(make_hand(0.2, 0.5), 1000.2)
+        self.assertEqual(event, "tap")
+
+    def test_held_pinch_is_not_a_tap(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0 + TAP_MAX_SEC + 0.3)
+        self.assertIsNone(event)
+
+    def test_second_tap_inside_cooldown_is_dropped(self):
+        # Fingers wobbling apart and back must not read as two taps.
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        self.assertEqual(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.2), "tap")
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.3)
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.4))
+
+
+class TestRightDwell(unittest.TestCase):
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_dwell_fires_once(self):
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0))
+        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.assertEqual(event, "enter_right")
+        # Leaving the hand there must not re-trigger the peek every frame.
+        for i in range(5):
+            self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1001.0 + i * 0.1))
+
+    def test_passing_through_quickly_does_not_fire(self):
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
+        self.assertIsNone(event)
+
+    def test_leaving_and_returning_rearms(self):
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+        self.assertEqual(
+            self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5), "enter_right"
+        )
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1001.0)   # back to notices
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1002.0)   # returns to right
+        self.assertEqual(
+            self.e.process_landmarks(make_hand(0.8, 0.5), 1002.5), "enter_right"
+        )
+
+    def test_hand_lost_rearms(self):
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5)
+        self.assertFalse(self.e.right_armed)
+        self.assertTrue(self.e.mark_absent(1000.5 + HAND_LOST_SEC + 0.1))
+        self.assertTrue(self.e.right_armed)
+
+
+class TestAbsence(unittest.TestCase):
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_brief_tracking_dropout_keeps_the_hand(self):
+        # MediaPipe drops a frame now and then; that must not reset everything.
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.assertFalse(self.e.mark_absent(1000.0 + HAND_LOST_SEC / 2))
+        self.assertTrue(self.e.present)
+        self.assertEqual(self.e.region, REGION_LEFT)
+
+    def test_sustained_absence_clears_state(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.assertTrue(self.e.mark_absent(1000.0 + HAND_LOST_SEC + 0.1))
+        self.assertFalse(self.e.present)
+        self.assertIsNone(self.e.region)
+        self.assertFalse(self.e.engaged)
+
+    def test_absence_is_reported_once(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        gone = 1000.0 + HAND_LOST_SEC + 0.1
+        self.assertTrue(self.e.mark_absent(gone))
+        self.assertFalse(self.e.mark_absent(gone + 1.0))
+
+
+class TestStatusFile(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, 'gesture_status.json')
+        self._orig = gesture_engine.GESTURE_STATUS_FILE
+        gesture_engine.GESTURE_STATUS_FILE = self.path
+        self.e = StubEngine()
+
+    def tearDown(self):
+        gesture_engine.GESTURE_STATUS_FILE = self._orig
+
+    def _read(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_payload_shape(self):
+        self.e.process_landmarks(make_hand(0.2, 0.6), 1000.0)
+        self.e.write_status()
+        data = self._read()
+        self.assertTrue(data['present'])
+        self.assertEqual(data['region'], REGION_LEFT)
+        self.assertAlmostEqual(data['hand_x'], 0.2, places=3)
+        self.assertAlmostEqual(data['hand_y'], 0.6, places=3)
+        self.assertIsNone(data['event'])
+
+    def test_unchanged_state_is_not_rewritten(self):
+        # The mirror polls this file 10x a second; republishing an identical
+        # state every frame is pure churn.
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status()
+        first_seq = self._read()['seq']
+        self.e.write_status()
+        self.assertEqual(self._read()['seq'], first_seq)
+
+    def test_events_always_written(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status()
+        before = self._read()['seq']
+        self.e.write_status(event="tap")
+        after = self._read()
+        self.assertGreater(after['seq'], before)
+        self.assertEqual(after['event'], "tap")
+
+    def test_region_change_is_written(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status()
+        before = self._read()['seq']
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.1)
+        self.e.write_status()
+        data = self._read()
+        self.assertGreater(data['seq'], before)
+        self.assertEqual(data['region'], REGION_RIGHT)
+
+    def test_heartbeat_republishes_after_the_interval(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status()
+        before = self._read()['seq']
+        self.e.last_write -= (HEARTBEAT_SEC + 0.1)
+        self.e.write_status()
+        self.assertGreater(self._read()['seq'], before)
+
+    def test_timestamp_advances(self):
+        # smart_mirror_pro gates on a strictly increasing timestamp.
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status(event="tap")
+        t1 = self._read()['timestamp']
+        self.e.write_status(event="tap")
+        self.assertGreaterEqual(self._read()['timestamp'], t1)
+
+
+if __name__ == '__main__':
+    unittest.main()

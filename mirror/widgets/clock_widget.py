@@ -1,12 +1,11 @@
 # mirror/widgets/clock_widget.py
 import datetime
-from PyQt6.QtWidgets import QLabel, QHBoxLayout, QFrame, QWidget
+from PyQt6.QtWidgets import QLabel, QHBoxLayout, QFrame
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
 
 
 class ClockWidget(QFrame):
-    """Header clock row: Date on left, time on right with bottom line divider matching new-style.html."""
+    """Header clock row: Date on left, Time on right matching the web screenshot."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15,28 +14,29 @@ class ClockWidget(QFrame):
             #ClockWidget {
                 background: transparent;
                 border: none;
-                border-bottom: 1px solid #1c1c1c;
-                padding-bottom: 12px;
             }
         """)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 12)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
 
-        self.date_label = QLabel("Wed, 22 Jul", self)
+        self.date_label = QLabel("", self)
+        self.date_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.date_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 18px; color: #d0d0d0; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
+            "font-size: 18px; color: #d0d0d0; background: transparent; border: none;"
         )
 
-        self.time_label = QLabel("10:36", self)
-        self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.time_label = QLabel("", self)
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.time_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 44px; font-weight: 600; color: #ffffff; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
+            "font-size: 52px; font-weight: 700; color: #ffffff; background: transparent; border: none;"
         )
 
-        lay.addWidget(self.date_label)
-        lay.addStretch(1)
-        lay.addWidget(self.time_label)
+        lay.addWidget(self.date_label, 1)
+        lay.addWidget(self.time_label, 0)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -45,13 +45,11 @@ class ClockWidget(QFrame):
 
     def _tick(self):
         now = datetime.datetime.now()
-        # Windows strftime: %#d instead of %-d
-        try:
-            day_str = now.strftime("%a, %#d %b")
-        except ValueError:
-            day_str = now.strftime("%a, %d %b")
+        day_str = f"{now.strftime('%a')}, {now.day} {now.strftime('%b')}"
         time_str = now.strftime("%H:%M")
 
         self.date_label.setText(day_str)
         self.time_label.setText(time_str)
+
+
 

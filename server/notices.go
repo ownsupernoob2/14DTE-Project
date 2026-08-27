@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/labstack/echo/v4"
@@ -22,10 +25,6 @@ const (
 	noticesURL = "https://www.kingshigh.school.nz/whats-on/daily-notices/"
 	dataDir    = "data"
 	outFile    = "data/daily_notices.json"
-
-	// Primary and backup Gemini API keys
-	geminiAPIKeyPrimary = "AQ.Ab8RN6JhAURgT__2fy2PxQq3xN1CQujfdFqnOHf8Fbpm2PTdCw"
-	geminiAPIKeyBackup  = "AQ.Ab8RN6JbywuHaQUQZtch4pq5ttEkpv8UbHTEzwMqxL0Ed1LXCg"
 )
 
 type NoticeItem struct {
@@ -161,12 +160,10 @@ func fetchNoticesLogic() error {
 			Contact:     "System",
 		}}
 	} else {
-		log.Println("Processing text with Gemini...")
-		notices = processWithGemini(text)
+		notices = parseNoticesText(text)
 
 		if len(notices) == 0 {
-			log.Println("Falling back to text cleanup...")
-			notices = cleanMessyText(text)
+			log.Println("Text extracted but no notices parsed — check PDF structure.")
 		}
 	}
 
@@ -262,231 +259,288 @@ func downloadAndExtractText(pdfURL string) (string, error) {
 		if page.V.IsNull() {
 			continue
 		}
-		content, err := page.GetPlainText(nil)
-		if err == nil {
-			textBuilder.WriteString(content)
-			textBuilder.WriteString("\n")
-		}
+		textBuilder.WriteString(extractPageLines(page))
 	}
 
 	return textBuilder.String(), nil
 }
 
-func cleanMessyText(rawText string) []NoticeItem {
-	lines := strings.Split(rawText, "\n")
-	var cleanedLines []string
+// extractPageLines rebuilds real text lines from a PDF page.
+//
+// GetPlainText emits every text span on its own line ("King", "’", "s High
+// School"), which destroys the line structure the notice parser depends on.
+// Grouping spans by row and joining them in reading order restores it.
+func extractPageLines(page pdf.Page) string {
+	rows, err := page.GetTextByRow()
+	if err != nil || len(rows) == 0 {
+		// Fall back to the fragmented extraction rather than losing the page.
+		content, err := page.GetPlainText(nil)
+		if err != nil {
+			return ""
+		}
+		return content + "\n"
+	}
 
-	spaceRe := regexp.MustCompile(`\s{2,}`)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		line = spaceRe.ReplaceAllString(line, " ")
-		if len(line) > 2 {
-			cleanedLines = append(cleanedLines, line)
+	// PDF Y coordinates increase bottom-to-top, so descending Y is reading order.
+	sort.SliceStable(rows, func(a, b int) bool { return rows[a].Position > rows[b].Position })
+
+	var sb strings.Builder
+	for _, row := range rows {
+		spans := append(pdf.TextHorizontal{}, row.Content...)
+		sort.SliceStable(spans, func(a, b int) bool { return spans[a].X < spans[b].X })
+
+		var line strings.Builder
+		for _, span := range spans {
+			line.WriteString(span.S)
+		}
+
+		// Spans carry their own spacing, so only collapse runs of whitespace.
+		if collapsed := strings.Join(strings.Fields(line.String()), " "); collapsed != "" {
+			sb.WriteString(collapsed)
+			sb.WriteString("\n")
 		}
 	}
+	return sb.String()
+}
 
-	var notices []NoticeItem
-	currentCategory := "General"
-	var currentNotice []string
+// Audience section headers in the PDF, e.g. "All/Te Katoa", "Senior/Tuakana".
+var audienceSections = map[string][]string{
+	"all":    {"All"},
+	"senior": {"11", "12", "13"},
+	"junior": {"9", "10"},
+}
 
-	// Check for Category - Notice text
-	noticeRe := regexp.MustCompile(`^([A-Z0-9\s/&,]+?)\s*[-–—]\s*(.+)$`)
-	dateRe := regexp.MustCompile(`^(?i)(mon|tue|wed|thu|fri|sat|sun)\w*\s+\d+`)
+var (
+	// A notice starts with a SHOUTY heading followed by a dash: "BREAKFAST CLUB – Free breakfast:"
+	// \p{Lu} rather than A-Z so macronised Māori headings ("WHĀNAU") match too.
+	headingRe = regexp.MustCompile(`^((?:\p{Lu}|[0-9&/\.\?' \(\)-])[\p{Lu}0-9&/\.\?' \(\)-]{2,60}?)\s*[-–—]\s*(.*)$`)
+	// Masthead / bilingual title lines to drop.
+	mastheadRe = regexp.MustCompile(`(?i)^(king.s high school|daily notices|panui|wenerei|rāapa|mane|turei|paraire|timetable day)\b`)
+	// Bilingual audience header, e.g. "Senior/Tuakana".
+	audienceRe = regexp.MustCompile(`^(All|Senior|Junior)\s*/\s*\S+`)
+	bulletRe   = regexp.MustCompile(`^[•▪◦*]\s*`)
+	dateLineRe = regexp.MustCompile(`(?i)^(mon|tues|wednes|thurs|fri|satur|sun)day\s+\d{1,2}`)
+	// Day labels used as sub-items inside a notice ("THURSDAY - Violin, Clarinet"),
+	// which are continuation lines rather than new notices.
+	dayLabelRe = regexp.MustCompile(`^(TODAY|TOMORROW|YESTERDAY|MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY|EVERYDAY|EVERY DAY|THIS WEEK|NEXT WEEK)$`)
+)
 
-	dayWords := map[string]bool{
-		"TODAY": true, "MONDAY": true, "TUESDAY": true, "WEDNESDAY": true,
-		"THURSDAY": true, "FRIDAY": true, "SATURDAY": true, "SUNDAY": true,
-		"EVERYDAY": true, "TOMORROW": true,
+// parsedNotice is an in-progress notice being accumulated across lines.
+// Blocks are kept in document order so paragraphs and lists render as written.
+type parsedNotice struct {
+	heading  string
+	audience []string
+	blocks   []noticeBlock
+}
+
+type noticeBlock struct {
+	isBullet bool
+	text     string
+}
+
+// last returns a pointer to the most recent block, or nil when empty.
+func (p *parsedNotice) last() *noticeBlock {
+	if len(p.blocks) == 0 {
+		return nil
+	}
+	return &p.blocks[len(p.blocks)-1]
+}
+
+func (p *parsedNotice) addParagraph(text string) {
+	if text != "" {
+		p.blocks = append(p.blocks, noticeBlock{text: text})
+	}
+}
+
+func (p *parsedNotice) addBullet(text string) {
+	if text != "" {
+		p.blocks = append(p.blocks, noticeBlock{isBullet: true, text: text})
+	}
+}
+
+// parseNoticesText turns extracted PDF lines into individual notices.
+//
+// The PDF has a simple, stable shape: optional audience section headers
+// ("All/Te Katoa", "Senior/Tuakana", "Junior/Teina"), then one notice per
+// SHOUTY heading followed by a dash, with wrapped continuation lines and
+// occasional "•" bullets.
+func parseNoticesText(rawText string) []NoticeItem {
+	var (
+		notices  []NoticeItem
+		current  *parsedNotice
+		audience = []string{"All"}
+	)
+
+	flush := func() {
+		if current == nil {
+			return
+		}
+		if item, ok := current.toNoticeItem(); ok {
+			notices = append(notices, item)
+		}
+		current = nil
 	}
 
-	for _, line := range cleanedLines {
-		upperLine := strings.ToUpper(line)
-		if strings.Contains(upperLine, "DAILY NOTICE") {
+	for _, raw := range strings.Split(rawText, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || len(line) < 3 {
 			continue
 		}
 
-		match := noticeRe.FindStringSubmatch(line)
-		if len(match) > 0 {
-			potentialCategory := strings.TrimSpace(match[1])
-			noticeBody := strings.TrimSpace(match[2])
-
-			if dayWords[strings.ToUpper(potentialCategory)] {
-				currentNotice = append(currentNotice, fmt.Sprintf("%s - %s", potentialCategory, noticeBody))
-			} else {
-				if len(currentNotice) > 0 {
-					notices = append(notices, NoticeItem{
-						Title:    currentCategory,
-						Category: currentCategory,
-						Notice:   "<p>" + strings.Join(currentNotice, "</p><p>") + "</p>",
-					})
-				}
-				currentCategory = potentialCategory
-				currentNotice = []string{noticeBody}
+		// Audience section header — applies to every notice that follows.
+		if m := audienceRe.FindStringSubmatch(line); m != nil {
+			flush()
+			if years, ok := audienceSections[strings.ToLower(m[1])]; ok {
+				audience = years
 			}
-		} else {
-			if len(line) < 40 && len(currentNotice) == 0 && dateRe.MatchString(line) {
+			continue
+		}
+
+		// Masthead, bilingual titles and the standalone date line.
+		if mastheadRe.MatchString(line) || dateLineRe.MatchString(line) {
+			continue
+		}
+
+		// Bullet line — belongs to the notice currently being built.
+		if bulletRe.MatchString(line) {
+			if current != nil {
+				current.addBullet(bulletRe.ReplaceAllString(line, ""))
+			}
+			continue
+		}
+
+		// New notice heading.
+		if m := headingRe.FindStringSubmatch(line); m != nil && isShoutyHeading(m[1]) {
+			heading := strings.TrimSpace(m[1])
+			// "THURSDAY - Violin, Clarinet" is a sub-item of the notice above it,
+			// not a notice of its own.
+			if current != nil && dayLabelRe.MatchString(heading) {
+				current.appendSubItem(heading, strings.TrimSpace(m[2]))
 				continue
 			}
-			currentNotice = append(currentNotice, line)
+			flush()
+			current = &parsedNotice{heading: heading, audience: audience}
+			current.addParagraph(strings.TrimSpace(m[2]))
+			continue
+		}
+
+		// Continuation of the current notice body.
+		if current != nil {
+			current.appendContinuation(line)
 		}
 	}
-
-	if len(currentNotice) > 0 {
-		notices = append(notices, NoticeItem{
-			Title:    currentCategory,
-			Category: currentCategory,
-			Notice:   "<p>" + strings.Join(currentNotice, "</p><p>") + "</p>",
-		})
-	}
-
-	if len(notices) == 0 && len(cleanedLines) > 0 {
-		var htmlParts []string
-		for _, line := range cleanedLines {
-			htmlParts = append(htmlParts, "<p>"+line+"</p>")
-		}
-		notices = []NoticeItem{{Title: "Daily Notice", Category: "General", Notice: strings.Join(htmlParts, "")}}
-	}
+	flush()
 
 	return notices
 }
 
-type geminiRequest struct {
-	Contents []geminiContent `json:"contents"`
-}
-
-type geminiContent struct {
-	Parts []geminiPart `json:"parts"`
-}
-
-type geminiPart struct {
-	Text string `json:"text"`
-}
-
-type geminiResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-	} `json:"candidates"`
-}
-
-type geminiRequestFull struct {
-	Contents         []geminiContent  `json:"contents"`
-	GenerationConfig geminiGenConfig  `json:"generationConfig"`
-}
-
-type geminiGenConfig struct {
-	ResponseMimeType string `json:"responseMimeType"`
-}
-
-func callGeminiAPI(apiKey string, prompt string) ([]NoticeItem, error) {
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
-
-	reqBody := geminiRequestFull{
-		Contents: []geminiContent{
-			{
-				Parts: []geminiPart{
-					{Text: prompt},
-				},
-			},
-		},
-		GenerationConfig: geminiGenConfig{
-			ResponseMimeType: "application/json",
-		},
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal error: %v", err)
-	}
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("http error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var geminiResp geminiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return nil, fmt.Errorf("decode error: %v", err)
-	}
-
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("no candidates returned")
-	}
-
-	respText := strings.TrimSpace(geminiResp.Candidates[0].Content.Parts[0].Text)
-
-	// Strip any accidental markdown fences (should not happen with responseMimeType)
-	jsonRe := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
-	if matches := jsonRe.FindStringSubmatch(respText); len(matches) > 1 {
-		respText = strings.TrimSpace(matches[1])
-	}
-	// Find the outermost JSON array
-	arrStart := strings.Index(respText, "[")
-	arrEnd := strings.LastIndex(respText, "]")
-	if arrStart >= 0 && arrEnd > arrStart {
-		respText = respText[arrStart : arrEnd+1]
-	}
-
-	var notices []NoticeItem
-	if err := json.Unmarshal([]byte(respText), &notices); err != nil {
-		return nil, fmt.Errorf("JSON parse error: %v — response: %.500s", err, respText)
-	}
-
-	return notices, nil
-}
-
-func processWithGemini(text string) []NoticeItem {
-	prompt := `You are an expert school notice parser for a smart mirror display system.
-Parse the following daily school notices into a clean JSON array. Each notice must be a separate, self-contained item — do NOT merge unrelated notices together.
-
-Output a JSON array of objects with EXACTLY these fields:
-
-- "title": Short, clear headline (max 8 words). Use title case. No dashes, symbols, or ALL CAPS. Example: "Year 12 Geography Field Trip".
-- "category": Exactly one of: "General", "Meetings", "Sports", "Arts & Culture", "Academic", "Careers", "Service". Pick the most relevant.
-- "notice": The notice body as clean HTML. Rules:
-    • Use <p> for paragraphs (each logical sentence or thought on its own <p>).
-    • Use <ul><li> for lists — never use dash, bullet, or asterisk as list markers.
-    • Use <strong> to highlight: dates, times, room numbers, deadlines, cost.
-    • Fix ALL OCR errors (e.g. "King?s" → "King's", "min utes" → "minutes", "1 0am" → "10am").
-    • Write complete, grammatically correct sentences. Remove filler like "Please note that".
-    • Only allowed tags: <p>, <ul>, <li>, <strong>. No others.
-    • No markdown, no emoji, no symbols (★, •, –) in the notice body.
-- "targetYears": Array of year level strings, e.g. ["9","10"] or ["All"]. Extract from "Year 9", "Y10", "Juniors" (→["9","10"]), "Seniors" (→["11","12","13"]).
-- "importance": "high" for urgent/time-critical/cancellations/room changes. "normal" otherwise.
-- "contact": Teacher/staff name if mentioned (e.g. "Mr Smith"), else "".
-
-STRICT RULES:
-1. Output ONLY a valid JSON array. No code fences, no extra text, no explanations.
-2. No emoji anywhere in any field.
-3. Each logical notice = one JSON object. Do not combine unrelated items.
-4. Titles must be concise — no full sentences as titles.
-5. The "notice" field must always have content.
-
-Text to parse:
-` + text
-
-	// Try primary key first, then backup
-	for i, key := range []string{geminiAPIKeyPrimary, geminiAPIKeyBackup} {
-		notices, err := callGeminiAPI(key, prompt)
-		if err == nil {
-			return notices
-		}
-		if i == 0 {
-			log.Printf("[notices] Primary Gemini key failed: %v — trying backup key", err)
-		} else {
-			log.Printf("[notices] Backup Gemini key also failed: %v", err)
+// isShoutyHeading reports whether s looks like a notice heading rather than a
+// mid-sentence dash. Headings are upper-case, so require most letters to be
+// capitals and reject anything with lower-case words.
+func isShoutyHeading(s string) bool {
+	letters, upper := 0, 0
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			letters++
+			if unicode.IsUpper(r) {
+				upper++
+			}
 		}
 	}
-	return nil
+	if letters < 3 {
+		return false
+	}
+	return float64(upper)/float64(letters) >= 0.85
+}
+
+// appendSubItem records a day-labelled sub-item ("THURSDAY - Violin, Clarinet")
+// as a bullet under the notice currently being built.
+func (p *parsedNotice) appendSubItem(label, body string) {
+	p.addBullet(label + " — " + body)
+}
+
+// appendContinuation adds a wrapped line to the notice body, merging it into
+// the previous block unless that block already ended a sentence.
+func (p *parsedNotice) appendContinuation(line string) {
+	prev := p.last()
+	if prev == nil || endsSentence(prev.text) {
+		p.addParagraph(line)
+		return
+	}
+	prev.text += " " + line
+}
+
+// endsSentence reports whether s ends with terminal punctuation, marking a safe
+// place to start a new block rather than continuing a wrapped line.
+func endsSentence(s string) bool {
+	s = strings.TrimSpace(s)
+	return strings.HasSuffix(s, ".") || strings.HasSuffix(s, "!") || strings.HasSuffix(s, "?")
+}
+
+// toNoticeItem renders the accumulated notice as HTML. All PDF-derived text is
+// HTML-escaped: it is third-party content and must never be treated as markup.
+func (p *parsedNotice) toNoticeItem() (NoticeItem, bool) {
+	var body strings.Builder
+	inList := false
+
+	for _, block := range p.blocks {
+		text := strings.TrimSpace(block.text)
+		if text == "" {
+			continue
+		}
+		if block.isBullet {
+			if !inList {
+				body.WriteString("<ul>")
+				inList = true
+			}
+			body.WriteString("<li>" + html.EscapeString(text) + "</li>")
+			continue
+		}
+		if inList {
+			body.WriteString("</ul>")
+			inList = false
+		}
+		body.WriteString("<p>" + html.EscapeString(text) + "</p>")
+	}
+	if inList {
+		body.WriteString("</ul>")
+	}
+
+	if body.Len() == 0 {
+		return NoticeItem{}, false
+	}
+
+	return NoticeItem{
+		Title:       titleCase(p.heading),
+		Category:    "", // filled in by normalizeNoticeItem
+		Notice:      body.String(),
+		TargetYears: p.audience,
+		Contact:     "",
+	}, true
+}
+
+// titleCase converts a SHOUTY PDF heading into a readable title, capitalising
+// after separators ("CHOIR/POLYHYMNIA" → "Choir/Polyhymnia") and restoring
+// acronyms that title-casing would otherwise flatten.
+func titleCase(s string) string {
+	var out []rune
+	capitalise := true
+	for _, r := range strings.ToLower(s) {
+		if capitalise && unicode.IsLetter(r) {
+			out = append(out, unicode.ToUpper(r))
+			capitalise = false
+			continue
+		}
+		if r == ' ' || r == '/' || r == '(' || r == '-' || r == '&' {
+			capitalise = true
+		}
+		out = append(out, r)
+	}
+	result := string(out)
+	for _, acronym := range []string{"Pac", "Ccrf", "Op", "Nz", "Bot", "Nzqa", "Ncea"} {
+		result = regexp.MustCompile(`\b`+acronym+`\b`).ReplaceAllString(result, strings.ToUpper(acronym))
+	}
+	return result
 }
 
 // emojiRe matches Unicode emoji sequences (broad coverage)

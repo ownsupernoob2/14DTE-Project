@@ -1,11 +1,29 @@
 # mirror/gesture_engine.py
+"""
+Region-based hand gesture engine for the smart mirror.
+
+The mirror has no touchscreen and no cursor, so this does not emulate a mouse.
+Instead the screen is split into the same columns the UI uses, and whichever
+region your hand is generally in is the region you are interacting with:
+
+    left   (x < 0.34)  → the notices column
+    center               nothing (a neutral resting area)
+    right  (x > 0.62)  → the timetable peek
+
+Within a region an open palm engages control: moving it up and down scrolls,
+and a quick pinch is a tap. Dwelling in the right region peeks the timetable.
+
+State is published to a JSON file that smart_mirror_pro.py polls, so the
+vision work stays out of the Qt event loop.
+"""
+
+import json
+import math
 import os
 import sys
-import json
 import time
-import math
+
 import cv2
-import numpy as np
 
 try:
     import mediapipe as mp
@@ -16,152 +34,234 @@ GESTURE_STATUS_FILE = os.path.join(
     os.environ.get("TEMP", os.environ.get("TMP", "/tmp")), "gesture_status.json"
 )
 
+# ── Region boundaries ────────────────────────────────────────────────────────
+# These match the 34% / 66% split in smart_mirror_pro._apply_user_layout, so the
+# region your hand is over lines up with the column you see.
+REGION_LEFT_EDGE  = 0.34
+REGION_RIGHT_EDGE = 0.62
+
+REGION_LEFT   = "left"
+REGION_CENTER = "center"
+REGION_RIGHT  = "right"
+
+# ── Tuning ───────────────────────────────────────────────────────────────────
+PINCH_DIST         = 0.06   # normalised thumb-tip → index-tip distance
+TAP_MAX_SEC        = 0.5    # pinch held longer than this is a hold, not a tap
+TAP_COOLDOWN_SEC   = 0.6    # ignore repeat taps inside this window
+SCROLL_DEADZONE    = 0.012  # ignore palm jitter below this normalised movement
+SCROLL_GAIN        = 900.0  # normalised palm movement → scroll pixels
+SCROLL_MAX_PX      = 90     # clamp one frame's scroll so a fast wave can't jump
+RIGHT_DWELL_SEC    = 0.45   # palm must settle in the right region before peeking
+HEARTBEAT_SEC      = 0.5    # republish presence at least this often
+HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
+
+
+def classify_region(x):
+    if x < REGION_LEFT_EDGE:
+        return REGION_LEFT
+    if x > REGION_RIGHT_EDGE:
+        return REGION_RIGHT
+    return REGION_CENTER
+
+
 class GestureEngine:
     def __init__(self, camera_id=0):
         self.camera_id = camera_id
         self.running = False
         self.hands = None
         self.mp_hands = None
+        self._init_tracker()
 
-        if mp is not None:
-            self.mp_hands = mp.solutions.hands
-            self.hands = self.mp_hands.Hands(
-                static_image_mode=False,
-                max_num_hands=1,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
-            )
+        # ── Tracking state ───────────────────────────────────────────────────
+        self.present = False
+        self.region = None
+        self.hand_x = 0.0
+        self.hand_y = 0.0
+        self.last_seen = 0.0
+
+        self.engaged = False          # open palm → scroll control active
+        self.scroll_anchor_y = None
+        self.scroll_delta = 0
+
+        self.pinch_start = None       # when the current pinch began
+        self.last_tap_time = None     # None = no tap yet, so no cooldown to serve
+
+        self.right_since = None       # when the palm entered the right region
+        self.right_armed = True       # re-arms once the hand leaves the right
+
+        self.seq = 0
+        self.last_write = 0.0
+        self.last_payload = None
+
+    def _init_tracker(self):
+        """Build the MediaPipe hand tracker. Overridden in tests."""
+        if mp is None:
+            print("[GESTURE] mediapipe not installed — gesture control disabled.")
+            return
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+
+    # ── Geometry helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _distance(p1, p2):
+        return math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2 + (p1.z - p2.z) ** 2)
+
+    @staticmethod
+    def _palm_center(lm):
+        """Average the wrist and the four finger MCPs.
+
+        Steadier than any single landmark: finger tips swing wildly while the
+        palm stays put, and region classification needs to not flicker.
+        """
+        pts = [lm[0], lm[5], lm[9], lm[13], lm[17]]
+        return (sum(p.x for p in pts) / len(pts),
+                sum(p.y for p in pts) / len(pts))
+
+    @staticmethod
+    def _extended_fingers(lm):
+        """Count index/middle/ring/pinky tips sitting above their knuckles."""
+        pairs = ((8, 5), (12, 9), (16, 13), (20, 17))
+        return sum(1 for tip, mcp in pairs if lm[tip].y < lm[mcp].y)
+
+    # ── Per-frame analysis ───────────────────────────────────────────────────
+
+    def process_landmarks(self, lm, now):
+        """Update state from one hand and return an event name, or None."""
+        self.scroll_delta = 0
+        x, y = self._palm_center(lm)
+        self.hand_x, self.hand_y = x, y
+        self.present = True
+        self.last_seen = now
+
+        new_region = classify_region(x)
+        region_changed = (new_region != self.region)
+        self.region = new_region
+
+        # Leaving the right region re-arms the timetable peek.
+        if new_region != REGION_RIGHT:
+            self.right_since = None
+            self.right_armed = True
+
+        pinched = self._distance(lm[4], lm[8]) < PINCH_DIST
+        fingers = self._extended_fingers(lm)
+        open_palm = fingers >= 3 and not pinched
+
+        event = None
+
+        # ── Tap: a short pinch, released ─────────────────────────────────────
+        if pinched:
+            if self.pinch_start is None:
+                self.pinch_start = now
         else:
-            print("[GESTURE] Warning: mediapipe not installed. Running in mock/headless mode.")
+            if self.pinch_start is not None:
+                held = now - self.pinch_start
+                self.pinch_start = None
+                cooled = (self.last_tap_time is None
+                          or now - self.last_tap_time > TAP_COOLDOWN_SEC)
+                if held <= TAP_MAX_SEC and cooled:
+                    self.last_tap_time = now
+                    event = "tap"
 
-        # Tracking state
-        self.history = []  # list of (timestamp, x, y)
-        self.last_gesture = None
-        self.last_gesture_time = 0.0
-        self.peace_start_time = None
-        self.ok_start_time = None
-        
-        # Pinch-to-scroll state
-        self.is_pinching = False
-        self.last_pinch_y = None
+        # ── Scroll: track the palm while an open hand is engaged ──────────────
+        if open_palm:
+            if not self.engaged or region_changed:
+                # Re-anchor on engage and on region change so crossing columns
+                # never emits one huge jump.
+                self.engaged = True
+                self.scroll_anchor_y = y
+            elif event is None:
+                dy = y - self.scroll_anchor_y
+                if abs(dy) > SCROLL_DEADZONE:
+                    # Hand down (y increases) scrolls content down.
+                    delta = int(max(-SCROLL_MAX_PX,
+                                    min(SCROLL_MAX_PX, dy * SCROLL_GAIN)))
+                    if delta != 0:
+                        self.scroll_anchor_y = y
+                        self.scroll_delta = delta
+                        return "scroll"
+        else:
+            self.engaged = False
+            self.scroll_anchor_y = None
 
-    def calculate_distance(self, p1, p2):
-        return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2 + (p1.z - p2.z)**2)
+        # ── Timetable peek: settle in the right region ────────────────────────
+        if new_region == REGION_RIGHT and event is None:
+            if self.right_since is None:
+                self.right_since = now
+            elif self.right_armed and now - self.right_since >= RIGHT_DWELL_SEC:
+                self.right_armed = False
+                event = "enter_right"
 
-    def detect_gestures(self, landmarks, shape):
+        return event
+
+    def mark_absent(self, now):
+        """Clear per-hand state once the hand has been gone long enough."""
+        if not self.present:
+            return False
+        if now - self.last_seen < HAND_LOST_SEC:
+            return False
+        self.present = False
+        self.region = None
+        self.engaged = False
+        self.scroll_anchor_y = None
+        self.pinch_start = None
+        self.right_since = None
+        self.right_armed = True
+        return True
+
+    # ── Publishing ───────────────────────────────────────────────────────────
+
+    def write_status(self, event=None, scroll_delta=0, force=False):
+        """Publish state, skipping writes that would tell the mirror nothing new."""
         now = time.time()
-        w, h = shape[1], shape[0]
+        payload = (self.present, self.region, event)
+        if (not force and event is None
+                and payload == self.last_payload
+                and now - self.last_write < HEARTBEAT_SEC):
+            return
 
-        # Landmark coordinates
-        wrist = landmarks[0]
-        thumb_tip = landmarks[4]
-        index_tip = landmarks[8]
-        index_mcp = landmarks[5]
-        middle_tip = landmarks[12]
-        middle_mcp = landmarks[9]
-        ring_tip = landmarks[16]
-        ring_mcp = landmarks[13]
-        pinky_tip = landmarks[20]
-        pinky_mcp = landmarks[17]
+        self.seq += 1
+        self.last_payload = payload
+        self.last_write = now
 
-        # Detect fingers extension (higher Y is lower on screen)
-        index_extended = index_tip.y < index_mcp.y
-        middle_extended = middle_tip.y < middle_mcp.y
-        ring_extended = ring_tip.y < ring_mcp.y
-        pinky_extended = pinky_tip.y < pinky_mcp.y
-
-        # Pinch detection (Thumb tip to Index tip distance)
-        pinch_dist = self.calculate_distance(thumb_tip, index_tip)
-        pinched = pinch_dist < 0.06
-
-        current_event = None
-        scroll_delta = 0
-
-        # 1. Pinch & Scroll check
-        # Pinch is active if thumb and index are pinched, but middle, ring, pinky are NOT all extended (to avoid OK sign overlap)
-        is_only_pinch = pinched and not (middle_extended and ring_extended and pinky_extended)
-        if is_only_pinch:
-            pinch_y = index_tip.y
-            if not self.is_pinching:
-                self.is_pinching = True
-                self.last_pinch_y = pinch_y
-            else:
-                dy = pinch_y - self.last_pinch_y
-                # If dy is negative, hand moved UP (scroll up). If positive, hand moved DOWN (scroll down)
-                if abs(dy) > 0.02:
-                    scroll_delta = -int(dy * 100) # Negative for scroll down, Positive for scroll up
-                    self.last_pinch_y = pinch_y
-                    current_event = "scroll"
-        else:
-            self.is_pinching = False
-            self.last_pinch_y = None
-
-        # 2. Hold Peace Sign (Shortcut to Notices)
-        is_peace = index_extended and middle_extended and not ring_extended and not pinky_extended and not pinched
-        if is_peace:
-            if self.peace_start_time is None:
-                self.peace_start_time = now
-            elif now - self.peace_start_time >= 2.0:
-                current_event = "peace_hold"
-        else:
-            self.peace_start_time = None
-
-        # 3. Hold OK Sign (Shortcut to Timetable)
-        is_ok = pinched and middle_extended and ring_extended and pinky_extended
-        if is_ok:
-            if self.ok_start_time is None:
-                self.ok_start_time = now
-            elif now - self.ok_start_time >= 2.0:
-                current_event = "ok_hold"
-        else:
-            self.ok_start_time = None
-
-        # 4. Swipe Left / Right check using wrist tracking
-        self.history.append((now, wrist.x, wrist.y))
-        # Keep history within last 0.8 seconds
-        self.history = [pt for pt in self.history if now - pt[0] < 0.8]
-
-        if len(self.history) > 5 and current_event is None:
-            first_pt = self.history[0]
-            last_pt = self.history[-1]
-            dx = last_pt[1] - first_pt[1]
-            dt = last_pt[0] - first_pt[0]
-            
-            if dt > 0.15:
-                # Swipe Left: X decreases (since camera might be mirrored, verify movement direction)
-                # Left on screen is generally decreasing X in normalized coords (0 is left, 1 is right)
-                if dx < -0.25 and now - self.last_gesture_time > 1.0:
-                    current_event = "swipe_left"
-                    self.last_gesture_time = now
-                    self.history.clear()
-                elif dx > 0.25 and now - self.last_gesture_time > 1.0:
-                    current_event = "swipe_right"
-                    self.last_gesture_time = now
-                    self.history.clear()
-
-        return current_event, scroll_delta
-
-    def write_status(self, gesture, scroll_delta=0):
         data = {
-            "gesture": gesture,
+            "present":      self.present,
+            "region":       self.region,
+            "hand_x":       round(self.hand_x, 4),
+            "hand_y":       round(self.hand_y, 4),
+            "event":        event,
             "scroll_delta": scroll_delta,
-            "timestamp": time.time()
+            "seq":          self.seq,
+            "timestamp":    now,
         }
         try:
             tmp = GESTURE_STATUS_FILE + ".tmp"
-            with open(tmp, 'w') as f:
+            with open(tmp, "w") as f:
                 json.dump(data, f)
             os.replace(tmp, GESTURE_STATUS_FILE)
         except Exception as e:
             print(f"[GESTURE] Error writing status: {e}")
 
+    # ── Main loop ────────────────────────────────────────────────────────────
+
     def run(self):
         self.running = True
-        cap = cv2.VideoCapture(0) # Use default camera or specify camera_id
+        cap = cv2.VideoCapture(self.camera_id)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        print("[GESTURE] Gesture engine running...")
+        if self.hands is None:
+            print("[GESTURE] No hand tracker — exiting.")
+            cap.release()
+            return
+
+        print(f"[GESTURE] Running on camera {self.camera_id}. "
+              f"Regions: left<{REGION_LEFT_EDGE} right>{REGION_RIGHT_EDGE}")
         try:
             while self.running:
                 ret, frame = cap.read()
@@ -169,31 +269,32 @@ class GestureEngine:
                     time.sleep(0.03)
                     continue
 
-                if self.hands is not None:
-                    # Flip frame horizontally for natural mirror behavior
-                    frame = cv2.flip(frame, 1)
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    results = self.hands.process(rgb)
+                # Flip so landmark x matches what the student sees on the mirror.
+                frame = cv2.flip(frame, 1)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.hands.process(rgb)
 
-                    gesture = None
-                    scroll_delta = 0
-                    if results.multi_hand_landmarks:
-                        for hand_landmarks in results.multi_hand_landmarks:
-                            gesture, scroll_delta = self.detect_gestures(hand_landmarks.landmark, frame.shape)
-                            break
-                    
-                    if gesture:
-                        print(f"[GESTURE] Detected: {gesture} (scroll_delta: {scroll_delta})")
-                        self.write_status(gesture, scroll_delta)
-                    else:
-                        # Clear active transient gestures/scrolls periodically
-                        self.write_status(None, 0)
+                now = time.time()
+                self.scroll_delta = 0
+                event = None
+
+                if results.multi_hand_landmarks:
+                    event = self.process_landmarks(
+                        results.multi_hand_landmarks[0].landmark, now
+                    )
+                    self.write_status(event, self.scroll_delta)
                 else:
-                    time.sleep(0.1)
+                    became_absent = self.mark_absent(now)
+                    self.write_status(force=became_absent)
+
+                if event:
+                    print(f"[GESTURE] {event} region={self.region} "
+                          f"delta={self.scroll_delta}")
         except KeyboardInterrupt:
             pass
         finally:
             cap.release()
+
 
 if __name__ == "__main__":
     cam_id = 0
@@ -202,5 +303,4 @@ if __name__ == "__main__":
             cam_id = int(sys.argv[1])
         except ValueError:
             pass
-    engine = GestureEngine(cam_id)
-    engine.run()
+    GestureEngine(cam_id).run()

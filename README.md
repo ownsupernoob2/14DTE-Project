@@ -116,8 +116,12 @@ Receives a single JPEG (the mirror's camera frame) and the `encodings/` director
 POST   /auth/login                  — Log in, receive JWT
 POST   /auth/register               — Register new account
 POST   /api/verify-face             — Mirror face check (no auth required)
+POST   /api/verify-barcode          — Mirror student ID check (no auth, rate limited)
 POST   /api/faces/train             — Submit face scan frames (JWT required)
 DELETE /api/faces/me                — Delete your face encoding
+GET    /api/users/me/barcode        — Get your linked student ID
+PUT    /api/users/me/barcode        — Link a student ID for mirror sign-in
+DELETE /api/users/me/barcode        — Unlink your student ID
 GET    /api/dashboard/widgets       — Get your widget layout
 PUT    /api/dashboard/widgets/bulk  — Save your full widget layout
 GET    /api/notices                 — Get cached school notices

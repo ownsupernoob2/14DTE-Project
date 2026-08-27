@@ -3,93 +3,47 @@ import sys
 import os
 import json
 import time
-import math
 import threading
 import requests
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPixmap, QRadialGradient, QColor, QPainter, QFont, QImage, QFontDatabase
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
+from PyQt6.QtGui import QFont, QFontDatabase
 
 from config import *
 from widgets.notices_widget import NoticesWidget
 from widgets.timetable_widget import TimetableWidget
+from widgets.schedule_peek_widget import SchedulePeekWidget
 from widgets.clock_widget import ClockWidget
 from widgets.kings_week_widget import KingsWeekWidget
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
-HANKEN_FONT = 'Hanken Grotesk'
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Animated background canvas
-# ─────────────────────────────────────────────────────────────────────────────
-class BackgroundCanvas(QWidget):
-    """Full-screen background painted with animated radial gradient orbs."""
+# Gesture regions, mirroring gesture_engine.py. Duplicated as literals rather
+# than imported so this process never pulls in cv2/mediapipe.
+GESTURE_REGION_LEFT  = 'left'
+GESTURE_REGION_RIGHT = 'right'
 
-    _ORBS = [
-        (0.20, 0.50, 0.55, 109,  40, 217, 31),   # purple
-        (0.80, 0.30, 0.50,  56, 189, 248, 23),   # sky-blue
-    ]
-    _DRIFT_PERIOD = 18.0
-    _DRIFT_AMP    = 0.03
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.glow_enabled = True
-        self._t0 = time.time()
-
-        self._redraw_timer = QTimer(self)
-        self._redraw_timer.timeout.connect(self.update)
-        self._redraw_timer.start(33)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w, h = self.width(), self.height()
-        painter.fillRect(self.rect(), QColor(5, 5, 8))
-
-        if not self.glow_enabled:
-            painter.end()
-            return
-
-        t      = time.time() - self._t0
-        phases = [0.0, math.pi * 0.6]
-
-        for i, (bcx, bcy, r_pct, r, g, b, max_a) in enumerate(self._ORBS):
-            phase = phases[i]
-            cx = (bcx + self._DRIFT_AMP * math.sin(2 * math.pi * t / self._DRIFT_PERIOD + phase)) * w
-            cy = (bcy + self._DRIFT_AMP * math.cos(2 * math.pi * t / self._DRIFT_PERIOD + phase * 1.3)) * h
-            radius = r_pct * max(w, h)
-
-            grad = QRadialGradient(cx, cy, radius)
-            grad.setColorAt(0.0, QColor(r, g, b, max_a))
-            grad.setColorAt(1.0, QColor(r, g, b, 0))
-
-            painter.setBrush(grad)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(
-                int(cx - radius), int(cy - radius),
-                int(radius * 2),  int(radius * 2),
-            )
-
-        painter.end()
+# Timetable peek: how long the panel stays up, how wide it is, and its slide.
+PEEK_VISIBLE_MS  = 10_000
+PEEK_WIDTH_FRAC  = 0.42
+PEEK_MIN_WIDTH   = 360
+PEEK_ANIM_IN_MS  = 420
+PEEK_ANIM_OUT_MS = 380
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main smart mirror window  — fixed layout matching the sketch
+# Main smart mirror window — clean 2-column layout matching web screenshot
 # ─────────────────────────────────────────────────────────────────────────────
 class SmartMirrorPro(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Smart Mirror")
-        self.setStyleSheet("background-color: #050508;")
+        self.setStyleSheet("background-color: #000000;")
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         hk_id = QFontDatabase.addApplicationFont(
@@ -102,16 +56,13 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Central widget ────────────────────────────────────────────────
         self.central_widget = QWidget(self)
+        self.central_widget.setStyleSheet("background-color: #000000;")
         self.setCentralWidget(self.central_widget)
-
-        # ── Animated background ───────────────────────────────────────────
-        self.bg_canvas = BackgroundCanvas(self.central_widget)
-        self.bg_canvas.lower()
 
         # ── Important-message banner (full width, top) ────────────────────
         self._build_banner()
 
-        # ── User layout (fixed 3-column deck) ────────────────────────────
+        # ── User layout (matching web screenshot: notices left, focus right) ─
         self._build_user_layout()
 
         # ── Guest screen (clock + notices + onboarding) ───────────────────
@@ -136,6 +87,15 @@ class SmartMirrorPro(QMainWindow):
         self._transitioning    = False   # guard: ignore polls during fade
         self._anim_in          = None    # keep refs alive to prevent GC
         self._anim_out         = None
+
+        # ── Timetable peek (right-side gesture) ───────────────────────────
+        self.peek_panel     = None       # built lazily on first peek
+        self._peek_visible  = False
+        self._peek_anim     = None
+
+        self.peek_timer = QTimer(self)
+        self.peek_timer.setSingleShot(True)
+        self.peek_timer.timeout.connect(self._hide_timetable_peek)
 
         # ── Timers ────────────────────────────────────────────────────────
         self.poll_timer = QTimer(self)
@@ -193,13 +153,13 @@ class SmartMirrorPro(QMainWindow):
         lay.addWidget(self.banner_label, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: user layout (matching new-style.html 2-column grid)
+    # Build: user layout (matching web screenshot: 34% / 66% 2-column)
     # ─────────────────────────────────────────────────────────────────────
     def _build_user_layout(self):
         self.user_container = QWidget(self.central_widget)
         self.user_container.setStyleSheet("background: #000000;")
 
-        # Left column: Notices (34%)
+        # Left column: Notices
         self.notices_widget = NoticesWidget(
             api_url=API_URL, parent=self.user_container
         )
@@ -207,7 +167,7 @@ class SmartMirrorPro(QMainWindow):
         # Right top: Clock header row
         self.clock_widget = ClockWidget(parent=self.user_container)
 
-        # Right main: Timetable Class Focus block (66%)
+        # Right main: Timetable Class Focus block
         self.timetable_widget = TimetableWidget(
             api_url=API_URL, parent=self.user_container
         )
@@ -215,7 +175,7 @@ class SmartMirrorPro(QMainWindow):
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position user layout elements matching new-style.html 34% / 66% split."""
+        """Position user layout elements matching web screenshot."""
         banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
         top = banner_h
 
@@ -224,84 +184,73 @@ class SmartMirrorPro(QMainWindow):
         left_w = int(w * 0.34)
         right_w = w - left_w
 
-        # Left column: Notices
+        # Left column: Notices (with vertical right border)
         self.notices_widget.setGeometry(0, 0, left_w, h - top)
 
         # Right top: Clock row
-        self.clock_widget.setGeometry(left_w + 34, 22, right_w - 68, 70)
+        self.clock_widget.setGeometry(left_w + 34, 20, right_w - 68, 65)
 
         # Right main: Timetable Class Focus
-        self.timetable_widget.setGeometry(left_w + 34, 100, right_w - 68, h - top - 120)
+        self.timetable_widget.setGeometry(left_w + 34, 90, right_w - 68, h - top - 100)
+
 
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: guest layout (clock + notices + prompt)
+    # Build: guest layout (clock + notices + onboarding)
     # ─────────────────────────────────────────────────────────────────────
     def _build_guest_layout(self):
-        """
-        Guest layout (sketch design):
-        ─────────────────────────────────────────────────────
-        │  [IMPORTANT MESSAGE / NOTICE banner — full width] │
-        ├─────────────────┬───────────────────────────────── │
-        │  Notices        │     12:00  2/07/2026            │
-        │  (left column)  │     (centered clock)            │
-        ├─────────────────┴───────────────────────────────── │
-        │  STAND IN FRONT OF THE MIRROR  (hint strip)       │
-        ─────────────────────────────────────────────────────
-        """
         self.guest_container = QWidget(self.central_widget)
-        self.guest_container.setStyleSheet("background: transparent;")
+        self.guest_container.setStyleSheet("background: #000000;")
 
-        outer = QVBoxLayout(self.guest_container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        # Left: notices panel
+        self.guest_notices = NoticesWidget(api_url=API_URL, parent=self.guest_container)
 
-        # ── Content row: notices left, clock right ────────────────────────
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(0)
+        # Right top: clock
+        self.guest_clock = ClockWidget(parent=self.guest_container)
 
-        # Left: notices panel (no extra background — uses widget's own style)
-        self.guest_notices = NoticesWidget(api_url=API_URL)
-        content_row.addWidget(self.guest_notices, 1)
-
-        # Center/Right: clock
-        self.guest_clock = ClockWidget()
-        content_row.addWidget(self.guest_clock, 2)
-
-        outer.addLayout(content_row, 1)
-
-        # ── Bottom hint strip ─────────────────────────────────────────────
-        hint = QFrame()
-        hint.setObjectName('GuestHint')
-        hint.setStyleSheet("""
+        # Right bottom hint strip
+        self.guest_hint = QFrame(self.guest_container)
+        self.guest_hint.setObjectName('GuestHint')
+        self.guest_hint.setStyleSheet("""
             #GuestHint {
                 background: rgba(96, 165, 250, 0.08);
                 border: 1px solid rgba(96, 165, 250, 0.18);
                 border-radius: 0px;
             }
         """)
-        hint.setFixedHeight(52)
-        h_lay = QHBoxLayout(hint)
+        h_lay = QHBoxLayout(self.guest_hint)
         h_lay.setContentsMargins(24, 0, 24, 0)
 
-        hint_icon = QLabel('◎')
+        hint_icon = QLabel('◎', self.guest_hint)
         hint_icon.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; font-size: 16px; '
-            'color: #60a5fa; background: transparent; border: none;'
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; "
+            "color: #60a5fa; background: transparent; border: none;"
         )
         h_lay.addWidget(hint_icon)
 
-        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF')
+        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF', self.guest_hint)
         title.setStyleSheet(
-            f'font-family: "{HANKEN_FONT}"; font-size: 12px; font-weight: 700; '
-            'color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;'
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
+            "color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_lay.addWidget(title, 1)
 
-        outer.addWidget(hint)
         self.guest_container.hide()
+
+    def _apply_guest_layout(self, w, h):
+        """Position guest layout elements."""
+        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        top = banner_h
+
+        self.guest_container.setGeometry(0, top, w, h - top)
+
+        left_w = int(w * 0.34)
+        right_w = w - left_w
+
+        self.guest_notices.setGeometry(0, 0, left_w, h - top)
+        self.guest_clock.setGeometry(left_w + 34, 20, right_w - 68, 65)
+        self.guest_hint.setGeometry(left_w + 34, h - top - 70, right_w - 68, 50)
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -310,23 +259,21 @@ class SmartMirrorPro(QMainWindow):
         super().resizeEvent(event)
         w, h = self.width(), self.height()
 
-        if hasattr(self, 'bg_canvas'):
-            self.bg_canvas.setGeometry(0, 0, w, h)
-
         if hasattr(self, 'banner_frame'):
             self.banner_frame.setGeometry(16, 16, w - 32, self.banner_frame.height())
 
         if hasattr(self, 'guest_container') and not self.guest_container.isHidden():
-            banner_h = self.banner_frame.height() + 16 if not self.banner_frame.isHidden() else 0
-            self.guest_container.setGeometry(0, banner_h, w, h - banner_h)
-        elif hasattr(self, 'guest_container'):
-            self.guest_container.setGeometry(0, 0, w, h)
+            self._apply_guest_layout(w, h)
 
         if hasattr(self, 'user_container') and not self.user_container.isHidden():
             self._apply_user_layout(w, h)
 
         if hasattr(self, 'status_dot'):
             self.status_dot.move(w - 20, h - 20)
+
+        # getattr: resizeEvent can fire while __init__ is still building.
+        if getattr(self, '_peek_visible', False) and self.peek_panel is not None:
+            self.peek_panel.setGeometry(self._peek_geometry())
 
     # ─────────────────────────────────────────────────────────────────────
     # Banner polling
@@ -350,11 +297,17 @@ class SmartMirrorPro(QMainWindow):
         else:
             self.banner_frame.hide()
         # Re-apply layout in case banner height changed
-        if not self.user_container.isHidden():
+        if hasattr(self, 'user_container') and not self.user_container.isHidden():
             self._apply_user_layout(self.width(), self.height())
+        elif hasattr(self, 'guest_container') and not self.guest_container.isHidden():
+            self._apply_guest_layout(self.width(), self.height())
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture polling
+    #
+    # gesture_engine.py publishes which broad region of the screen the hand is
+    # in rather than a cursor position, so a gesture acts on whatever panel the
+    # hand is generally over: left = notices, right = timetable peek.
     # ─────────────────────────────────────────────────────────────────────
     def _poll_gestures(self):
         gesture_file = os.path.join(
@@ -369,20 +322,121 @@ class SmartMirrorPro(QMainWindow):
             t = data.get("timestamp", 0.0)
             if t > self.last_gesture_timestamp:
                 self.last_gesture_timestamp = t
-                self._handle_gesture(data.get("gesture"), data.get("scroll_delta", 0))
+                self._handle_gesture(data)
         except Exception:
             pass
 
-    def _handle_gesture(self, gesture, scroll_delta):
-        if self._last_state == 'idle' or not gesture:
+    def _active_notices(self):
+        """The notices panel currently on screen, or None."""
+        if self._last_state == 'user':
+            return self.notices_widget
+        if self._last_state == 'guest':
+            return self.guest_notices
+        return None
+
+    def _handle_gesture(self, data):
+        if self._last_state == 'idle' or self._last_state is None:
             return
 
-        if gesture == "scroll" and scroll_delta != 0:
-            if self._last_state == 'user':
-                self.notices_widget.scroll_by_pixels(scroll_delta)
-                self.timetable_widget.scroll_by_pixels(scroll_delta)
-            elif self._last_state == 'guest':
-                self.guest_notices.scroll_by_pixels(scroll_delta)
+        present = data.get("present", False)
+        region  = data.get("region") if present else None
+        event   = data.get("event")
+
+        # Affordance first, so the panel lights up as soon as the hand arrives —
+        # before the student has done anything with it.
+        notices = self._active_notices()
+        if notices is not None:
+            notices.set_gesture_active(region == GESTURE_REGION_LEFT)
+
+        if not event:
+            return
+
+        if region == GESTURE_REGION_LEFT and notices is not None:
+            if event == "scroll":
+                delta = data.get("scroll_delta", 0)
+                if delta:
+                    notices.scroll_by_pixels(delta)
+            elif event == "tap":
+                notices.toggle_scroll_pause()
+
+        elif region == GESTURE_REGION_RIGHT:
+            if event == "enter_right":
+                self._show_timetable_peek()
+            elif event == "tap" and self._peek_visible:
+                # Tap to dismiss early instead of waiting out the 10 seconds.
+                self._hide_timetable_peek()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Timetable peek panel
+    # ─────────────────────────────────────────────────────────────────────
+    def _ensure_peek(self):
+        if self.peek_panel is None:
+            self.peek_panel = SchedulePeekWidget(
+                parent=self.central_widget,
+                api_url=API_URL,
+                user_id=self.current_user_id or '',
+            )
+            self.peek_panel.hide()
+        return self.peek_panel
+
+    def _peek_geometry(self, offscreen=False):
+        w, h = self.width(), self.height()
+        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        panel_w = max(PEEK_MIN_WIDTH, int(w * PEEK_WIDTH_FRAC))
+        x = w if offscreen else w - panel_w
+        return QRect(x, banner_h, panel_w, h - banner_h)
+
+    def _show_timetable_peek(self):
+        if self._last_state in (None, 'idle'):
+            return
+
+        panel = self._ensure_peek()
+        # set_user_id only refetches when the user actually changed, so ask for a
+        # refresh ourselves otherwise — the panel is up for 10s and should be current.
+        if not panel.set_user_id(self.current_user_id or ''):
+            panel.refresh()
+
+        if self._peek_visible:
+            # Already up; a second dwell just buys another 10 seconds.
+            self.peek_timer.start(PEEK_VISIBLE_MS)
+            return
+
+        self._peek_visible = True
+        start, end = self._peek_geometry(offscreen=True), self._peek_geometry()
+        panel.setGeometry(start)
+        panel.show()
+        panel.raise_()
+
+        anim = QPropertyAnimation(panel, b"geometry", self)
+        anim.setDuration(PEEK_ANIM_IN_MS)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._peek_anim = anim
+
+        self.peek_timer.start(PEEK_VISIBLE_MS)
+
+    def _hide_timetable_peek(self, animate=True):
+        """Slide the panel back out to the right (or drop it instantly)."""
+        self.peek_timer.stop()
+        if not self._peek_visible or self.peek_panel is None:
+            return
+        self._peek_visible = False
+        panel = self.peek_panel
+
+        if not animate:
+            panel.hide()
+            return
+
+        anim = QPropertyAnimation(panel, b"geometry", self)
+        anim.setDuration(PEEK_ANIM_OUT_MS)
+        anim.setStartValue(panel.geometry())
+        anim.setEndValue(self._peek_geometry(offscreen=True))
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.finished.connect(panel.hide)
+        anim.start()
+        self._peek_anim = anim
 
     # ─────────────────────────────────────────────────────────────────────
     # Fade helpers
@@ -430,7 +484,7 @@ class SmartMirrorPro(QMainWindow):
         fonts  = theme.get("fonts", {})
         primary     = colors.get("primary", "#3b82f6")
         secondary   = colors.get("secondary", "#10b981")
-        font_family = fonts.get("family", "Outfit")
+        font_family = fonts.get("family", "Segoe UI")
 
         for widget in [self.notices_widget, self.clock_widget, self.timetable_widget]:
             if hasattr(widget, 'apply_theme'):
@@ -486,7 +540,6 @@ class SmartMirrorPro(QMainWindow):
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
         """Fade out whatever is currently visible, then apply + fade in new state."""
-        # Find the currently visible container (if any)
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container
@@ -494,26 +547,33 @@ class SmartMirrorPro(QMainWindow):
             visible = self.guest_container
 
         def apply_new():
-            # Hide everything first
+            # The peek belongs to whoever was just on screen — drop it outright
+            # rather than sliding it out over a different student's dashboard.
+            self._hide_timetable_peek(animate=False)
+            self.notices_widget.reset_gesture_state()
+            self.guest_notices.reset_gesture_state()
+
             self.user_container.hide()
             self.guest_container.hide()
             if visible:
                 visible.setGraphicsEffect(None)
 
             if new_state == 'user' and new_user_id not in ('', 'idle'):
-                self.bg_canvas.glow_enabled = True
                 self.timetable_widget.set_user_id(new_user_id)
+                if self.peek_panel is not None:
+                    self.peek_panel.set_user_id(new_user_id)
                 self._apply_user_theme(fdata.get('config', {}))
                 self._apply_user_layout(self.width(), self.height())
                 self._fade_in(self.user_container)
 
             elif new_state == 'guest':
-                self.bg_canvas.glow_enabled = True
                 self.timetable_widget.set_user_id('')
+                if self.peek_panel is not None:
+                    self.peek_panel.set_user_id('')
+                self._apply_guest_layout(self.width(), self.height())
                 self._fade_in(self.guest_container)
 
             else:  # idle
-                self.bg_canvas.glow_enabled = False
                 self._transitioning = False   # nothing to fade in
 
         if visible:
@@ -531,3 +591,4 @@ if __name__ == '__main__':
     mirror = SmartMirrorPro()
     mirror.show()
     sys.exit(app.exec())
+

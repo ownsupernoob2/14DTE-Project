@@ -3,6 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
+import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
@@ -22,9 +23,14 @@ const S = {
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const { isServerUp } = useServerStatus()
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Linked student ID: null while loading, '' when none is linked.
+  const [studentID, setStudentID] = useState(null)
+  const [isUnlinking, setIsUnlinking] = useState(false)
 
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
@@ -35,8 +41,47 @@ export default function Settings() {
     : 0
 
   useEffect(() => {
-    // (barcode feature removed)
-  }, [])
+    let cancelled = false
+
+    const loadStudentID = async () => {
+      try {
+        const token = await getAccessTokenSilently()
+        const res = await fetch(`${API_URL}/api/users/me/barcode`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) throw new Error(`status ${res.status}`)
+        const body = await res.json()
+        if (!cancelled) setStudentID(body.barcode || '')
+      } catch {
+        // Treat an unreachable server as "nothing linked yet" rather than
+        // blocking the whole settings page on one optional field.
+        if (!cancelled) setStudentID('')
+      }
+    }
+
+    if (isServerUp) loadStudentID()
+    return () => { cancelled = true }
+  }, [isServerUp, getAccessTokenSilently])
+
+  const unlinkStudentID = async () => {
+    setIsUnlinking(true)
+    try {
+      const token = await getAccessTokenSilently()
+      const res = await fetch(`${API_URL}/api/users/me/barcode`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        setStudentID('')
+      } else {
+        alert('Failed to unlink student ID. Please try again.')
+      }
+    } catch {
+      alert('Error connecting to server')
+    } finally {
+      setIsUnlinking(false)
+    }
+  }
 
   const confirmDeleteFace = async () => {
     setIsDeleting(true)
@@ -85,7 +130,8 @@ export default function Settings() {
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Mirror Sign-In</h2>
             <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
-              Register your face so the mirror can recognise you automatically.
+              Register your face so the mirror can recognise you automatically, or link
+              your student ID card to sign in by scanning it.
             </p>
 
             {/* Face registration */}
@@ -104,6 +150,61 @@ export default function Settings() {
                 style={{ opacity: isServerUp ? 1 : 0.45, cursor: isServerUp ? 'pointer' : 'not-allowed', marginBottom: '10px' }}
               >
                 {isServerUp ? 'Register Face Scan' : 'Server Offline'}
+              </button>
+            )}
+
+            {/* Student ID / barcode */}
+            {studentID ? (
+              <div style={{ background: S.infoBoxBg, padding: '14px 16px', borderRadius: '10px', border: `1px solid ${S.infoBoxBorder}` }}>
+                <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--text-primary)', fontSize: '0.88rem' }}>
+                  Student ID linked
+                </strong>
+                <span style={{
+                  display: 'block', marginBottom: '10px',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+                  letterSpacing: '0.14em', fontSize: '0.95rem', color: 'var(--text-primary)',
+                }}>
+                  {studentID}
+                </span>
+                <span style={{ display: 'block', fontSize: '0.82rem', lineHeight: 1.6, color: S.mutedText, marginBottom: '12px' }}>
+                  Scan this card at the mirror to sign in without a face scan.
+                </span>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    className="modern-btn modern-btn-outline"
+                    onClick={() => setShowBarcodeModal(true)}
+                    disabled={!isServerUp}
+                    style={{ opacity: isServerUp ? 1 : 0.45, cursor: isServerUp ? 'pointer' : 'not-allowed' }}
+                  >
+                    Change ID
+                  </button>
+                  <button
+                    className="modern-btn modern-btn-outline"
+                    onClick={unlinkStudentID}
+                    disabled={isUnlinking || !isServerUp}
+                    style={{
+                      borderColor: S.dangerBorder,
+                      color: S.dangerText,
+                      background: S.dangerBg,
+                      opacity: (isUnlinking || !isServerUp) ? 0.5 : 1,
+                      cursor: (isUnlinking || !isServerUp) ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isUnlinking ? 'Unlinking…' : 'Unlink'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="modern-btn modern-btn-outline"
+                onClick={() => setShowBarcodeModal(true)}
+                disabled={!isServerUp || studentID === null}
+                style={{
+                  opacity: (isServerUp && studentID !== null) ? 1 : 0.45,
+                  cursor: (isServerUp && studentID !== null) ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {studentID === null ? 'Checking…' : 'Link Student ID'}
               </button>
             )}
           </section>
@@ -173,6 +274,12 @@ export default function Settings() {
       </div>
 
       <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
+
+      <BarcodeCaptureModal
+        isOpen={showBarcodeModal}
+        onClose={() => setShowBarcodeModal(false)}
+        onBarcodeSaved={(code) => setStudentID(code)}
+      />
 
       {/* ── Delete confirmation modal ─────────────────────────────────────── */}
       <AnimatePresence>
