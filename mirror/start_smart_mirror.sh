@@ -27,6 +27,7 @@ echo "[START] Using Python: $($PYTHON --version)"
 pkill -f rpicam-vid       2>/dev/null || true
 pkill -f ffmpeg           2>/dev/null || true
 pkill -f face_recognize   2>/dev/null || true
+pkill -f gesture_engine   2>/dev/null || true
 pkill -f smart_mirror_pro 2>/dev/null || true
 sleep 2
 
@@ -50,6 +51,8 @@ echo "[START] face_recognize.py --rpi started. Waiting 2s..."
 sleep 2
 
 # ── Pygame mirror UI ─────────────────────────────────────────────────────────
+# This also spawns gesture_engine.py, which reads the same loopback device, so
+# there is no separate launch line for it here.
 export DISPLAY=:0
 "$PYTHON" -u smart_mirror_pro.py &
 

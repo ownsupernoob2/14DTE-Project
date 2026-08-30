@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import subprocess
 import time
 import threading
 import requests
@@ -197,23 +198,23 @@ class SmartMirrorPro(QMainWindow):
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position user layout elements matching web screenshot."""
+        """Position user layout elements matching web screenshot (50/50 split)."""
         banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
         top = banner_h
 
         self.user_container.setGeometry(0, top, w, h - top)
 
-        left_w = int(w * 0.34)
+        left_w = int(w * 0.50)
         right_w = w - left_w
 
-        # Left column: Notices (with vertical right border)
+        # Left column: Notices (50% width scaled up)
         self.notices_widget.setGeometry(0, 0, left_w, h - top)
 
         # Right top: Clock row
-        self.clock_widget.setGeometry(left_w + 34, 20, right_w - 68, 65)
+        self.clock_widget.setGeometry(left_w + 30, 20, right_w - 60, 65)
 
         # Right main: Timetable Class Focus
-        self.timetable_widget.setGeometry(left_w + 34, 90, right_w - 68, h - top - 100)
+        self.timetable_widget.setGeometry(left_w + 30, 90, right_w - 60, h - top - 100)
 
 
 
@@ -224,7 +225,7 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container = QWidget(self.central_widget)
         self.guest_container.setStyleSheet("background: #000000;")
 
-        # Left: notices panel
+        # Left: notices panel (50% width)
         self.guest_notices = NoticesWidget(api_url=API_URL, parent=self.guest_container)
 
         # Right top: clock
@@ -267,12 +268,12 @@ class SmartMirrorPro(QMainWindow):
 
         self.guest_container.setGeometry(0, top, w, h - top)
 
-        left_w = int(w * 0.34)
+        left_w = int(w * 0.50)
         right_w = w - left_w
 
         self.guest_notices.setGeometry(0, 0, left_w, h - top)
-        self.guest_clock.setGeometry(left_w + 34, 20, right_w - 68, 65)
-        self.guest_hint.setGeometry(left_w + 34, h - top - 70, right_w - 68, 50)
+        self.guest_clock.setGeometry(left_w + 30, 20, right_w - 60, 65)
+        self.guest_hint.setGeometry(left_w + 30, h - top - 70, right_w - 60, 50)
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -772,9 +773,54 @@ class SmartMirrorPro(QMainWindow):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def start_gesture_daemon():
+    """Launch gesture_engine.py alongside the UI, and return the process.
+
+    The UI only ever *reads* gesture_status.json, so until now the gestures
+    silently did nothing unless somebody happened to know to start the daemon in
+    a third terminal — nothing in the launch scripts or the README did. Spawning
+    it here means running the mirror is enough.
+
+    Set MIRROR_GESTURES=0 to opt out (no camera to spare, or you are running the
+    daemon yourself). GESTURE_CAMERA picks the device: an index on a desktop
+    webcam, or --rpi for the loopback device the Pi's camera pipeline feeds.
+    """
+    if os.environ.get('MIRROR_GESTURES', '1') == '0':
+        print('[MIRROR] MIRROR_GESTURES=0 — not starting the gesture daemon.')
+        return None
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'gesture_engine.py')
+    camera = os.environ.get('GESTURE_CAMERA')
+    if camera is None:
+        args = ['--rpi'] if sys.platform.startswith('linux') else ['--camera-id', '0']
+    else:
+        args = ['--camera-id', camera]
+
+    try:
+        proc = subprocess.Popen([sys.executable, '-u', script] + args)
+        print(f'[MIRROR] Gesture daemon started (pid {proc.pid}, {" ".join(args)}).')
+        return proc
+    except Exception as e:
+        # A mirror with no gestures is still a working mirror, so this is never
+        # allowed to stop the UI from coming up.
+        print(f'[MIRROR] Could not start the gesture daemon: {e}')
+        return None
+
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    gestures = start_gesture_daemon()
     mirror = SmartMirrorPro()
     mirror.show()
-    sys.exit(app.exec())
+    try:
+        code = app.exec()
+    finally:
+        if gestures is not None and gestures.poll() is None:
+            gestures.terminate()
+            try:
+                gestures.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                gestures.kill()
+    sys.exit(code)
 

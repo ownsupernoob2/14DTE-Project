@@ -150,12 +150,13 @@ server/
 
 **Technology:** Python, Pygame, OpenCV — designed to run on a Raspberry Pi (or Windows for development)
 
-The mirror software runs on a Raspberry Pi hidden behind a two-way mirror. It runs two processes simultaneously:
+The mirror software runs on a Raspberry Pi hidden behind a two-way mirror. It runs three processes simultaneously:
 
 | Process | Script | Role |
 |---|---|---|
 | **Face Recognition Daemon** | `face_recognize.py` | Reads camera frames, detects faces, POSTs to the server, writes a state JSON file |
 | **Mirror UI** | `smart_mirror_pro.py` | Reads the state JSON file and renders the user's widgets on screen |
+| **Gesture Daemon** | `gesture_engine.py` | Tracks the hand with MediaPipe and writes a gesture JSON file. Started by the UI, not launched separately |
 
 ### Face Recognition Daemon (`face_recognize.py`)
 
@@ -267,6 +268,8 @@ VITE_AUTH0_CLIENT_ID=your_client_id
 ```
 API_URL=https://api.smartmirror.me
 MIRROR_WINDOWED=1   # set to 1 for windowed dev mode
+MIRROR_GESTURES=0   # set to 0 to stop the UI starting the gesture daemon
+GESTURE_CAMERA=0    # webcam index for gestures (default: 0, or the Pi loopback)
 ```
 
 ---

@@ -81,6 +81,24 @@ Open a second terminal, navigate to the `mirror` directory, set the windowed mod
 
 The Smart Mirror window will open. As you press `1`, `2`, or `3` in the first terminal, you will see the Smart Mirror UI dynamically transition between the Idle, Guest, and User states.
 
+#### 3. Gestures
+
+`smart_mirror_pro.py` starts [gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py) itself, so there is no third terminal to run — watch its output in the mirror's terminal. It should print:
+
+```
+[MIRROR] Gesture daemon started (pid 1234, --camera-id 0).
+[GESTURE] Running on camera 0. Regions: left<0.5 right>0.62
+```
+
+If it says `Missing gesture_recognizer.task`, re-run the setup script. If it says it could not open the camera, something else already has it — `face_recognize.py` defaults to camera 4 to stay out of the way, but any other app counts too.
+
+| Variable | Effect |
+|---|---|
+| `MIRROR_GESTURES=0` | Do not start the daemon (no camera to spare, or you are running it yourself) |
+| `GESTURE_CAMERA=2` | Use webcam index 2 instead of 0 |
+
+Gestures are ignored while the mirror is idle, so put it in Guest or User state before waving at it.
+
 ---
 
 ## 🍓 Raspberry Pi Setup (Production Mode)
@@ -104,7 +122,7 @@ On the physical Raspberry Pi mirror:
 * **[mock_face.py](file:///e:/Code/offical/14DTE-Project/mirror/mock_face.py)**: A state simulator utility that writes mock states to the temp directory (`face_status.json`) to simulate camera/OCR inputs.
 * **[face_recognize.py](file:///e:/Code/offical/14DTE-Project/mirror/face_recognize.py)**: Daemon responsible for camera polling, Haar Cascade face detection, and API-based face verification. Also decodes student ID barcodes held up to the camera and signs that student in.
 * **[barcode_reader.py](file:///e:/Code/offical/14DTE-Project/mirror/barcode_reader.py)**: Student ID barcode decoder. Wraps whichever backend the host has (`cv2.barcode`, `cv2.QRCodeDetector` or `pyzbar`) and only reports a code once it has been read on two separate frames, so a motion-blurred misread cannot sign anyone in.
-* **[gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py)**: MediaPipe-powered gesture daemon. It does **not** emulate a mouse: the screen is split into left / centre / right regions and whichever region your hand is generally in is the one you interact with. Over the notices column an open palm scrolls and a quick pinch taps to hold the list still; dwelling on the right peeks the day's timetable. The published palm position is rounded to a coarse cell, which is both what keeps the status file from being rewritten on every frame and what makes the King's Week grid lock cleanly from box to box.
+* **[gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py)**: MediaPipe-powered gesture daemon, started automatically by `smart_mirror_pro.py`. It does **not** emulate a mouse: the screen is split into left / centre / right regions and whichever region your hand is generally in is the one you interact with. Over the notices column an open palm scrolls and a quick pinch taps to hold the list still; dwelling on the right peeks the day's timetable. The published palm position is rounded to a coarse cell, which is both what keeps the status file from being rewritten on every frame and what makes the King's Week grid lock cleanly from box to box. Hand tracking goes through MediaPipe's **Tasks** API and `gesture_recognizer.task` — not the old `mp.solutions.hands`, which mediapipe 1.x removed.
 * **[widgets/schedule_peek_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/schedule_peek_widget.py)**: The full-day timetable panel that slides in from the right on a gesture, holds for 10 seconds, then slides out of the way.
 * **[widgets/kings_week_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/kings_week_widget.py)**: The King's Week grid that waits underneath the timetable. The latest story gets a full-width feature box and the rest follow in pairs below it, all fed by `GET /api/kings-week`. There is no cursor on a mirror, so nothing hovers: the palm position always resolves to the *nearest* box, the scroll comes to rest aligned to a row rather than halfway through one, and a tap grows the story out of its box into a modal.
 * **[config.py](file:///e:/Code/offical/14DTE-Project/mirror/config.py)**: Stores system paths (shared JSON files in the OS temporary folder), UI constants, and color definitions.

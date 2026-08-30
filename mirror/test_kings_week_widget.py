@@ -7,6 +7,7 @@ Run from the mirror/ directory:  python -m unittest test_kings_week_widget
 """
 
 import os
+import time
 import unittest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -14,6 +15,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QRect
 
+from widgets import kings_week_widget as kw
 from widgets.kings_week_widget import (
     KingsWeekWidget, ArticleCard, GRID_COLUMNS, rect_distance,
 )
@@ -168,6 +170,113 @@ class TestApplyData(unittest.TestCase):
         self.panel.apply_data([])          # not a dict
         self.panel.apply_data('nonsense')
         self.assertFalse(self.panel.has_content)
+
+
+class TestFetch(unittest.TestCase):
+    """The worker thread → GUI thread hand-off.
+
+    This is the one part of the panel every other test stubs out, and it is
+    where the grid stayed permanently empty on the real mirror: the fetch used
+    QTimer.singleShot(0, lambda: ...) from the download thread, which creates
+    the timer on a thread with no event loop, so it never fired and apply_data
+    was never reached. Nothing failed and nothing printed — the panel just sat
+    on its empty state. So drive the real fetch here.
+    """
+
+    def setUp(self):
+        self.payload = {
+            'title': "King's Week - 28 August 2026",
+            'edition': "King's Week #1339",
+            'date': 'Friday, 28th August 2026',
+            'articles': [article(0), article(1), article(2)],
+        }
+        self._real_get = kw.requests.get
+        kw.requests.get = lambda *a, **k: self._Response(self.payload)
+
+        # The real panel, not StubPanel: refresh() must not be overridden.
+        self.panel = KingsWeekWidget()
+        self.panel.images.request = lambda url: None
+        self.panel.resize(520, 760)
+
+    def tearDown(self):
+        kw.requests.get = self._real_get
+        close_panel(self.panel)
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def _pump_until(self, predicate, seconds=5.0):
+        """Spin the GUI event loop in real time until the fetch lands."""
+        end = time.time() + seconds
+        while time.time() < end:
+            app.processEvents()
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def _fresh_panel(self):
+        """A panel built *after* the current requests stub is in place.
+
+        The constructor fetches, so a panel made in setUp has already been filled
+        by the good stub — a later swap to a failing one would be testing nothing.
+        """
+        panel = KingsWeekWidget()
+        panel.images.request = lambda url: None
+        panel.resize(520, 760)
+        return panel
+
+    def test_a_background_fetch_reaches_the_grid(self):
+        self.panel.refresh()
+        self.assertTrue(self._pump_until(lambda: len(self.panel.cards) == 3),
+                        'the fetched articles never made it to the GUI thread')
+        self.assertIn('#1339', self.panel.edition_lbl.text())
+        self.assertEqual(self.panel.articles[0]['title'], 'Story 0')
+
+    def test_the_panel_fetches_itself_on_construction(self):
+        # A panel built and left alone must fill in without any prompting: the
+        # mirror creates it behind the timetable and never calls refresh again
+        # for fifteen minutes.
+        panel = self._fresh_panel()
+        try:
+            self.assertTrue(self._pump_until(lambda: len(panel.cards) == 3),
+                            'the constructor fetch never populated the grid')
+        finally:
+            close_panel(panel)
+
+    def test_a_failed_fetch_leaves_the_empty_state(self):
+        def boom(*a, **k):
+            raise OSError('no route to host')
+
+        kw.requests.get = boom
+        panel = self._fresh_panel()
+        try:
+            self._pump_until(lambda: False, seconds=0.5)
+            self.assertFalse(panel.has_content)
+        finally:
+            close_panel(panel)
+
+    def test_a_non_200_is_ignored(self):
+        class Missing:
+            status_code = 503
+
+            @staticmethod
+            def json():
+                raise AssertionError('a 503 body must never be parsed')
+
+        kw.requests.get = lambda *a, **k: Missing()
+        panel = self._fresh_panel()
+        try:
+            self._pump_until(lambda: False, seconds=0.5)
+            self.assertFalse(panel.has_content)
+        finally:
+            close_panel(panel)
 
 
 class TestSelection(unittest.TestCase):

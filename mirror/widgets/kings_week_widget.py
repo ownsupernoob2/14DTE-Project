@@ -470,9 +470,18 @@ class ArticleModal(QFrame):
 class KingsWeekWidget(QFrame):
     """The King's Week grid, sitting below the timetable peek."""
 
+    # The fetch runs on a worker thread, and a signal is the only reliable way
+    # back to the GUI one. QTimer.singleShot(0, ...) looks like it would do, and
+    # the other widgets get away with it because they pass a bound method — Qt
+    # takes the receiver as the timer's context and posts to its thread. Hand it
+    # a lambda instead and there is no receiver, so the timer is created on the
+    # worker thread, which has no event loop, and it simply never fires.
+    fetched = pyqtSignal(dict)
+
     def __init__(self, parent=None, api_url='https://api.smartmirror.me'):
         super().__init__(parent)
         self.api_url = api_url.rstrip('/') + '/api/kings-week'
+        self.fetched.connect(self.apply_data)
 
         self.setObjectName("KingsWeekWidget")
         self._apply_frame_style()
@@ -583,7 +592,8 @@ class KingsWeekWidget(QFrame):
             res = requests.get(self.api_url, timeout=10)
             if res.status_code == 200:
                 data = res.json()
-                QTimer.singleShot(0, lambda: self.apply_data(data))
+                if isinstance(data, dict):
+                    self.fetched.emit(data)
         except Exception as e:
             print(f"[KingsWeek] fetch error: {e}")
 
