@@ -32,7 +32,7 @@ GESTURE_REGION_RIGHT = 'right'
 # Right-side gesture panel. It reveals in two stages: the day's timetable first,
 # and once that slides out of the way the King's Week grid underneath takes over
 # the column.
-PEEK_VISIBLE_MS  = 10_000     # timetable holds this long, then slides away
+PEEK_VISIBLE_MS  = 5_000      # timetable holds briefly, then slides away
 PEEK_WIDTH_FRAC  = 0.42
 PEEK_MIN_WIDTH   = 360
 PEEK_ANIM_IN_MS  = 420
@@ -89,6 +89,15 @@ class SmartMirrorPro(QMainWindow):
         self.status_dot.setStyleSheet("background: transparent; border-radius: 5px;")
         self.status_dot.hide()
 
+        # Far-left hold indicator. The edge is intentionally separate from the
+        # normal notice drag area: it shows when the deliberate King's Week
+        # reveal gesture is being held, then disappears once the panel opens.
+        self.edge_hold_indicator = QFrame(self.central_widget)
+        self.edge_hold_indicator.setStyleSheet(
+            "background: rgba(79,195,255,0.9); border: none; border-radius: 2px;"
+        )
+        self.edge_hold_indicator.hide()
+
         # ── State tracking ────────────────────────────────────────────────
         self.current_user_id   = None
         self.current_user_name = ""
@@ -99,6 +108,11 @@ class SmartMirrorPro(QMainWindow):
         self._last_state       = None
         self._last_user_id     = None
         self.last_gesture_timestamp = 0.0
+        # A pinch drag is published by the camera more often than this UI polls
+        # the status file. Keeping the last *absolute* palm position here means
+        # we retain the entire distance travelled between polls instead of
+        # scrolling by only the last tiny camera-frame delta.
+        self._drag_y_by_region = {'left': None, 'right': None}
         self._transitioning    = False   # guard: ignore polls during fade
         self._anim_in          = None    # keep refs alive to prevent GC
         self._anim_out         = None
@@ -231,30 +245,24 @@ class SmartMirrorPro(QMainWindow):
         # Right top: clock
         self.guest_clock = ClockWidget(parent=self.guest_container)
 
-        # Right bottom hint strip
+        # Guest registration message. It is deliberately centred over the left
+        # panel rather than a blue instruction bar: an unrecognised visitor
+        # should see where to register, not be told to keep standing still.
         self.guest_hint = QFrame(self.guest_container)
         self.guest_hint.setObjectName('GuestHint')
         self.guest_hint.setStyleSheet("""
             #GuestHint {
-                background: rgba(96, 165, 250, 0.08);
-                border: 1px solid rgba(96, 165, 250, 0.18);
-                border-radius: 0px;
+                background: transparent;
+                border: none;
             }
         """)
-        h_lay = QHBoxLayout(self.guest_hint)
-        h_lay.setContentsMargins(24, 0, 24, 0)
+        h_lay = QVBoxLayout(self.guest_hint)
+        h_lay.setContentsMargins(20, 0, 20, 0)
 
-        hint_icon = QLabel('◎', self.guest_hint)
-        hint_icon.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; "
-            "color: #60a5fa; background: transparent; border: none;"
-        )
-        h_lay.addWidget(hint_icon)
-
-        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF', self.guest_hint)
+        title = QLabel('REGISTER AT SMARTMIRROR.ME', self.guest_hint)
         title.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
-            "color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 17px; font-weight: 700; "
+            "color: #ffffff; letter-spacing: 2px; background: transparent; border: none;"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_lay.addWidget(title, 1)
@@ -273,7 +281,7 @@ class SmartMirrorPro(QMainWindow):
 
         self.guest_notices.setGeometry(0, 0, left_w, h - top)
         self.guest_clock.setGeometry(left_w + 30, 20, right_w - 60, 65)
-        self.guest_hint.setGeometry(left_w + 30, h - top - 70, right_w - 60, 50)
+        self.guest_hint.setGeometry(16, max(0, (h - top) // 2 - 28), left_w - 32, 56)
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -293,6 +301,9 @@ class SmartMirrorPro(QMainWindow):
 
         if hasattr(self, 'status_dot'):
             self.status_dot.move(w - 20, h - 20)
+
+        if hasattr(self, 'edge_hold_indicator'):
+            self.edge_hold_indicator.setGeometry(8, h // 2 - 42, 4, 84)
 
         # getattr: resizeEvent can fire while __init__ is still building.
         if getattr(self, '_peek_visible', False) and self.peek_container is not None:
@@ -367,6 +378,26 @@ class SmartMirrorPro(QMainWindow):
         event   = data.get("event")
         notices = self._active_notices()
 
+        if hasattr(self, 'edge_hold_indicator'):
+            progress = data.get('edge_hold', 0.0) if present else 0.0
+            try:
+                progress = max(0.0, min(1.0, float(progress)))
+            except (TypeError, ValueError):
+                progress = 0.0
+            visible = progress > 0.0 and not self._peek_visible
+            self.edge_hold_indicator.setVisible(visible)
+            if visible:
+                full_height = 84
+                height = max(3, int(full_height * progress))
+                self.edge_hold_indicator.setGeometry(
+                    8, self.height() // 2 + full_height // 2 - height, 4, height
+                )
+
+        # Always observe drag state, including the initial pinched frame where
+        # there is deliberately no scroll event yet. That establishes the
+        # position from which the first delivered movement is measured.
+        self._update_drag_state(present, region, data)
+
         if region == GESTURE_REGION_RIGHT and self._peek_visible:
             # Any sign of a hand on this side keeps the panel alive, and while
             # King's Week is up the palm position picks a box.
@@ -377,17 +408,17 @@ class SmartMirrorPro(QMainWindow):
         if event:
             if region == GESTURE_REGION_LEFT and notices is not None:
                 if event == "scroll":
-                    delta = data.get("scroll_delta", 0)
+                    delta = self._drag_delta(data, GESTURE_REGION_LEFT)
                     if delta:
                         notices.scroll_by_pixels(delta)
                 elif event == "tap":
                     notices.toggle_scroll_pause()
-
-            elif region == GESTURE_REGION_RIGHT:
-                if event == "enter_right":
+                elif event == "enter_left":
+                    self.edge_hold_indicator.hide()
                     self._show_timetable_peek()
-                elif event == "scroll":
-                    self._handle_peek_scroll(data.get("scroll_delta", 0))
+            elif region == GESTURE_REGION_RIGHT:
+                if event == "scroll":
+                    self._handle_peek_scroll(self._drag_delta(data, GESTURE_REGION_RIGHT))
                 elif event == "tap":
                     self._handle_peek_tap()
 
@@ -402,6 +433,44 @@ class SmartMirrorPro(QMainWindow):
                 and self._peek_visible
                 and self._peek_stage == PEEK_STAGE_KINGS
             )
+
+    def _update_drag_state(self, present, region, data):
+        """Track a pinch's last palm position without treating it as movement."""
+        if not present or not data.get('dragging', False):
+            self._drag_y_by_region['left'] = None
+            self._drag_y_by_region['right'] = None
+            return
+        if region not in self._drag_y_by_region:
+            return
+        try:
+            y = float(data.get('hand_y'))
+        except (TypeError, ValueError):
+            return
+        other = GESTURE_REGION_RIGHT if region == GESTURE_REGION_LEFT else GESTURE_REGION_LEFT
+        self._drag_y_by_region[other] = None
+        if self._drag_y_by_region[region] is None:
+            self._drag_y_by_region[region] = y
+
+    def _drag_delta(self, data, region):
+        """Return the full pinch-drag movement since the UI last consumed it."""
+        # Older gesture daemons (and a hand-written diagnostic status file) do
+        # not carry the explicit drag marker. Preserve their wheel-style delta
+        # so a UI update is backwards compatible during a rolling restart.
+        if not data.get('dragging', False):
+            return data.get('scroll_delta', 0)
+        try:
+            y = float(data.get('hand_y'))
+        except (TypeError, ValueError):
+            return data.get('scroll_delta', 0)
+        previous = self._drag_y_by_region.get(region)
+        self._drag_y_by_region[region] = y
+        if previous is None:
+            return 0
+        # Keep a wildly bad landmark from jumping an entire page, while still
+        # allowing a normal arm-length drag to travel smoothly and continuously.
+        # Match direct touch dragging: moving a held hand down pulls the
+        # visible content down, which means reducing the scrollbar's value.
+        return int(max(-180, min(180, (previous - y) * 900)))
 
     def _handle_peek_scroll(self, delta):
         """Scrolling walks down through timetable → King's Week grid → article."""
@@ -488,8 +557,8 @@ class SmartMirrorPro(QMainWindow):
         split = int(h * PEEK_SPLIT_FRAC)
 
         if self._peek_stage == PEEK_STAGE_KINGS:
-            # Timetable parked off the container's right edge; King's Week fills it.
-            return QRect(w, 0, w, split), QRect(0, 0, w, h)
+            # Timetable exits left; King's Week underneath grows to fill the gap.
+            return QRect(-w, 0, w, split), QRect(0, 0, w, h)
         return QRect(0, 0, w, split), QRect(0, split, w, h - split)
 
     def _stop_anims(self, *anims):

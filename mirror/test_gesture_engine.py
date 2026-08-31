@@ -111,47 +111,46 @@ class TestScroll(unittest.TestCase):
     def setUp(self):
         self.e = StubEngine()
 
-    def test_first_frame_only_anchors(self):
-        # Arriving in a region must not emit a jump the size of the hand's entry.
-        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0))
+    def test_first_click_frame_only_anchors(self):
+        # Starting a drag must not emit a jump the size of the hand's entry.
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0))
         self.assertTrue(self.e.engaged)
 
-    def test_open_palm_down_scrolls_down(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.56), 1000.1)
-        self.assertEqual(event, "scroll")
-        self.assertGreater(self.e.scroll_delta, 0)
-
-    def test_open_palm_up_scrolls_up(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.44), 1000.1)
+    def test_clicked_hand_down_pulls_content_down(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.56, pinch=True), 1000.1)
         self.assertEqual(event, "scroll")
         self.assertLess(self.e.scroll_delta, 0)
 
+    def test_clicked_hand_up_pushes_content_up(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.44, pinch=True), 1000.1)
+        self.assertEqual(event, "scroll")
+        self.assertGreater(self.e.scroll_delta, 0)
+
     def test_jitter_inside_deadzone_does_not_scroll(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
         tiny = SCROLL_DEADZONE / 2
-        event = self.e.process_landmarks(make_hand(0.2, 0.5 + tiny), 1000.1)
+        event = self.e.process_landmarks(make_hand(0.2, 0.5 + tiny, pinch=True), 1000.1)
         self.assertIsNone(event)
         self.assertEqual(self.e.scroll_delta, 0)
 
-    def test_closed_hand_does_not_scroll(self):
-        # A hand just resting or gesturing at someone shouldn't move the list.
-        self.e.process_landmarks(make_hand(0.2, 0.5, closed=True), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.7, closed=True), 1000.1)
+    def test_open_hand_does_not_scroll_without_a_click(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.7), 1000.1)
         self.assertIsNone(event)
         self.assertFalse(self.e.engaged)
 
     def test_region_change_reanchors(self):
         # Sweeping across columns must not dump one huge scroll into the new one.
-        self.e.process_landmarks(make_hand(0.2, 0.2), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.5, 0.9), 1000.1)
+        self.e.process_landmarks(make_hand(0.2, 0.2, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.5, 0.9, pinch=True), 1000.1)
         self.assertIsNone(event)
         self.assertEqual(self.e.region, REGION_CENTER)
 
     def test_scroll_is_clamped(self):
-        self.e.process_landmarks(make_hand(0.2, 0.05), 1000.0)
-        self.e.process_landmarks(make_hand(0.2, 0.95), 1000.1)
+        self.e.process_landmarks(make_hand(0.2, 0.05, pinch=True), 1000.0)
+        self.e.process_landmarks(make_hand(0.2, 0.95, pinch=True), 1000.1)
         self.assertLessEqual(abs(self.e.scroll_delta), gesture_engine.SCROLL_MAX_PX)
 
 
@@ -276,40 +275,40 @@ class TestTap(unittest.TestCase):
         self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.4))
 
 
-class TestRightDwell(unittest.TestCase):
+class TestLeftEdgeDwell(unittest.TestCase):
     def setUp(self):
         self.e = StubEngine()
 
     def test_dwell_fires_once(self):
-        self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0))
-        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
-        self.assertEqual(event, "enter_right")
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0))
+        event = self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.assertEqual(event, "enter_left")
         # Leaving the hand there must not re-trigger the peek every frame.
         for i in range(5):
-            self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1001.0 + i * 0.1))
+            self.assertIsNone(self.e.process_landmarks(make_hand(0.05, 0.5), 1001.0 + i * 0.1))
 
     def test_passing_through_quickly_does_not_fire(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
+        self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
         self.assertIsNone(event)
 
     def test_leaving_and_returning_rearms(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0)
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5), "enter_right"
+            self.e.process_landmarks(make_hand(0.05, 0.5), 1000.5), "enter_left"
         )
         self.e.process_landmarks(make_hand(0.2, 0.5), 1001.0)   # back to notices
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1002.0)   # returns to right
+        self.e.process_landmarks(make_hand(0.05, 0.5), 1002.0)  # returns to edge
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.8, 0.5), 1002.5), "enter_right"
+            self.e.process_landmarks(make_hand(0.05, 0.5), 1002.5), "enter_left"
         )
 
     def test_hand_lost_rearms(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5)
-        self.assertFalse(self.e.right_armed)
+        self.e.process_landmarks(make_hand(0.05, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.05, 0.5), 1000.5)
+        self.assertFalse(self.e.left_armed)
         self.assertTrue(self.e.mark_absent(1000.5 + HAND_LOST_SEC + 0.1))
-        self.assertTrue(self.e.right_armed)
+        self.assertTrue(self.e.left_armed)
 
 
 class TestAbsence(unittest.TestCase):
