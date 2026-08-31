@@ -86,11 +86,13 @@ The Smart Mirror window will open. As you press `1`, `2`, or `3` in the first te
 `smart_mirror_pro.py` starts [gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py) itself, so there is no third terminal to run — watch its output in the mirror's terminal. It should print:
 
 ```
-[MIRROR] Gesture daemon started (pid 1234, --camera-id 0).
+[MIRROR] Gesture daemon started (pid 1234, --camera-id 0 --exit-with-parent).
 [GESTURE] Running on camera 0. Regions: left<0.5 right>0.62
 ```
 
 If it says `Missing gesture_recognizer.task`, re-run the setup script. If it says it could not open the camera, something else already has it — `face_recognize.py` defaults to camera 4 to stay out of the way, but any other app counts too.
+
+`--exit-with-parent` makes the daemon exit when the mirror does, however the mirror goes away — a clean close, Ctrl-C, a killed terminal. Without it, orphaned daemons accumulate and fight over the status file, which shows up as a stream of `[GESTURE] Error writing status: [WinError 5]`. If you ever start the daemon by hand, leave the flag off, or it will wait on your keyboard for the end of stdin.
 
 | Variable | Effect |
 |---|---|
@@ -120,7 +122,7 @@ On the physical Raspberry Pi mirror:
 
 * **[smart_mirror_pro.py](file:///e:/Code/offical/14DTE-Project/mirror/smart_mirror_pro.py)**: The main PyQt6 GUI application. Renders widgets, handles windowed/fullscreen modes, and polls for face/gesture status updates.
 * **[mock_face.py](file:///e:/Code/offical/14DTE-Project/mirror/mock_face.py)**: A state simulator utility that writes mock states to the temp directory (`face_status.json`) to simulate camera/OCR inputs.
-* **[face_recognize.py](file:///e:/Code/offical/14DTE-Project/mirror/face_recognize.py)**: Daemon responsible for camera polling, Haar Cascade face detection, and API-based face verification. Also decodes student ID barcodes held up to the camera and signs that student in.
+* **[face_recognize.py](file:///e:/Code/offical/14DTE-Project/mirror/face_recognize.py)**: Daemon responsible for camera polling, Haar Cascade face detection, and API-based face verification. Also decodes student ID barcodes held up to the camera and signs that student in. Locating a face for recognition tries dlib's HOG detector, then HOG upsampled once, then falls back to Haar: HOG frames a face the way the encoder expects but is strict about pose, and a head tilted back with the chin up — how people actually stand at a mirror — is invisible to it. When the two detectors disagreed, the log said `detected=True` and `No face detected in frame.` on the same frame, and recognition never started; the log now names whichever detector found the face.
 * **[barcode_reader.py](file:///e:/Code/offical/14DTE-Project/mirror/barcode_reader.py)**: Student ID barcode decoder. Wraps whichever backend the host has (`cv2.barcode`, `cv2.QRCodeDetector` or `pyzbar`) and only reports a code once it has been read on two separate frames, so a motion-blurred misread cannot sign anyone in.
 * **[gesture_engine.py](file:///e:/Code/offical/14DTE-Project/mirror/gesture_engine.py)**: MediaPipe-powered gesture daemon, started automatically by `smart_mirror_pro.py`. It does **not** emulate a mouse: the screen is split into left / centre / right regions and whichever region your hand is generally in is the one you interact with. Over the notices column an open palm scrolls and a quick pinch taps to hold the list still; dwelling on the right peeks the day's timetable. The published palm position is rounded to a coarse cell, which is both what keeps the status file from being rewritten on every frame and what makes the King's Week grid lock cleanly from box to box. Hand tracking goes through MediaPipe's **Tasks** API and `gesture_recognizer.task` — not the old `mp.solutions.hands`, which mediapipe 1.x removed.
 * **[widgets/schedule_peek_widget.py](file:///e:/Code/offical/14DTE-Project/mirror/widgets/schedule_peek_widget.py)**: The full-day timetable panel that slides in from the right on a gesture, holds for 10 seconds, then slides out of the way.
@@ -147,7 +149,7 @@ without a second gesture to learn:
 All of the below run headless and offline — no camera, no mediapipe, no network:
 
 ```bash
-python -m unittest test_barcode_reader test_gesture_engine test_kings_week_widget test_peek_stages
+python -m unittest test_barcode_reader test_face_locate test_gesture_engine test_kings_week_widget test_peek_stages
 ```
 
 `test_kings_week_widget.py` covers the grid, box locking, snapping and the

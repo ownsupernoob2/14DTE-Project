@@ -22,6 +22,8 @@ import argparse
 import json
 import math
 import os
+import sys
+import threading
 import time
 
 import cv2
@@ -307,8 +309,31 @@ class GestureEngine:
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
-    def run(self):
+    def watch_parent(self):
+        """Stop the loop when the parent closes our stdin.
+
+        The mirror hands us a pipe and dies with it. A pipe is better than
+        anything pid-based here: the OS closes the write end however the mirror
+        goes away — clean exit, Ctrl-C, taskkill, closed terminal — so we always
+        find out, and there is no pid to reuse and mistakenly kill. Without this,
+        every non-graceful mirror exit left a daemon running; they piled up and
+        fought over the status file.
+        """
+        def wait_for_eof():
+            try:
+                sys.stdin.read()
+            except Exception:
+                pass
+            print("[GESTURE] Parent closed the pipe — exiting.")
+            self.running = False
+
+        threading.Thread(target=wait_for_eof, daemon=True).start()
+
+    def run(self, exit_with_parent=False):
         self.running = True
+
+        if exit_with_parent:
+            self.watch_parent()
 
         if self.tracker is None:
             print("[GESTURE] No hand tracker — exiting.")
@@ -376,9 +401,15 @@ def parse_args(argv=None):
                         help=f"Raspberry Pi mode: read from {RPI_CAMERA}")
     parser.add_argument('--camera-id', default=0, type=int,
                         help="Desktop webcam index (default 0)")
+    parser.add_argument('--exit-with-parent', action='store_true',
+                        help="Exit when stdin closes. The mirror passes this so "
+                             "the daemon cannot outlive it; leave it off when "
+                             "running by hand from a terminal.")
     args = parser.parse_args(argv)
-    return RPI_CAMERA if args.rpi else args.camera_id
+    camera = RPI_CAMERA if args.rpi else args.camera_id
+    return camera, args.exit_with_parent
 
 
 if __name__ == "__main__":
-    GestureEngine(parse_args()).run()
+    camera, exit_with_parent = parse_args()
+    GestureEngine(camera).run(exit_with_parent=exit_with_parent)

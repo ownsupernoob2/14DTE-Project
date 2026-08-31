@@ -784,6 +784,14 @@ def start_gesture_daemon():
     Set MIRROR_GESTURES=0 to opt out (no camera to spare, or you are running the
     daemon yourself). GESTURE_CAMERA picks the device: an index on a desktop
     webcam, or --rpi for the loopback device the Pi's camera pipeline feeds.
+
+    The daemon is given a pipe on stdin and told to exit when it closes. The
+    `finally` block below only runs on a graceful exit, and during a debugging
+    session the mirror is mostly killed rather than closed — which left a daemon
+    behind every time. Eight of them accumulated, all publishing to the same
+    status file, and the log filled with WinError 5 as each replaced a scratch
+    file another had already moved. A pipe cannot be leaked: the OS closes this
+    end however the mirror dies, so the daemon always learns about it.
     """
     if os.environ.get('MIRROR_GESTURES', '1') == '0':
         print('[MIRROR] MIRROR_GESTURES=0 — not starting the gesture daemon.')
@@ -796,9 +804,11 @@ def start_gesture_daemon():
         args = ['--rpi'] if sys.platform.startswith('linux') else ['--camera-id', '0']
     else:
         args = ['--camera-id', camera]
+    args.append('--exit-with-parent')
 
     try:
-        proc = subprocess.Popen([sys.executable, '-u', script] + args)
+        proc = subprocess.Popen([sys.executable, '-u', script] + args,
+                                stdin=subprocess.PIPE)
         print(f'[MIRROR] Gesture daemon started (pid {proc.pid}, {" ".join(args)}).')
         return proc
     except Exception as e:

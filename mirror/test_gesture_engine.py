@@ -8,7 +8,9 @@ Run from the mirror/ directory:  python -m unittest test_gesture_engine
 
 import json
 import os
+import sys
 import tempfile
+import time
 import unittest
 
 import gesture_engine
@@ -375,14 +377,65 @@ class TestCameraArgs(unittest.TestCase):
     """--rpi / --camera-id, matching face_recognize.py's flags."""
 
     def test_rpi_reads_the_loopback_device(self):
-        self.assertEqual(gesture_engine.parse_args(['--rpi']),
-                         gesture_engine.RPI_CAMERA)
+        camera, _ = gesture_engine.parse_args(['--rpi'])
+        self.assertEqual(camera, gesture_engine.RPI_CAMERA)
 
     def test_a_webcam_index_comes_back_as_an_int(self):
-        self.assertEqual(gesture_engine.parse_args(['--camera-id', '4']), 4)
+        camera, _ = gesture_engine.parse_args(['--camera-id', '4'])
+        self.assertEqual(camera, 4)
 
     def test_the_default_is_the_first_webcam(self):
-        self.assertEqual(gesture_engine.parse_args([]), 0)
+        camera, _ = gesture_engine.parse_args([])
+        self.assertEqual(camera, 0)
+
+    def test_exiting_with_the_parent_is_opt_in(self):
+        # Run by hand from a terminal, stdin is the keyboard and reading it would
+        # block forever; only the mirror, which supplies a pipe, asks for this.
+        self.assertFalse(gesture_engine.parse_args([])[1])
+        self.assertTrue(gesture_engine.parse_args(['--exit-with-parent'])[1])
+
+
+class TestParentWatch(unittest.TestCase):
+    """The daemon must not outlive the mirror that spawned it.
+
+    Orphans were the root cause of the WinError 5 flood: the mirror only reaped
+    its child in a `finally` block, which a kill or a closed terminal skips, so
+    a daemon was left behind on nearly every debugging run.
+    """
+
+    def test_closing_stdin_stops_the_loop(self):
+        e = StubEngine()
+        e.running = True
+        r, w = os.pipe()
+        orig = sys.stdin
+        sys.stdin = os.fdopen(r)
+        try:
+            e.watch_parent()
+            os.close(w)                      # the mirror going away
+            for _ in range(200):             # up to 2s, normally instant
+                if not e.running:
+                    break
+                time.sleep(0.01)
+            self.assertFalse(e.running,
+                             'the daemon kept running after the pipe closed')
+        finally:
+            sys.stdin.close()
+            sys.stdin = orig
+
+    def test_an_open_pipe_leaves_the_loop_alone(self):
+        e = StubEngine()
+        e.running = True
+        r, w = os.pipe()
+        orig = sys.stdin
+        sys.stdin = os.fdopen(r)
+        try:
+            e.watch_parent()
+            time.sleep(0.1)
+            self.assertTrue(e.running, 'the daemon stopped while the mirror lived')
+        finally:
+            os.close(w)
+            sys.stdin.close()
+            sys.stdin = orig
 
 
 if __name__ == '__main__':
