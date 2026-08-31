@@ -85,7 +85,7 @@ def format_fetched_at(iso_str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_notice_card(notice):
-    """Build a single notice card QFrame matching the web screenshot."""
+    """Build a single notice card QFrame matching the web screenshot (scaled up)."""
     category = notice.get('category', 'General')
     is_urgent = notice.get('importance', 'normal') == 'high'
     is_medium = category in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']
@@ -109,24 +109,24 @@ def _make_notice_card(notice):
     card.setObjectName('NoticeCard')
     card.setStyleSheet(f"""
         #NoticeCard {{
-            background-color: #0a0a0a;
-            border: none;
-            border-left: 3px solid {border_color};
-            border-radius: 0px;
+            background-color: #0c0c0c;
+            border: 1px solid #1a1a1a;
+            border-left: 4px solid {border_color};
+            border-radius: 4px;
         }}
     """)
 
     lay = QVBoxLayout(card)
-    lay.setContentsMargins(14, 12, 14, 12)
-    lay.setSpacing(4)
+    lay.setContentsMargins(18, 16, 18, 16)
+    lay.setSpacing(6)
 
     # ── Meta row: CATEGORY · DATE ─────────────────────────────────────────
     meta_tag = f"URGENT · {date_str.upper()}" if is_urgent else f"{category.upper()} · {date_str.upper()}"
     meta_lbl = QLabel(meta_tag)
     meta_lbl.setStyleSheet(
         f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
-        f"font-size: 11px; font-weight: 700; color: {meta_color}; "
-        f"letter-spacing: 0.5px; background: transparent; border: none;"
+        f"font-size: 13px; font-weight: 700; color: {meta_color}; "
+        f"letter-spacing: 0.8px; background: transparent; border: none;"
     )
     lay.addWidget(meta_lbl)
 
@@ -135,21 +135,21 @@ def _make_notice_card(notice):
     title_lbl = QLabel(title_text)
     title_lbl.setWordWrap(True)
     title_lbl.setStyleSheet(
-        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 700; "
-        "color: #ffffff; background: transparent; border: none; line-height: 1.2;"
+        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
+        "color: #ffffff; background: transparent; border: none; line-height: 1.25;"
     )
     lay.addWidget(title_lbl)
 
     # ── Body text preview ──────────────────────────────────────────────────
     body_text = strip_html(notice.get('notice', ''))
     if body_text:
-        if len(body_text) > 180:
-            body_text = body_text[:180].rsplit(' ', 1)[0] + '…'
+        if len(body_text) > 280:
+            body_text = body_text[:280].rsplit(' ', 1)[0] + '…'
         body_lbl = QLabel(body_text)
         body_lbl.setWordWrap(True)
         body_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; color: #d0d0d0; "
-            "background: transparent; border: none; line-height: 1.4;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #d0d0d0; "
+            "background: transparent; border: none; line-height: 1.45;"
         )
         lay.addWidget(body_lbl)
 
@@ -159,7 +159,7 @@ def _make_notice_card(notice):
         contact_lbl = QLabel(f"See {contact}")
         contact_lbl.setStyleSheet(
             "font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
-            "font-size: 11px; color: #8f8f8f; background: transparent; border: none; margin-top: 2px;"
+            "font-size: 13px; color: #8f8f8f; background: transparent; border: none; margin-top: 4px;"
         )
         lay.addWidget(contact_lbl)
 
@@ -205,27 +205,27 @@ class NoticesWidget(QFrame):
 
         # ── Root layout ──────────────────────────────────────────────────
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(12)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(14)
 
         # ── Header row ───────────────────────────────────────────────────
         header = QWidget()
         header.setStyleSheet('background: transparent;')
         hdr_lay = QHBoxLayout(header)
         hdr_lay.setContentsMargins(0, 0, 0, 4)
-        hdr_lay.setSpacing(10)
+        hdr_lay.setSpacing(12)
 
         # Left: "Notices" + "Updated ..."
         self.title_label = QLabel('Notices')
         self.title_label.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; "
             "color: #ffffff; letter-spacing: 0.2px; background: transparent; border: none;"
         )
         hdr_lay.addWidget(self.title_label)
 
         self.fetched_at_label = QLabel('')
         self.fetched_at_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 11px; "
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 13px; "
             "color: #8f8f8f; background: transparent; border: none;"
         )
         self.fetched_at_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
@@ -233,30 +233,15 @@ class NoticesWidget(QFrame):
 
         hdr_lay.addStretch(1)
 
-        # Gesture affordance: lights up while a hand is over this column, so it
-        # is obvious which panel the gestures are driving.
-        self.gesture_dot = QLabel('●')
-        self.gesture_dot.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 10px; "
-            "color: #4fc3ff; background: transparent; border: none;"
-        )
-        self.gesture_dot.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.gesture_dot.hide()
-        hdr_lay.addWidget(self.gesture_dot)
-
-        self.pause_label = QLabel('')
-        self.pause_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 11px; "
-            "font-weight: 700; color: #4fc3ff; letter-spacing: 1px; "
-            "background: transparent; border: none;"
-        )
-        self.pause_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        hdr_lay.addWidget(self.pause_label)
+        # No "GESTURE ACTIVE" / "PAUSED" chips here on purpose. Both states are
+        # shown by the panel's border instead — see _apply_frame_style. A label
+        # that appears and disappears in the header is a lot of visual noise for
+        # something the border can say quietly, and it competed with the title.
 
         # Right: "1 today"
         self.count_label = QLabel('')
         self.count_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 13px; "
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 14px; "
             "color: #d0d0d0; background: transparent; border: none;"
         )
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -324,7 +309,9 @@ class NoticesWidget(QFrame):
         if not self._scroll_paused:
             # A beat before it starts moving again, so resuming isn't jarring.
             self._auto_scroll_paused_until = time.time() + 1.5
-        self.pause_label.setText('PAUSED' if self._scroll_paused else '')
+        # The border carries this — a tap has to give some feedback, or you
+        # cannot tell whether it registered.
+        self._apply_frame_style()
         return self._scroll_paused
 
     def set_gesture_active(self, active):
@@ -333,24 +320,47 @@ class NoticesWidget(QFrame):
         if active == self._gesture_active:
             return
         self._gesture_active = active
-        self.gesture_dot.setVisible(active)
         self._apply_frame_style()
 
     def reset_gesture_state(self):
         """Forget tap-pause and affordance — the mirror changed who it's showing."""
         self._scroll_paused = False
-        self.pause_label.setText('')
         self.set_gesture_active(False)
+        self._apply_frame_style()
 
     def _apply_frame_style(self):
-        edge = '#4fc3ff' if self._gesture_active else '#1c1c1c'
-        self.setStyleSheet(f"""
-            #NoticesWidget {{
-                background-color: #000000;
-                border: none;
-                border-right: 1px solid {edge};
-            }}
-        """)
+        """The panel's border is the whole gesture affordance.
+
+        Three states, no text: resting, your hand is over this panel, and you
+        tapped to hold the list still. A solid brighter edge for a hold reads as
+        "this is fixed" without a chip in the header announcing it.
+        """
+        if self._scroll_paused and self._gesture_active:
+            border = '2px solid #7dd3fc'
+        elif self._gesture_active:
+            border = '2px solid #0284c7'
+        elif self._scroll_paused:
+            border = '1px solid #38bdf8'
+        else:
+            border = None
+
+        if border is not None:
+            self.setStyleSheet("""
+                #NoticesWidget {
+                    background-color: #030a12;
+                    border: %s;
+                    border-radius: 6px;
+                }
+            """ % border)
+        else:
+            self.setStyleSheet("""
+                #NoticesWidget {
+                    background-color: #000000;
+                    border: none;
+                    border-right: 1px solid #1c1c1c;
+                    border-radius: 0px;
+                }
+            """)
 
     def apply_theme(self, primary_color, secondary_color, font_family):
         pass

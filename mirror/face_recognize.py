@@ -45,6 +45,7 @@ from config import FACE_DATA_FILE, VISION_FILE
 from timing_config import (
     IDLE_TIMEOUT_SEC,
     GUEST_GRACE_SEC,
+    USER_HOLD_SEC,
     API_POLL_INTERVAL,
     API_POLL_GUEST,
     API_POLL_RECOGNISED,
@@ -408,7 +409,8 @@ def main():
     print("Smart Mirror — Face Recognition Daemon")
     print(f"  Mode       : {'Raspberry Pi (rpicam → /dev/video10)' if args.rpi else f'Desktop (camera {args.camera_id})'}")
     print(f"  API        : {API_URL}")
-    print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s")
+    print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s  "
+          f"|  USER hold: {USER_HOLD_SEC}s")
     print(f"  Poll IDLE  : {API_POLL_INTERVAL}s  |  GUEST: {API_POLL_GUEST}s  |  USER: {API_POLL_RECOGNISED}s")
     print(f"  Status file: {FACE_DATA_FILE}")
 
@@ -568,8 +570,13 @@ def main():
                     # passer-by behind them) must not demote them to GUEST.
                     if unrecognised_since is None:
                         unrecognised_since = now
-                        print(f"[STATE] Unrecognised face -- grace timer started "
-                              f"({GUEST_GRACE_SEC}s)")
+                        # Name the timer that will actually fire. A signed-in
+                        # student is held far longer than a stranger, and a log
+                        # line promising 1.5s before a 25s wait reads as a bug.
+                        window = USER_HOLD_SEC if state == STATE_USER else GUEST_GRACE_SEC
+                        print(f"[STATE] Unrecognised face -- "
+                              f"{'holding the signed-in student' if state == STATE_USER else 'grace timer started'} "
+                              f"({window}s)")
 
                 # p_rec is None → no face / error → let timers handle it
 
@@ -618,9 +625,13 @@ def main():
                 auth_method       = AUTH_FACE
                 unrecognised_since = None
 
-            # Unrecognised for GUEST_GRACE_SEC → go GUEST
+            # Unrecognised for long enough → go GUEST. A signed-in student gets
+            # USER_HOLD_SEC rather than the much shorter GUEST_GRACE_SEC: they
+            # have already been identified, so a failed match is far more likely
+            # to be one bad frame than a different person.
+            demote_after = USER_HOLD_SEC if state == STATE_USER else GUEST_GRACE_SEC
             if (unrecognised_since is not None
-                    and now - unrecognised_since >= GUEST_GRACE_SEC
+                    and now - unrecognised_since >= demote_after
                     and not barcode_active):
                 if state != STATE_GUEST:
                     print(f"[STATE] {state.upper()} -> GUEST  "
@@ -647,6 +658,11 @@ def main():
                     barcode_reader.reset()
 
             # ── Compute in_grace for the status dot ──────────────────────────
+            # Always the *guest* grace, never USER_HOLD_SEC: the dot means "an
+            # unknown face is being given a moment to resolve". A signed-in
+            # student holding through a bad frame is excluded by the state check
+            # anyway, and their hold is long enough that a countdown dot would
+            # just be a light left on.
             in_grace = (unrecognised_since is not None
                         and now - unrecognised_since < GUEST_GRACE_SEC
                         and state != STATE_USER)

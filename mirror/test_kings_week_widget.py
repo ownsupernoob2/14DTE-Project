@@ -462,11 +462,15 @@ class TestGestureState(unittest.TestCase):
     def tearDown(self):
         close_panel(self.panel)
 
-    def test_affordance_dot(self):
-        self.panel.set_gesture_active(True)
-        self.assertTrue(self.panel.gesture_dot.isVisible())
+    def test_affordance_is_the_border(self):
+        # There is no chip or dot in the header any more; the border is the whole
+        # affordance, so that is what has to change.
         self.panel.set_gesture_active(False)
-        self.assertFalse(self.panel.gesture_dot.isVisible())
+        resting = self.panel.styleSheet()
+        self.panel.set_gesture_active(True)
+        self.assertNotEqual(self.panel.styleSheet(), resting)
+        self.panel.set_gesture_active(False)
+        self.assertEqual(self.panel.styleSheet(), resting)
 
     def test_reset_returns_to_a_resting_panel(self):
         self.panel.set_gesture_active(True)
@@ -478,7 +482,7 @@ class TestGestureState(unittest.TestCase):
 
         self.assertFalse(self.panel.modal_open)
         self.assertFalse(self.panel.modal.isVisible())
-        self.assertFalse(self.panel.gesture_dot.isVisible())
+        self.assertFalse(self.panel._gesture_active)
         self.assertEqual(self.panel.scroll_area.verticalScrollBar().value(), 0)
         self.assertEqual(self.panel.selected_index, 0)
         self.assertFalse(self.panel._snap_timer.isActive())

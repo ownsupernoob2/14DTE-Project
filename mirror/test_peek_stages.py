@@ -3,6 +3,8 @@
 These drive the real gesture handler with synthetic payloads — the same dicts
 gesture_engine.py publishes — so the two-stage reveal, the box locking and the
 article modal are all exercised through the paths the mirror actually uses.
+TestStateTransition covers the other animated thing the window owns: the
+dissolve between the guest, user and idle screens.
 
 Headless (offscreen Qt) and offline: requests is stubbed out before the window
 is built, so nothing here touches the network.
@@ -373,6 +375,126 @@ class TestDismissal(unittest.TestCase):
         self.mirror._hide_timetable_peek(animate=False)
         self.mirror._hide_timetable_peek(animate=False)
         self.assertFalse(self.mirror._peek_visible)
+
+
+class TestStateTransition(unittest.TestCase):
+    """Guest ↔ user ↔ idle: the dissolve, and what it must never do.
+
+    This is what "flashing" was. Recognition dropping out for one frame demoted a
+    signed-in student to GUEST and the next good frame promoted them back, and
+    every crossing ran a 280ms fade to black followed by a 380ms fade up — so the
+    screen spent two thirds of a second going dark and light again, over and over.
+    timing_config.USER_HOLD_SEC stops the bouncing; these tests cover the other
+    half, which is that a single crossing is one animation and never dark.
+    """
+
+    def setUp(self):
+        self.mirror = make_mirror()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _transition(self, state, user_id='u2'):
+        self.mirror._transitioning = True
+        self.mirror._last_state = state
+        self.mirror._trigger_transition(state, user_id, {'config': {}})
+
+    def _opacity(self, widget):
+        effect = widget.graphicsEffect()
+        return 1.0 if effect is None else effect.opacity()
+
+    def test_the_screen_never_goes_dark_between_states(self):
+        # Mid-dissolve the old screen is still fully opaque underneath, so
+        # something is always covering the black background.
+        self._transition('guest')
+        self.assertIsNotNone(self.mirror._anim_in)
+        self.mirror._anim_in.setCurrentTime(self.mirror._anim_in.duration() // 2)
+        app.processEvents()
+
+        self.assertTrue(self.mirror.user_container.isVisible(),
+                        'the outgoing screen was hidden before the new one arrived')
+        self.assertEqual(self._opacity(self.mirror.user_container), 1.0)
+        self.assertTrue(self.mirror.guest_container.isVisible())
+        self.assertGreater(self._opacity(self.mirror.guest_container), 0.0)
+
+    def test_one_crossing_is_one_animation(self):
+        # Not fade-out-then-fade-in: that is what made a single state change take
+        # two thirds of a second.
+        self.mirror._anim_out = None
+        self._transition('guest')
+        self.assertIsNone(self.mirror._anim_out,
+                          'the new screen should not have waited for a fade-out')
+
+    def test_the_old_screen_is_retired_once_the_new_one_has_arrived(self):
+        self._transition('guest')
+        settle(self.mirror)
+        self.assertFalse(self.mirror.user_container.isVisible())
+        self.assertTrue(self.mirror.guest_container.isVisible())
+        self.assertEqual(self._opacity(self.mirror.guest_container), 1.0)
+        self.assertFalse(self.mirror._transitioning)
+
+    def test_the_arriving_screen_dissolves_in_over_the_departing_one(self):
+        self._transition('guest')
+        children = self.mirror.central_widget.children()
+        self.assertLess(children.index(self.mirror.user_container),
+                        children.index(self.mirror.guest_container),
+                        'the outgoing screen was not dropped below the new one')
+
+    def test_the_banner_and_status_dot_stay_on_top(self):
+        # Which is why the outgoing container is lowered rather than the incoming
+        # one raised — raising would have lifted it over both of these.
+        self._transition('guest')
+        children = self.mirror.central_widget.children()
+        self.assertLess(children.index(self.mirror.guest_container),
+                        children.index(self.mirror.status_dot))
+
+    def test_going_back_and_forth_still_dissolves(self):
+        self._transition('guest')
+        settle(self.mirror)
+        self._transition('user', 'u1')
+        children = self.mirror.central_widget.children()
+        self.assertLess(children.index(self.mirror.guest_container),
+                        children.index(self.mirror.user_container))
+        settle(self.mirror)
+        self.assertTrue(self.mirror.user_container.isVisible())
+        self.assertFalse(self.mirror.guest_container.isVisible())
+
+    def test_idle_fades_to_black_and_clears_both_screens(self):
+        # The one transition that *should* end dark.
+        self._transition('idle', 'idle')
+        self.assertIsNotNone(self.mirror._anim_out)
+        settle(self.mirror)
+        self.assertFalse(self.mirror.user_container.isVisible())
+        self.assertFalse(self.mirror.guest_container.isVisible())
+        self.assertFalse(self.mirror._transitioning)
+
+    def test_arriving_from_a_blank_screen_just_fades_up(self):
+        self._transition('idle', 'idle')
+        settle(self.mirror)
+        self._transition('user', 'u1')
+        settle(self.mirror)
+        self.assertTrue(self.mirror.user_container.isVisible())
+        self.assertEqual(self._opacity(self.mirror.user_container), 1.0)
+
+    def test_one_student_handing_over_to_another_fades_out_first(self):
+        # Same container, so there is nothing to dissolve across — and a different
+        # person's dashboard should not look like it grew out of the last one's.
+        self._transition('user', 'u2')
+        self.assertIsNotNone(self.mirror._anim_out)
+        settle(self.mirror)
+        self.assertTrue(self.mirror.user_container.isVisible(),
+                        'the new student never got faded back in')
+        settle(self.mirror)
+        self.assertEqual(self._opacity(self.mirror.user_container), 1.0)
+
+    def test_the_guest_screen_is_laid_out_before_it_is_shown(self):
+        # It is prepared while the old screen still covers it, so an unlaid-out
+        # container must never become visible.
+        self._transition('guest')
+        self.assertEqual(self.mirror.guest_notices.x(), 0)
+        self.assertGreater(self.mirror.guest_notices.width(), 0)
+        self.assertGreater(self.mirror.guest_clock.x(),
+                           self.mirror.guest_notices.width() - 1)
 
 
 class TestGesturePolling(unittest.TestCase):

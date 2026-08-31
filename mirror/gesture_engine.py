@@ -6,13 +6,17 @@ The mirror has no touchscreen and no cursor, so this does not emulate a mouse.
 Instead the screen is split into the same columns the UI uses, and whichever
 region your hand is generally in is the region you are interacting with:
 
-    left   (x < 0.34)  → the notices column
+    left   (x < 0.50)  → the notices column, drawn on the left of the screen
     center               nothing (a neutral resting area)
-    right  (x > 0.62)  → the timetable peek
+    right  (x > 0.62)  → the timetable peek, drawn on the right
 
-Within a region an open palm engages control: moving it up and down scrolls,
-and a quick pinch is a tap. Dwelling in the right region peeks the timetable,
-which then slides away to reveal the King's Week grid underneath it.
+Which physical side of you that corresponds to depends on where the camera is
+mounted; see default_flip().
+
+Within a region an open palm engages control: moving it up and down scrolls, and
+touching your thumb and index finger together is a click. Dwelling in the right
+region peeks the timetable, which then slides away to reveal the King's Week grid
+underneath it.
 
 State is published to a JSON file that smart_mirror_pro.py polls, so the
 vision work stays out of the Qt event loop.
@@ -49,6 +53,25 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # face daemon and this one can share the single camera module.
 RPI_CAMERA = "/dev/video10"
 
+
+def default_flip():
+    """Whether to mirror the frame, unless told otherwise.
+
+    Which side of the frame your left hand lands on depends entirely on where the
+    camera physically sits, and no default is right for every rig. A camera
+    mounted in the mirror looking back at the student needs the flip: it sees the
+    student the way another person would, so their left hand arrives on the right
+    of the frame, and mirroring puts it back under the panel on their left.
+
+    The Pi is that case, so it flips. A desktop rig is a phone or webcam on a
+    stand pointing from wherever there was room, which is as often reversed as
+    not — this one was — so it does not, and `GESTURE_FLIP=1` turns it back on.
+    """
+    env = os.environ.get("GESTURE_FLIP")
+    if env is not None:
+        return env not in ("0", "false", "False", "no", "off", "")
+    return sys.platform.startswith("linux")
+
 # ── Region boundaries ────────────────────────────────────────────────────────
 # Left half (x < 0.50) is the notices column; right side (x > 0.62) is the peek.
 REGION_LEFT_EDGE  = 0.50
@@ -59,8 +82,20 @@ REGION_CENTER = "center"
 REGION_RIGHT  = "right"
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
-PINCH_DIST         = 0.06   # normalised thumb-tip → index-tip distance
-TAP_MAX_SEC        = 0.5    # pinch held longer than this is a hold, not a tap
+# A pinch is measured as a *fraction of the hand's own size*, never as a raw
+# normalised distance. Landmarks are fractions of the frame, so a hand at arm's
+# length is numerically tiny: a fixed threshold of 0.06 meant a distant hand read
+# as permanently pinched and a hand close to the camera could never pinch at all.
+# Dividing by the palm makes the test the same at any distance.
+#
+# Two thresholds, not one: fingers hovering right on the boundary would otherwise
+# chatter between pinched and open several times a second, firing a burst of
+# taps. You have to close to ENTER and open past EXIT to let go.
+PINCH_ENTER_RATIO  = 0.55   # thumb-index gap / palm size to start a pinch
+PINCH_EXIT_RATIO   = 0.75   # and to release it again
+MIN_PALM_SIZE      = 0.02   # below this the hand is too far away to trust
+
+TAP_MAX_SEC        = 0.6    # pinch held longer than this is a hold, not a tap
 TAP_COOLDOWN_SEC   = 0.6    # ignore repeat taps inside this window
 SCROLL_DEADZONE    = 0.012  # ignore palm jitter below this normalised movement
 SCROLL_GAIN        = 900.0  # normalised palm movement → scroll pixels
@@ -86,11 +121,17 @@ def classify_region(x):
 
 
 class GestureEngine:
-    def __init__(self, camera_id=0):
+    def __init__(self, camera_id=0, flip=True):
         self.camera_id = camera_id
+        self.flip = flip
         self.running = False
         self.tracker = None
         self._init_tracker()
+
+        # Landmark x is a fraction of the frame width and y of its height, so
+        # measuring a diagonal needs the aspect ratio. Set from the first real
+        # frame; 1.0 until then, which is also what synthetic test hands assume.
+        self.frame_aspect = 1.0
 
         # ── Tracking state ───────────────────────────────────────────────────
         self.present = False
@@ -151,9 +192,40 @@ class GestureEngine:
 
     # ── Geometry helpers ─────────────────────────────────────────────────────
 
-    @staticmethod
-    def _distance(p1, p2):
-        return math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2 + (p1.z - p2.z) ** 2)
+    def _distance(self, p1, p2):
+        """Distance between two landmarks in square units.
+
+        x is a fraction of the frame width and y a fraction of its height, so on
+        a 640x480 frame one unit of x is not one unit of y and a diagonal comes
+        out wrong. Scaling x by the aspect ratio fixes that. z is left out
+        entirely: MediaPipe's depth is relative to the wrist, on its own scale,
+        and noisy enough to swamp a thumb-to-index measurement.
+        """
+        dx = (p1.x - p2.x) * self.frame_aspect
+        dy = p1.y - p2.y
+        return math.sqrt(dx * dx + dy * dy)
+
+    def _palm_size(self, lm):
+        """A distance-invariant scale for the hand: wrist → middle-finger MCP.
+
+        Both are on the palm, so curling or splaying the fingers does not change
+        it — unlike anything measured to a fingertip.
+        """
+        return self._distance(lm[0], lm[9])
+
+    def is_pinching(self, lm):
+        """True while the thumb and index finger are touching — the 'click'.
+
+        Ratio, not raw distance, and hysteresis so a gap hovering on the
+        threshold does not rattle out a stream of taps.
+        """
+        palm = self._palm_size(lm)
+        if palm < MIN_PALM_SIZE:
+            # Too far away (or a bad detection) for the ratio to mean anything.
+            return False
+        ratio = self._distance(lm[4], lm[8]) / palm
+        threshold = PINCH_EXIT_RATIO if self.pinch_start is not None else PINCH_ENTER_RATIO
+        return ratio < threshold
 
     @staticmethod
     def _palm_center(lm):
@@ -191,7 +263,7 @@ class GestureEngine:
             self.right_since = None
             self.right_armed = True
 
-        pinched = self._distance(lm[4], lm[8]) < PINCH_DIST
+        pinched = self.is_pinching(lm)
         fingers = self._extended_fingers(lm)
         open_palm = fingers >= 3 and not pinched
 
@@ -350,7 +422,14 @@ class GestureEngine:
             return
 
         print(f"[GESTURE] Running on camera {self.camera_id}. "
-              f"Regions: left<{REGION_LEFT_EDGE} right>{REGION_RIGHT_EDGE}")
+              f"Regions: left<{REGION_LEFT_EDGE} right>{REGION_RIGHT_EDGE}.")
+        # Spelt out because it is the one setting nothing can work out for itself,
+        # and the symptom — the panel on your left answering to your other hand —
+        # looks like a bug in the gesture code rather than a camera placement.
+        print(f"[GESTURE] Horizontal flip: {'on' if self.flip else 'off'}. "
+              f"The notices panel is drawn on the left of the screen; if it only "
+              f"answers to your other hand, set GESTURE_FLIP="
+              f"{'0' if self.flip else '1'} and restart.")
         start = time.time()
         last_stamp_ms = -1
         try:
@@ -360,8 +439,10 @@ class GestureEngine:
                     time.sleep(0.03)
                     continue
 
-                # Flip so landmark x matches what the student sees on the mirror.
-                frame = cv2.flip(frame, 1)
+                if self.flip:
+                    frame = cv2.flip(frame, 1)
+                h, w = frame.shape[:2]
+                self.frame_aspect = (w / h) if h else 1.0
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
@@ -405,11 +486,21 @@ def parse_args(argv=None):
                         help="Exit when stdin closes. The mirror passes this so "
                              "the daemon cannot outlive it; leave it off when "
                              "running by hand from a terminal.")
+    flip = parser.add_mutually_exclusive_group()
+    flip.add_argument('--flip', dest='flip', action='store_true', default=None,
+                      help="Mirror the frame horizontally: for a camera mounted "
+                           "in the mirror facing the student, so the panel on "
+                           "your left answers to the hand on your left.")
+    flip.add_argument('--no-flip', dest='flip', action='store_false',
+                      help="Do not mirror. Use when the camera is not facing the "
+                           "student from behind the screen — a phone on a stand, "
+                           "say — and the sides come out crossed.")
     args = parser.parse_args(argv)
     camera = RPI_CAMERA if args.rpi else args.camera_id
-    return camera, args.exit_with_parent
+    flip_frame = default_flip() if args.flip is None else args.flip
+    return camera, args.exit_with_parent, flip_frame
 
 
 if __name__ == "__main__":
-    camera, exit_with_parent = parse_args()
-    GestureEngine(camera).run(exit_with_parent=exit_with_parent)
+    camera, exit_with_parent, flip_frame = parse_args()
+    GestureEngine(camera, flip=flip_frame).run(exit_with_parent=exit_with_parent)

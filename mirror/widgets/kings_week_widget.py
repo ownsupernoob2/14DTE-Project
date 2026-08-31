@@ -540,12 +540,8 @@ class KingsWeekWidget(QFrame):
         )
         head.addWidget(eyebrow)
 
-        self.gesture_dot = QLabel('●', self)
-        self.gesture_dot.setStyleSheet(
-            f"font-size: 9px; color: {ACCENT}; background: transparent; border: none;"
-        )
-        self.gesture_dot.hide()
-        head.addWidget(self.gesture_dot)
+        # No gesture chip or dot in the header: the panel's border says whether
+        # your hand is controlling it, and the selected box is already outlined.
         head.addStretch(1)
 
         self.edition_lbl = QLabel('', self)
@@ -825,7 +821,6 @@ class KingsWeekWidget(QFrame):
         if active == self._gesture_active:
             return
         self._gesture_active = active
-        self.gesture_dot.setVisible(active)
         self._apply_frame_style()
 
     def reset_gesture_state(self):

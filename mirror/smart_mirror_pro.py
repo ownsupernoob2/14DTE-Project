@@ -626,8 +626,14 @@ class SmartMirrorPro(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────
     # Fade helpers
     # ─────────────────────────────────────────────────────────────────────
-    def _fade_in(self, widget, duration=380):
-        """Show widget and animate opacity 0 → 1."""
+    def _fade_in(self, widget, duration=380, retire=None):
+        """Show widget and animate opacity 0 → 1.
+
+        `retire` is whatever was on screen before: it stays fully opaque
+        underneath and is hidden once the new screen has finished arriving. That
+        makes this a dissolve rather than a fade to black and back — see
+        _trigger_transition for why that matters.
+        """
         effect = QGraphicsOpacityEffect(widget)
         widget.setGraphicsEffect(effect)
         effect.setOpacity(0.0)
@@ -637,13 +643,16 @@ class SmartMirrorPro(QMainWindow):
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: self._on_fade_in_done(widget))
+        anim.finished.connect(lambda: self._on_fade_in_done(widget, retire))
         anim.start()
         self._anim_in = anim
 
-    def _on_fade_in_done(self, widget):
+    def _on_fade_in_done(self, widget, retire=None):
         # Remove effect so child painting isn't affected by opacity layer
         widget.setGraphicsEffect(None)
+        if retire is not None:
+            retire.hide()
+            retire.setGraphicsEffect(None)
         self._transitioning = False
 
     def _fade_out(self, widget, on_done, duration=280):
@@ -724,49 +733,88 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.hide()
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
-        """Fade out whatever is currently visible, then apply + fade in new state."""
+        """Dissolve from whatever is on screen to the new state.
+
+        The old version faded the current screen out to black over 280ms and only
+        then began fading the new one in over another 380ms: two thirds of a
+        second, with a fully black screen in the middle of it. One trip through
+        that is a transition. A run of them — which is what a recognition that
+        keeps dropping out produces — is a strobe, and that is what "flashing"
+        was. USER_HOLD_SEC stops the state from bouncing in the first place; this
+        makes the one transition that remains half as long and never dark, by
+        building the new screen underneath the old one and dissolving across.
+        """
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container
         elif not self.guest_container.isHidden():
             visible = self.guest_container
 
-        def apply_new():
-            # The peek belongs to whoever was just on screen — drop it outright
-            # rather than sliding it out over a different student's dashboard.
-            self._hide_timetable_peek(animate=False)
-            self.notices_widget.reset_gesture_state()
-            self.guest_notices.reset_gesture_state()
-            if self.kings_panel is not None:
-                self.kings_panel.reset_gesture_state()
-
-            self.user_container.hide()
-            self.guest_container.hide()
-            if visible:
-                visible.setGraphicsEffect(None)
-
-            if new_state == 'user' and new_user_id not in ('', 'idle'):
-                self.timetable_widget.set_user_id(new_user_id)
-                if self.peek_panel is not None:
-                    self.peek_panel.set_user_id(new_user_id)
-                self._apply_user_theme(fdata.get('config', {}))
-                self._apply_user_layout(self.width(), self.height())
-                self._fade_in(self.user_container)
-
-            elif new_state == 'guest':
-                self.timetable_widget.set_user_id('')
-                if self.peek_panel is not None:
-                    self.peek_panel.set_user_id('')
-                self._apply_guest_layout(self.width(), self.height())
-                self._fade_in(self.guest_container)
-
-            else:  # idle
-                self._transitioning = False   # nothing to fade in
-
-        if visible:
-            self._fade_out(visible, on_done=apply_new)
+        if new_state == 'user' and new_user_id not in ('', 'idle'):
+            incoming = self.user_container
+        elif new_state == 'guest':
+            incoming = self.guest_container
         else:
-            apply_new()
+            incoming = None
+
+        # The peek belongs to whoever was just on screen — drop it outright
+        # rather than sliding it out over a different student's dashboard.
+        self._hide_timetable_peek(animate=False)
+        self.notices_widget.reset_gesture_state()
+        self.guest_notices.reset_gesture_state()
+        if self.kings_panel is not None:
+            self.kings_panel.reset_gesture_state()
+
+        # One student handing over to another reuses the same container, so there
+        # is nothing to dissolve across and it keeps the old two-stage fade. That
+        # is the right language for it anyway: a different person's dashboard
+        # should not appear to grow out of the last one's.
+        if incoming is not None and incoming is visible:
+            def swap():
+                self._prepare(incoming, new_state, new_user_id, fdata)
+                self._fade_in(incoming)
+            self._fade_out(visible, on_done=swap)
+            return
+
+        # Otherwise: whatever is leaving drops to the bottom of the stack so the
+        # arriving screen dissolves in over the top of it. Not raise_() on the
+        # arriving one — that would also lift it over the banner and status dot.
+        if visible is not None:
+            visible.setGraphicsEffect(None)
+            visible.lower()
+
+        if incoming is not None:
+            self._prepare(incoming, new_state, new_user_id, fdata)
+            self._fade_in(incoming, retire=visible)
+
+        elif visible is not None:
+            # Idle: there is nothing to dissolve to, so this one really does fade
+            # to black — which is the intended end state, not a gap.
+            self._fade_out(visible, on_done=self._on_fade_to_idle_done)
+
+        else:
+            self._transitioning = False   # already blank, nothing to animate
+
+    def _prepare(self, container, new_state, new_user_id, fdata):
+        """Fill in and lay out a container before it is faded in."""
+        if container is self.user_container:
+            self.timetable_widget.set_user_id(new_user_id)
+            if self.peek_panel is not None:
+                self.peek_panel.set_user_id(new_user_id)
+            self._apply_user_theme(fdata.get('config', {}))
+            self._apply_user_layout(self.width(), self.height())
+        else:
+            self.timetable_widget.set_user_id('')
+            if self.peek_panel is not None:
+                self.peek_panel.set_user_id('')
+            self._apply_guest_layout(self.width(), self.height())
+
+    def _on_fade_to_idle_done(self):
+        self.user_container.hide()
+        self.guest_container.hide()
+        self.user_container.setGraphicsEffect(None)
+        self.guest_container.setGraphicsEffect(None)
+        self._transitioning = False
 
     def keyPressEvent(self, event):
         pass
@@ -784,6 +832,8 @@ def start_gesture_daemon():
     Set MIRROR_GESTURES=0 to opt out (no camera to spare, or you are running the
     daemon yourself). GESTURE_CAMERA picks the device: an index on a desktop
     webcam, or --rpi for the loopback device the Pi's camera pipeline feeds.
+    GESTURE_FLIP=0/1 sets which physical side of you drives which panel — the
+    daemon reads it directly, so nothing needs passing here.
 
     The daemon is given a pipe on stdin and told to exit when it closes. The
     `finally` block below only runs on a graceful exit, and during a debugging
