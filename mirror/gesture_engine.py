@@ -13,10 +13,10 @@ region your hand is generally in is the region you are interacting with:
 Which physical side of you that corresponds to depends on where the camera is
 mounted; see default_flip().
 
-Holding thumb and index together becomes a click-and-drag: move the held hand
-to scroll and release it after a short, still click to select. Holding an open
-hand at the far-left edge peeks the timetable, which then slides left to reveal
-the King's Week grid underneath it.
+Within a region an open palm engages control: moving it up and down scrolls, and
+touching your thumb and index finger together is a click. Dwelling in the right
+region peeks the timetable, which then slides away to reveal the King's Week grid
+underneath it.
 
 State is published to a JSON file that smart_mirror_pro.py polls, so the
 vision work stays out of the Qt event loop.
@@ -100,8 +100,7 @@ TAP_COOLDOWN_SEC   = 0.6    # ignore repeat taps inside this window
 SCROLL_DEADZONE    = 0.012  # ignore palm jitter below this normalised movement
 SCROLL_GAIN        = 900.0  # normalised palm movement → scroll pixels
 SCROLL_MAX_PX      = 90     # clamp one frame's scroll so a fast wave can't jump
-RIGHT_DWELL_SEC    = 0.45   # deliberate edge hold before opening the side panel
-LEFT_EDGE_TRIGGER  = 0.08   # far-left hold opens the timetable / King's Week panel
+RIGHT_DWELL_SEC    = 0.45   # palm must settle in the right region before peeking
 HEARTBEAT_SEC      = 0.5    # republish presence at least this often
 HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
 
@@ -141,16 +140,15 @@ class GestureEngine:
         self.hand_y = 0.0
         self.last_seen = 0.0
 
-        self.engaged = False          # thumb+index held → drag scroll is active
+        self.engaged = False          # open palm → scroll control active
         self.scroll_anchor_y = None
         self.scroll_delta = 0
-        self.drag_moved = False
 
         self.pinch_start = None       # when the current pinch began
         self.last_tap_time = None     # None = no tap yet, so no cooldown to serve
 
-        self.left_since = None        # when the palm reached the far-left edge
-        self.left_armed = True        # re-arms once the hand leaves that edge
+        self.right_since = None       # when the palm entered the right region
+        self.right_armed = True       # re-arms once the hand leaves the right
 
         self.seq = 0
         self.last_write = 0.0
@@ -260,58 +258,59 @@ class GestureEngine:
         region_changed = (new_region != self.region)
         self.region = new_region
 
-        # Leaving the far-left edge re-arms the deliberate panel reveal.
-        if x > LEFT_EDGE_TRIGGER:
-            self.left_since = None
-            self.left_armed = True
+        # Leaving the right region re-arms the timetable peek.
+        if new_region != REGION_RIGHT:
+            self.right_since = None
+            self.right_armed = True
 
         pinched = self.is_pinching(lm)
+        fingers = self._extended_fingers(lm)
+        open_palm = fingers >= 3 and not pinched
+
         event = None
 
-        # ── Click / drag: hold thumb and index together, then move ───────────
-        # This is intentionally a direct drag rather than a stream of loose
-        # open-palm scroll ticks: every frame moves the target by the distance
-        # the held hand actually travelled, so a student can drag through an
-        # entire list without waiting for any easing or auto-scroll pause.
+        # ── Tap: a short pinch, released ─────────────────────────────────────
         if pinched:
             if self.pinch_start is None:
                 self.pinch_start = now
-                self.engaged = True
-                self.drag_moved = False
-                self.scroll_anchor_y = y
-            elif not region_changed:
-                dy = y - self.scroll_anchor_y
-                if abs(dy) > SCROLL_DEADZONE:
-                    # This is a content drag, not a mouse-wheel gesture: pull
-                    # your held hand down and the list follows it down.
-                    delta = int(max(-SCROLL_MAX_PX,
-                                    min(SCROLL_MAX_PX, -dy * SCROLL_GAIN)))
-                    if delta != 0:
-                        self.scroll_anchor_y = y
-                        self.drag_moved = True
-                        self.scroll_delta = delta
-                        return "scroll"
         else:
             if self.pinch_start is not None:
                 held = now - self.pinch_start
                 self.pinch_start = None
-                was_drag = self.drag_moved
-                self.engaged = False
-                self.drag_moved = False
-                self.scroll_anchor_y = None
                 cooled = (self.last_tap_time is None
                           or now - self.last_tap_time > TAP_COOLDOWN_SEC)
-                if not was_drag and held <= TAP_MAX_SEC and cooled:
+                if held <= TAP_MAX_SEC and cooled:
                     self.last_tap_time = now
                     event = "tap"
 
-        # ── Timetable reveal: deliberate far-left open-hand hold ─────────────
-        if x <= LEFT_EDGE_TRIGGER and not pinched and event is None:
-            if self.left_since is None:
-                self.left_since = now
-            elif self.left_armed and now - self.left_since >= RIGHT_DWELL_SEC:
-                self.left_armed = False
-                event = "enter_left"
+        # ── Scroll: track the palm while an open hand is engaged ──────────────
+        if open_palm:
+            if not self.engaged or region_changed:
+                # Re-anchor on engage and on region change so crossing columns
+                # never emits one huge jump.
+                self.engaged = True
+                self.scroll_anchor_y = y
+            elif event is None:
+                dy = y - self.scroll_anchor_y
+                if abs(dy) > SCROLL_DEADZONE:
+                    # Hand down (y increases) scrolls content down.
+                    delta = int(max(-SCROLL_MAX_PX,
+                                    min(SCROLL_MAX_PX, dy * SCROLL_GAIN)))
+                    if delta != 0:
+                        self.scroll_anchor_y = y
+                        self.scroll_delta = delta
+                        return "scroll"
+        else:
+            self.engaged = False
+            self.scroll_anchor_y = None
+
+        # ── Timetable peek: settle in the right region ────────────────────────
+        if new_region == REGION_RIGHT and event is None:
+            if self.right_since is None:
+                self.right_since = now
+            elif self.right_armed and now - self.right_since >= RIGHT_DWELL_SEC:
+                self.right_armed = False
+                event = "enter_right"
 
         return event
 
@@ -326,9 +325,8 @@ class GestureEngine:
         self.engaged = False
         self.scroll_anchor_y = None
         self.pinch_start = None
-        self.drag_moved = False
-        self.left_since = None
-        self.left_armed = True
+        self.right_since = None
+        self.right_armed = True
         return True
 
     # ── Publishing ───────────────────────────────────────────────────────────
@@ -343,12 +341,7 @@ class GestureEngine:
     def write_status(self, event=None, scroll_delta=0, force=False):
         """Publish state, skipping writes that would tell the mirror nothing new."""
         now = time.time()
-        # Include interaction state as well as position. In particular, the
-        # first pinched frame has no scroll event by design, but the UI needs to
-        # receive it to establish the drag's starting position.
-        edge_hold = self._edge_hold_progress(now)
-        payload = (self.present, self.region, event, self._quantised_position(),
-                   self.engaged, int(edge_hold * 12))
+        payload = (self.present, self.region, event, self._quantised_position())
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -365,12 +358,6 @@ class GestureEngine:
             "hand_y":       round(self.hand_y, 4),
             "event":        event,
             "scroll_delta": scroll_delta,
-            # The UI uses this absolute position while a pinch is held, rather
-            # than adding only the last camera-frame delta it happened to read.
-            # That makes a drag retain its full distance even though Qt polls
-            # this file more slowly than MediaPipe produces frames.
-            "dragging":     self.engaged,
-            "edge_hold":    edge_hold,
             "seq":          self.seq,
             "timestamp":    now,
         }
@@ -391,12 +378,6 @@ class GestureEngine:
                     time.sleep(0.005)
         except Exception as e:
             print(f"[GESTURE] Error writing status: {e}")
-
-    def _edge_hold_progress(self, now):
-        """0..1 progress for the visible far-left reveal indicator."""
-        if self.left_since is None or self.hand_x > LEFT_EDGE_TRIGGER:
-            return 0.0
-        return round(min(1.0, max(0.0, (now - self.left_since) / RIGHT_DWELL_SEC)), 3)
 
     # ── Main loop ────────────────────────────────────────────────────────────
 

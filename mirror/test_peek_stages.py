@@ -142,8 +142,8 @@ def close_mirror(mirror):
 
 
 def reveal(mirror):
-    """Hold at the far-left edge: timetable slides in, King's Week waits below."""
-    mirror._handle_gesture(gesture(region='left', x=0.05, event='enter_left'))
+    """Dwell on the right: the timetable slides in, King's Week waits below."""
+    mirror._handle_gesture(gesture(event='enter_right'))
     settle(mirror)
     return mirror
 
@@ -167,7 +167,7 @@ class TestReveal(unittest.TestCase):
 
     def test_nothing_happens_while_the_mirror_is_idle(self):
         self.mirror._last_state = 'idle'
-        self.mirror._handle_gesture(gesture(region='left', x=0.05, event='enter_left'))
+        self.mirror._handle_gesture(gesture(event='enter_right'))
         self.assertFalse(self.mirror._peek_visible)
         self.assertIsNone(self.mirror.peek_container)
 
@@ -526,7 +526,7 @@ class TestGesturePolling(unittest.TestCase):
             json.dump(payload, f)
 
     def test_a_published_dwell_reveals_the_panel(self):
-        payload = gesture(region='left', x=0.05, event='enter_left')
+        payload = gesture(event='enter_right')
         payload['timestamp'] = self.mirror.last_gesture_timestamp + 10.0
         self._publish(payload)
         self.mirror._poll_gestures()
@@ -534,7 +534,7 @@ class TestGesturePolling(unittest.TestCase):
         self.assertTrue(self.mirror._peek_visible)
 
     def test_a_stale_timestamp_is_ignored(self):
-        payload = gesture(region='left', x=0.05, event='enter_left')
+        payload = gesture(event='enter_right')
         payload['timestamp'] = 5.0
         self.mirror.last_gesture_timestamp = 99.0
         self._publish(payload)
