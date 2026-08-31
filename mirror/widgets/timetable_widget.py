@@ -47,7 +47,7 @@ class TimetableWidget(QFrame):
     def __init__(self, parent=None, api_url='https://api.smartmirror.me', user_id=''):
         super().__init__(parent)
         self.setObjectName("TimetableWidget")
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setStyleSheet("background-color: #000000; border: none;")
         self.api_url = api_url
         self.user_id = user_id
         self.periods = []

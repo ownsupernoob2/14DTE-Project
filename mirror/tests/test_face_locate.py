@@ -7,7 +7,11 @@ conversion between the two — which is where the bug was.
 Run from the mirror/ directory:  python -m unittest test_face_locate
 """
 
+import os
+import sys
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 

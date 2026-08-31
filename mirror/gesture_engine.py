@@ -82,33 +82,22 @@ REGION_CENTER = "center"
 REGION_RIGHT  = "right"
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
-# A pinch is measured as a *fraction of the hand's own size*, never as a raw
-# normalised distance. Landmarks are fractions of the frame, so a hand at arm's
-# length is numerically tiny: a fixed threshold of 0.06 meant a distant hand read
-# as permanently pinched and a hand close to the camera could never pinch at all.
-# Dividing by the palm makes the test the same at any distance.
-#
-# Two thresholds, not one: fingers hovering right on the boundary would otherwise
-# chatter between pinched and open several times a second, firing a burst of
-# taps. You have to close to ENTER and open past EXIT to let go.
 PINCH_ENTER_RATIO  = 0.55   # thumb-index gap / palm size to start a pinch
 PINCH_EXIT_RATIO   = 0.75   # and to release it again
 MIN_PALM_SIZE      = 0.02   # below this the hand is too far away to trust
 
-TAP_MAX_SEC        = 0.6    # pinch held longer than this is a hold, not a tap
-TAP_COOLDOWN_SEC   = 0.6    # ignore repeat taps inside this window
-SCROLL_DEADZONE    = 0.012  # ignore palm jitter below this normalised movement
-SCROLL_GAIN        = 900.0  # normalised palm movement → scroll pixels
-SCROLL_MAX_PX      = 90     # clamp one frame's scroll so a fast wave can't jump
-RIGHT_DWELL_SEC    = 0.45   # palm must settle in the right region before peeking
+TAP_MAX_SEC        = 0.6    # pinch held longer than this without drag is not a tap
+TAP_COOLDOWN_SEC   = 0.4    # ignore repeat taps inside this window
+DRAG_TAP_THRESHOLD = 0.03   # movement threshold during pinch to distinguish tap vs drag
+DRAG_SCROLL_GAIN   = 1100.0 # movement -> scroll pixels
+DRAG_DEADZONE      = 0.0015 # ignore minute jitter below this
+FLING_VELOCITY_SCALE = 600.0 # release velocity multiplier for inertia fling
+
+RIGHT_FAR_EDGE   = 0.80   # hand must be all the way to the right
+RIGHT_DWELL_SEC    = 1.0    # hold hand all the way to the right for 1.0s to fill indicator bar and show timetable
 HEARTBEAT_SEC      = 0.5    # republish presence at least this often
 HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
 
-# The King's Week grid picks a box from the published palm position, so a move
-# has to be published even when nothing else about the state changed. Rounding
-# to a coarse cell keeps that from becoming a write on every single frame — and
-# it is the same coarseness that makes the grid snap cleanly from box to box
-# instead of hovering between two of them.
 POSITION_QUANTUM   = 1.0 / 24
 
 
@@ -140,36 +129,29 @@ class GestureEngine:
         self.hand_y = 0.0
         self.last_seen = 0.0
 
-        self.engaged = False          # open palm → scroll control active
-        self.scroll_anchor_y = None
+        self.pinched = False
+        self.pinch_start = None       # when the current pinch began
+        self.drag_start_y = None
+        self.last_drag_y = None
+        self.drag_dist = 0.0
+        self.drag_velocity = 0.0
+        self.last_frame_time = 0.0
         self.scroll_delta = 0
 
-        self.pinch_start = None       # when the current pinch began
         self.last_tap_time = None     # None = no tap yet, so no cooldown to serve
 
-        self.right_since = None       # when the palm entered the right region
-        self.right_armed = True       # re-arms once the hand leaves the right
+        self.right_since = None       # when the palm entered the far-right region
+        self.right_armed = True       # re-arms once the hand leaves the far-right
+        self.right_dwell_progress = 0.0
 
         self.seq = 0
         self.last_write = 0.0
         self.last_payload = None
 
-        # The scratch file is per-engine. Two daemons sharing one name is not a
-        # hypothetical: orphaned copies pile up from earlier launches, and they
-        # would each create, then replace, then find the other had already moved
-        # the same .tmp — reported as a stream of WinError 5 / WinError 32. The
-        # published file is still shared, which is fine: os.replace is atomic, so
-        # a reader always sees one whole payload from one of the writers.
         self._tmp_file = f"{GESTURE_STATUS_FILE}.{os.getpid()}.{id(self):x}.tmp"
 
     def _init_tracker(self):
-        """Build the MediaPipe hand tracker. Overridden in tests.
-
-        This uses the Tasks API rather than the old `mp.solutions.hands`, which
-        no longer exists: mediapipe 1.x dropped the Solutions package entirely,
-        so `mp.solutions` raises AttributeError and took the whole daemon down
-        with it. Tasks has been available since 0.10, so there is one code path.
-        """
+        """Build the MediaPipe hand tracker. Overridden in tests."""
         if mp is None:
             print("[GESTURE] mediapipe not installed — gesture control disabled.")
             return
@@ -193,35 +175,17 @@ class GestureEngine:
     # ── Geometry helpers ─────────────────────────────────────────────────────
 
     def _distance(self, p1, p2):
-        """Distance between two landmarks in square units.
-
-        x is a fraction of the frame width and y a fraction of its height, so on
-        a 640x480 frame one unit of x is not one unit of y and a diagonal comes
-        out wrong. Scaling x by the aspect ratio fixes that. z is left out
-        entirely: MediaPipe's depth is relative to the wrist, on its own scale,
-        and noisy enough to swamp a thumb-to-index measurement.
-        """
         dx = (p1.x - p2.x) * self.frame_aspect
         dy = p1.y - p2.y
         return math.sqrt(dx * dx + dy * dy)
 
     def _palm_size(self, lm):
-        """A distance-invariant scale for the hand: wrist → middle-finger MCP.
-
-        Both are on the palm, so curling or splaying the fingers does not change
-        it — unlike anything measured to a fingertip.
-        """
         return self._distance(lm[0], lm[9])
 
     def is_pinching(self, lm):
-        """True while the thumb and index finger are touching — the 'click'.
-
-        Ratio, not raw distance, and hysteresis so a gap hovering on the
-        threshold does not rattle out a stream of taps.
-        """
+        """True while the thumb and index finger are touching — the 'click'."""
         palm = self._palm_size(lm)
         if palm < MIN_PALM_SIZE:
-            # Too far away (or a bad detection) for the ratio to mean anything.
             return False
         ratio = self._distance(lm[4], lm[8]) / palm
         threshold = PINCH_EXIT_RATIO if self.pinch_start is not None else PINCH_ENTER_RATIO
@@ -229,18 +193,12 @@ class GestureEngine:
 
     @staticmethod
     def _palm_center(lm):
-        """Average the wrist and the four finger MCPs.
-
-        Steadier than any single landmark: finger tips swing wildly while the
-        palm stays put, and region classification needs to not flicker.
-        """
         pts = [lm[0], lm[5], lm[9], lm[13], lm[17]]
         return (sum(p.x for p in pts) / len(pts),
                 sum(p.y for p in pts) / len(pts))
 
     @staticmethod
     def _extended_fingers(lm):
-        """Count index/middle/ring/pinky tips sitting above their knuckles."""
         pairs = ((8, 5), (12, 9), (16, 13), (20, 17))
         return sum(1 for tip, mcp in pairs if lm[tip].y < lm[mcp].y)
 
@@ -255,62 +213,80 @@ class GestureEngine:
         self.last_seen = now
 
         new_region = classify_region(x)
-        region_changed = (new_region != self.region)
         self.region = new_region
 
-        # Leaving the right region re-arms the timetable peek.
-        if new_region != REGION_RIGHT:
-            self.right_since = None
-            self.right_armed = True
-
         pinched = self.is_pinching(lm)
-        fingers = self._extended_fingers(lm)
-        open_palm = fingers >= 3 and not pinched
-
+        self.pinched = pinched
         event = None
 
-        # ── Tap: a short pinch, released ─────────────────────────────────────
+        # ── Edge Dwell Progress (Indicator Bar on Left or Right Edge) ────────
+        LEFT_FAR_EDGE = 0.15
+        if x <= LEFT_FAR_EDGE or x >= RIGHT_FAR_EDGE:
+            self.dwell_side = 'left' if x <= LEFT_FAR_EDGE else 'right'
+            if self.right_since is None:
+                self.right_since = now
+                self.right_dwell_progress = 0.0
+            else:
+                elapsed = now - self.right_since
+                self.right_dwell_progress = min(1.0, elapsed / RIGHT_DWELL_SEC)
+                if self.right_armed and elapsed >= RIGHT_DWELL_SEC:
+                    self.right_armed = False
+                    event = "enter_right" if self.dwell_side == 'right' else "enter_left"
+        else:
+            self.right_since = None
+            self.right_armed = True
+            self.right_dwell_progress = 0.0
+            self.dwell_side = None
+
+        # ── Pinch-and-drag scrolling & click/tap ─────────────────────────────
         if pinched:
             if self.pinch_start is None:
+                # Start dragging / pinch
                 self.pinch_start = now
+                self.drag_start_y = y
+                self.last_drag_y = y
+                self.drag_dist = 0.0
+                self.drag_velocity = 0.0
+                self.last_frame_time = now
+            else:
+                dy = y - self.last_drag_y
+                dt = max(0.001, now - self.last_frame_time)
+                self.last_frame_time = now
+
+                instant_v = dy / dt
+                self.drag_velocity = 0.7 * self.drag_velocity + 0.3 * instant_v
+                self.drag_dist += abs(dy)
+                self.last_drag_y = y
+
+                if abs(dy) > DRAG_DEADZONE:
+                    delta = int(-dy * DRAG_SCROLL_GAIN)
+                    if delta != 0:
+                        self.scroll_delta = delta
+                        if event is None:
+                            event = "scroll"
         else:
             if self.pinch_start is not None:
                 held = now - self.pinch_start
+                was_drag = self.drag_dist > DRAG_TAP_THRESHOLD
+                released_velocity = self.drag_velocity
+
                 self.pinch_start = None
-                cooled = (self.last_tap_time is None
-                          or now - self.last_tap_time > TAP_COOLDOWN_SEC)
-                if held <= TAP_MAX_SEC and cooled:
-                    self.last_tap_time = now
-                    event = "tap"
+                self.drag_start_y = None
+                self.last_drag_y = None
+                self.drag_dist = 0.0
+                self.drag_velocity = 0.0
 
-        # ── Scroll: track the palm while an open hand is engaged ──────────────
-        if open_palm:
-            if not self.engaged or region_changed:
-                # Re-anchor on engage and on region change so crossing columns
-                # never emits one huge jump.
-                self.engaged = True
-                self.scroll_anchor_y = y
-            elif event is None:
-                dy = y - self.scroll_anchor_y
-                if abs(dy) > SCROLL_DEADZONE:
-                    # Hand down (y increases) scrolls content down.
-                    delta = int(max(-SCROLL_MAX_PX,
-                                    min(SCROLL_MAX_PX, dy * SCROLL_GAIN)))
-                    if delta != 0:
-                        self.scroll_anchor_y = y
-                        self.scroll_delta = delta
-                        return "scroll"
-        else:
-            self.engaged = False
-            self.scroll_anchor_y = None
-
-        # ── Timetable peek: settle in the right region ────────────────────────
-        if new_region == REGION_RIGHT and event is None:
-            if self.right_since is None:
-                self.right_since = now
-            elif self.right_armed and now - self.right_since >= RIGHT_DWELL_SEC:
-                self.right_armed = False
-                event = "enter_right"
+                if not was_drag and held <= TAP_MAX_SEC:
+                    cooled = (self.last_tap_time is None
+                              or now - self.last_tap_time > TAP_COOLDOWN_SEC)
+                    if cooled:
+                        self.last_tap_time = now
+                        if event is None:
+                            event = "tap"
+                elif was_drag and abs(released_velocity) > 0.15:
+                    if event is None:
+                        self.scroll_delta = int(-released_velocity * FLING_VELOCITY_SCALE)
+                        event = "fling"
 
         return event
 
@@ -322,11 +298,15 @@ class GestureEngine:
             return False
         self.present = False
         self.region = None
-        self.engaged = False
-        self.scroll_anchor_y = None
+        self.pinched = False
         self.pinch_start = None
+        self.drag_start_y = None
+        self.last_drag_y = None
+        self.drag_dist = 0.0
+        self.drag_velocity = 0.0
         self.right_since = None
         self.right_armed = True
+        self.right_dwell_progress = 0.0
         return True
 
     # ── Publishing ───────────────────────────────────────────────────────────
@@ -341,7 +321,7 @@ class GestureEngine:
     def write_status(self, event=None, scroll_delta=0, force=False):
         """Publish state, skipping writes that would tell the mirror nothing new."""
         now = time.time()
-        payload = (self.present, self.region, event, self._quantised_position())
+        payload = (self.present, self.region, event, self._quantised_position(), self.pinched, round(self.right_dwell_progress, 2))
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -352,14 +332,17 @@ class GestureEngine:
         self.last_write = now
 
         data = {
-            "present":      self.present,
-            "region":       self.region,
-            "hand_x":       round(self.hand_x, 4),
-            "hand_y":       round(self.hand_y, 4),
-            "event":        event,
-            "scroll_delta": scroll_delta,
-            "seq":          self.seq,
-            "timestamp":    now,
+            "present":              self.present,
+            "region":               self.region,
+            "hand_x":               round(self.hand_x, 4),
+            "hand_y":               round(self.hand_y, 4),
+            "pinched":              self.pinched,
+            "right_dwell_progress": round(self.right_dwell_progress, 3),
+            "dwell_side":           getattr(self, 'dwell_side', None),
+            "event":                event,
+            "scroll_delta":         scroll_delta,
+            "seq":                  self.seq,
+            "timestamp":            now,
         }
         try:
             with open(self._tmp_file, "w") as f:

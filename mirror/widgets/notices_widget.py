@@ -120,8 +120,10 @@ def _make_notice_card(notice):
     lay.setContentsMargins(18, 16, 18, 16)
     lay.setSpacing(6)
 
-    # ── Meta row: CATEGORY · DATE ─────────────────────────────────────────
-    meta_tag = f"URGENT · {date_str.upper()}" if is_urgent else f"{category.upper()} · {date_str.upper()}"
+    # ── Meta row: CATEGORY · DATE · SEE NAME ──────────────────────────────
+    contact = notice.get('contact', '').strip()
+    contact_part = f" · SEE {contact.upper()}" if contact else ""
+    meta_tag = f"URGENT · {date_str.upper()}{contact_part}" if is_urgent else f"{category.upper()} · {date_str.upper()}{contact_part}"
     meta_lbl = QLabel(meta_tag)
     meta_lbl.setStyleSheet(
         f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
@@ -152,16 +154,6 @@ def _make_notice_card(notice):
             "background: transparent; border: none; line-height: 1.45;"
         )
         lay.addWidget(body_lbl)
-
-    # ── Contact (if present) ───────────────────────────────────────────────
-    contact = notice.get('contact', '').strip()
-    if contact:
-        contact_lbl = QLabel(f"See {contact}")
-        contact_lbl.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
-            "font-size: 13px; color: #8f8f8f; background: transparent; border: none; margin-top: 4px;"
-        )
-        lay.addWidget(contact_lbl)
 
     return card
 
@@ -297,7 +289,7 @@ class NoticesWidget(QFrame):
         """
         sb = self.scroll_area.verticalScrollBar()
         sb.setValue(sb.value() + int(delta_y))
-        self._auto_scroll_paused_until = time.time() + 6.0
+        self._auto_scroll_paused_until = time.time() + 10.0
 
     @property
     def scroll_paused(self):
@@ -331,36 +323,23 @@ class NoticesWidget(QFrame):
     def _apply_frame_style(self):
         """The panel's border is the whole gesture affordance.
 
-        Three states, no text: resting, your hand is over this panel, and you
-        tapped to hold the list still. A solid brighter edge for a hold reads as
-        "this is fixed" without a chip in the header announcing it.
+        Uses constant border width and solid black background so the inner
+        content never shifts and background remains cleanly dark.
+        Outline is clean white (#ffffff) when active or paused.
         """
-        if self._scroll_paused and self._gesture_active:
-            border = '2px solid #7dd3fc'
-        elif self._gesture_active:
-            border = '2px solid #0284c7'
-        elif self._scroll_paused:
-            border = '1px solid #38bdf8'
+        if self._scroll_paused or self._gesture_active:
+            border = '2px solid #ffffff'
         else:
-            border = None
+            border = '2px solid transparent'
 
-        if border is not None:
-            self.setStyleSheet("""
-                #NoticesWidget {
-                    background-color: #030a12;
-                    border: %s;
-                    border-radius: 6px;
-                }
-            """ % border)
-        else:
-            self.setStyleSheet("""
-                #NoticesWidget {
-                    background-color: #000000;
-                    border: none;
-                    border-right: 1px solid #1c1c1c;
-                    border-radius: 0px;
-                }
-            """)
+        self.setStyleSheet(f"""
+            #NoticesWidget {{
+                background-color: #000000;
+                border: {border};
+                border-right: 1px solid #1c1c1c;
+                border-radius: 6px;
+            }}
+        """)
 
     def apply_theme(self, primary_color, secondary_color, font_family):
         pass
@@ -481,7 +460,7 @@ class NoticesWidget(QFrame):
 
     def _auto_scroll_tick(self):
         now = time.time()
-        if self._scroll_paused or now < self._auto_scroll_paused_until:
+        if self._scroll_paused or self._gesture_active or now < self._auto_scroll_paused_until:
             return
 
         sb = self.scroll_area.verticalScrollBar()

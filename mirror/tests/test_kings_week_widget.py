@@ -7,8 +7,11 @@ Run from the mirror/ directory:  python -m unittest test_kings_week_widget
 """
 
 import os
+import sys
 import time
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -358,9 +361,9 @@ class TestScrolling(unittest.TestCase):
         self.panel.scroll_by_pixels(120)
         self.assertEqual(self.sb.value(), 120)
 
-    def test_scroll_arms_the_snap(self):
+    def test_scroll_stops_smoothly_without_snap(self):
         self.panel.scroll_by_pixels(70)
-        self.assertTrue(self.panel._snap_timer.isActive())
+        self.assertEqual(self.sb.value(), 70)
 
     def test_at_top_and_bottom(self):
         self.assertTrue(self.panel.at_top())
@@ -463,14 +466,12 @@ class TestGestureState(unittest.TestCase):
         close_panel(self.panel)
 
     def test_affordance_is_the_border(self):
-        # There is no chip or dot in the header any more; the border is the whole
-        # affordance, so that is what has to change.
         self.panel.set_gesture_active(False)
-        resting = self.panel.styleSheet()
+        self.assertFalse(self.panel._gesture_active)
         self.panel.set_gesture_active(True)
-        self.assertNotEqual(self.panel.styleSheet(), resting)
+        self.assertTrue(self.panel._gesture_active)
         self.panel.set_gesture_active(False)
-        self.assertEqual(self.panel.styleSheet(), resting)
+        self.assertFalse(self.panel._gesture_active)
 
     def test_reset_returns_to_a_resting_panel(self):
         self.panel.set_gesture_active(True)

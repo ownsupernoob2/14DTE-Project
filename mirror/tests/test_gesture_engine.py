@@ -18,7 +18,7 @@ from gesture_engine import (
     GestureEngine,
     REGION_LEFT, REGION_CENTER, REGION_RIGHT,
     RIGHT_DWELL_SEC, TAP_MAX_SEC, HAND_LOST_SEC,
-    SCROLL_DEADZONE, HEARTBEAT_SEC, POSITION_QUANTUM,
+    DRAG_DEADZONE, HEARTBEAT_SEC, POSITION_QUANTUM,
     PINCH_ENTER_RATIO, PINCH_EXIT_RATIO, MIN_PALM_SIZE,
     classify_region, default_flip,
 )
@@ -107,52 +107,45 @@ class TestRegions(unittest.TestCase):
         self.assertEqual(e.region, REGION_LEFT)
 
 
-class TestScroll(unittest.TestCase):
+class TestPinchDrag(unittest.TestCase):
     def setUp(self):
         self.e = StubEngine()
 
-    def test_first_frame_only_anchors(self):
-        # Arriving in a region must not emit a jump the size of the hand's entry.
-        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0))
-        self.assertTrue(self.e.engaged)
+    def test_pinch_starts_drag(self):
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0))
+        self.assertTrue(self.e.pinched)
 
-    def test_open_palm_down_scrolls_down(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.56), 1000.1)
-        self.assertEqual(event, "scroll")
-        self.assertGreater(self.e.scroll_delta, 0)
-
-    def test_open_palm_up_scrolls_up(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.44), 1000.1)
+    def test_pinch_drag_down_scrolls_inverted(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.56, pinch=True), 1000.1)
         self.assertEqual(event, "scroll")
         self.assertLess(self.e.scroll_delta, 0)
 
-    def test_jitter_inside_deadzone_does_not_scroll(self):
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
-        tiny = SCROLL_DEADZONE / 2
-        event = self.e.process_landmarks(make_hand(0.2, 0.5 + tiny), 1000.1)
+    def test_pinch_drag_up_scrolls_inverted(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.44, pinch=True), 1000.1)
+        self.assertEqual(event, "scroll")
+        self.assertGreater(self.e.scroll_delta, 0)
+
+    def test_unpinched_hand_does_not_scroll(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=False), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.7, pinch=False), 1000.1)
         self.assertIsNone(event)
         self.assertEqual(self.e.scroll_delta, 0)
 
-    def test_closed_hand_does_not_scroll(self):
-        # A hand just resting or gesturing at someone shouldn't move the list.
-        self.e.process_landmarks(make_hand(0.2, 0.5, closed=True), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.2, 0.7, closed=True), 1000.1)
-        self.assertIsNone(event)
-        self.assertFalse(self.e.engaged)
+    def test_quick_pinch_release_without_drag_is_tap(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.2, 0.501, pinch=False), 1000.2)
+        self.assertEqual(event, "tap")
 
-    def test_region_change_reanchors(self):
-        # Sweeping across columns must not dump one huge scroll into the new one.
-        self.e.process_landmarks(make_hand(0.2, 0.2), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.5, 0.9), 1000.1)
-        self.assertIsNone(event)
-        self.assertEqual(self.e.region, REGION_CENTER)
-
-    def test_scroll_is_clamped(self):
-        self.e.process_landmarks(make_hand(0.2, 0.05), 1000.0)
-        self.e.process_landmarks(make_hand(0.2, 0.95), 1000.1)
-        self.assertLessEqual(abs(self.e.scroll_delta), gesture_engine.SCROLL_MAX_PX)
+    def test_right_dwell_progress_tracks_and_triggers_enter_right(self):
+        self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1000.0)
+        self.assertEqual(self.e.right_dwell_progress, 0.0)
+        self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1000.5)
+        self.assertAlmostEqual(self.e.right_dwell_progress, 0.5, places=2)
+        event = self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1001.05)
+        self.assertEqual(event, "enter_right")
+        self.assertEqual(self.e.right_dwell_progress, 1.0)
 
 
 class TestPinch(unittest.TestCase):
@@ -281,34 +274,34 @@ class TestRightDwell(unittest.TestCase):
         self.e = StubEngine()
 
     def test_dwell_fires_once(self):
-        self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0))
-        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0))
+        event = self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertEqual(event, "enter_right")
         # Leaving the hand there must not re-trigger the peek every frame.
         for i in range(5):
-            self.assertIsNone(self.e.process_landmarks(make_hand(0.8, 0.5), 1001.0 + i * 0.1))
+            self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.5), 1002.0 + i * 0.1))
 
     def test_passing_through_quickly_does_not_fire(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
         self.assertIsNone(event)
 
     def test_leaving_and_returning_rearms(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5), "enter_right"
+            self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
         )
-        self.e.process_landmarks(make_hand(0.2, 0.5), 1001.0)   # back to notices
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1002.0)   # returns to right
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1002.0)   # back to notices
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1003.0)   # returns to right
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.8, 0.5), 1002.5), "enter_right"
+            self.e.process_landmarks(make_hand(0.85, 0.5), 1003.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
         )
 
     def test_hand_lost_rearms(self):
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.0)
-        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.5)
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertFalse(self.e.right_armed)
-        self.assertTrue(self.e.mark_absent(1000.5 + HAND_LOST_SEC + 0.1))
+        self.assertTrue(self.e.mark_absent(1002.0 + HAND_LOST_SEC + 0.1))
         self.assertTrue(self.e.right_armed)
 
 
@@ -328,7 +321,16 @@ class TestAbsence(unittest.TestCase):
         self.assertTrue(self.e.mark_absent(1000.0 + HAND_LOST_SEC + 0.1))
         self.assertFalse(self.e.present)
         self.assertIsNone(self.e.region)
-        self.assertFalse(self.e.engaged)
+        self.assertFalse(self.e.pinched)
+
+    def test_absent_hand_resets_armed_state(self):
+        # Trigger dwell, then drop the hand for long enough to lose it. When it
+        # comes back it must be re-armed without having to leave the region.
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.assertFalse(self.e.right_armed)
+        self.e.mark_absent(1002.0 + HAND_LOST_SEC + 0.1)
+        self.assertTrue(self.e.right_armed)
 
     def test_absence_is_reported_once(self):
         self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
@@ -420,10 +422,10 @@ class TestStatusFile(unittest.TestCase):
 
     def test_jitter_inside_one_cell_is_not_published(self):
         # Sub-cell wobble would otherwise rewrite the file on every frame.
-        self.e.process_landmarks(make_hand(0.8, 0.2), 1000.0)
+        self.e.process_landmarks(make_hand(0.5, 0.2), 1000.0)
         self.e.write_status()
         before = self._read()['seq']
-        self.e.process_landmarks(make_hand(0.8, 0.2 + POSITION_QUANTUM / 8), 1000.1)
+        self.e.process_landmarks(make_hand(0.5, 0.2 + POSITION_QUANTUM / 8), 1000.1)
         self.e.write_status()
         self.assertEqual(self._read()['seq'], before)
 

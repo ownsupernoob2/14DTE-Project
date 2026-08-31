@@ -3,7 +3,11 @@
 Run from the mirror/ directory:  python -m unittest test_barcode_reader
 """
 
+import os
+import sys
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from barcode_reader import (
     BarcodeReader,

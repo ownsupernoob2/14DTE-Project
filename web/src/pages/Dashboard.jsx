@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import DailyNoticesWidget from '../components/DailyNoticesWidget'
 import TimetableWidget from '../components/TimetableWidget'
+import KingsWeekWidget from '../components/KingsWeekWidget'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
@@ -109,7 +110,19 @@ export default function Dashboard() {
           </motion.div>
         )}
 
-        {(activeTab === 'dashboard' || (activeTab !== 'notices' && activeTab !== 'timetable')) && (
+        {activeTab === 'kings-week' && (
+          <motion.div 
+            key="kings-week-screen"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="flex-1 bg-[#000000] overflow-y-auto min-h-0 flex flex-col"
+          >
+            <KingsWeekWidget />
+          </motion.div>
+        )}
+
+        {(activeTab === 'dashboard' || (activeTab !== 'notices' && activeTab !== 'timetable' && activeTab !== 'kings-week')) && (
           <div className="grid grid-cols-1 md:grid-cols-[48%_52%] flex-1 min-h-0 overflow-hidden">
             {/* LEFT: NOTICES PANEL */}
             <motion.section 
