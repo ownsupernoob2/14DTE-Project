@@ -111,6 +111,14 @@ class GestureEngine:
         self.last_write = 0.0
         self.last_payload = None
 
+        # The scratch file is per-engine. Two daemons sharing one name is not a
+        # hypothetical: orphaned copies pile up from earlier launches, and they
+        # would each create, then replace, then find the other had already moved
+        # the same .tmp — reported as a stream of WinError 5 / WinError 32. The
+        # published file is still shared, which is fine: os.replace is atomic, so
+        # a reader always sees one whole payload from one of the writers.
+        self._tmp_file = f"{GESTURE_STATUS_FILE}.{os.getpid()}.{id(self):x}.tmp"
+
     def _init_tracker(self):
         """Build the MediaPipe hand tracker. Overridden in tests.
 
@@ -280,10 +288,20 @@ class GestureEngine:
             "timestamp":    now,
         }
         try:
-            tmp = GESTURE_STATUS_FILE + ".tmp"
-            with open(tmp, "w") as f:
+            with open(self._tmp_file, "w") as f:
                 json.dump(data, f)
-            os.replace(tmp, GESTURE_STATUS_FILE)
+            # The mirror briefly holds a read handle on the target, and on
+            # Windows os.replace() onto an open file raises PermissionError, so
+            # a frame is occasionally dropped rather than published. Retry
+            # briefly; the next frame is only 30ms away, so never block long.
+            for attempt in range(3):
+                try:
+                    os.replace(self._tmp_file, GESTURE_STATUS_FILE)
+                    break
+                except PermissionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.005)
         except Exception as e:
             print(f"[GESTURE] Error writing status: {e}")
 

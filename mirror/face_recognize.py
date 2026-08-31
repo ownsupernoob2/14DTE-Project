@@ -130,6 +130,56 @@ def download_and_load_index():
             print(f"[FAISS] Error compiling local index: {e}")
 
 
+# The Haar cascade the fallback uses. Built once and shared: loading the XML
+# costs a few milliseconds, which is not something to pay on every frame.
+_fallback_cascade = None
+
+
+def _haar_locations(gray):
+    """Haar face boxes in face_recognition's (top, right, bottom, left) order."""
+    global _fallback_cascade
+    if _fallback_cascade is None:
+        _fallback_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+    boxes = _fallback_cascade.detectMultiScale(gray, 1.1, 4)
+    return [(y, x + w, y + h, x) for (x, y, w, h) in boxes]
+
+
+def locate_faces(rgb_frame):
+    """Find faces, trying progressively more tolerant detectors.
+
+    dlib's HOG detector — face_recognition's default — is strict about pose. It
+    reads a known-good frontal portrait perfectly (7 faces in dlib's own test
+    image) but returns nothing for a head tilted back, chin up, or eyes shut,
+    which is exactly how somebody stands at a mirror. The Haar cascade in the
+    capture loop is far more forgiving, so it would report `detected=True` while
+    this path printed "No face detected in frame." and recognition never even
+    started.
+
+    So: HOG first, because its boxes frame a face the way the encoder was
+    trained to expect; then HOG upsampled once, which catches a face that is
+    simply small in frame; then Haar, which gets a usable box out of a pose
+    dlib will not accept at all. Encodings from a Haar box are a little looser,
+    so this is a last resort rather than the default.
+    """
+    locations = face_recognition.face_locations(rgb_frame)
+    if locations:
+        return locations, "hog"
+
+    locations = face_recognition.face_locations(rgb_frame,
+                                                number_of_times_to_upsample=1)
+    if locations:
+        return locations, "hog-upsampled"
+
+    gray = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2GRAY)
+    locations = _haar_locations(gray)
+    if locations:
+        return locations, "haar"
+
+    return [], "none"
+
+
 def verify_face_worker(frame, on_result):
     """
     Background thread: Perform face verification natively in RAM using FAISS
@@ -149,13 +199,19 @@ def verify_face_worker(frame, on_result):
 
         # Detect all face locations in the frame first
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations = face_recognition.face_locations(rgb_frame)
+        face_locations, detector = locate_faces(rgb_frame)
         total_faces = len(face_locations)
 
         if total_faces == 0:
             print("[FAISS] No face detected in frame.")
             on_result(None, [], None)
             return
+
+        if detector != "hog":
+            # Worth saying out loud: a run that only ever matches via the
+            # fallback means the strict detector is not seeing the student, and
+            # the looser box may be costing match accuracy.
+            print(f"[FAISS] Located the face with the {detector} fallback.")
 
         # Calculate bounding box area for each detected face
         areas = []
@@ -317,8 +373,10 @@ def write_face_status(state, detected, faces_count,
     }
     # Keep .tmp in same directory as the target so os.replace() is atomic
     # on every platform and never triggers a cross-device / access-denied error.
+    # The name carries the pid: two daemons left running from separate launches
+    # would otherwise fight over one scratch file and both fail to publish.
     target_dir = os.path.dirname(os.path.abspath(FACE_DATA_FILE))
-    tmp = os.path.join(target_dir, 'face_status.tmp')
+    tmp = os.path.join(target_dir, f'face_status.{os.getpid()}.tmp')
     try:
         with open(tmp, 'w') as f:
             json.dump(data, f)

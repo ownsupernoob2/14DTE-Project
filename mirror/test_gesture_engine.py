@@ -286,6 +286,53 @@ class TestStatusFile(unittest.TestCase):
         self.assertEqual(self._read()['seq'], before)
 
 
+class TestConcurrentWriters(unittest.TestCase):
+    """Two daemons publishing at once must not trip over each other.
+
+    Orphaned daemons pile up in practice — the mirror spawns one per launch and
+    only reaps it on a clean exit — and when they shared a single
+    `gesture_status.json.tmp` the result was a steady stream of
+    `WinError 5: Access is denied` as each replaced a scratch file the other had
+    already moved. Every engine now writes its own, keyed by pid.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self._orig = gesture_engine.GESTURE_STATUS_FILE
+        gesture_engine.GESTURE_STATUS_FILE = os.path.join(self.dir,
+                                                          'gesture_status.json')
+
+    def tearDown(self):
+        gesture_engine.GESTURE_STATUS_FILE = self._orig
+
+    def test_two_engines_do_not_share_a_scratch_file(self):
+        a, b = StubEngine(), StubEngine()
+        # Same process, so the pid alone would collide — the name has to be
+        # unique per engine, not merely per interpreter.
+        self.assertNotEqual(a._tmp_file, b._tmp_file)
+
+    def test_interleaved_writes_all_land(self):
+        a, b = StubEngine(), StubEngine()
+        a.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        b.process_landmarks(make_hand(0.8, 0.5), 1000.0)
+
+        # Interleave so each one's scratch file exists while the other replaces.
+        for i in range(5):
+            a.write_status(event='tap')
+            b.write_status(event='tap')
+            with open(gesture_engine.GESTURE_STATUS_FILE) as f:
+                # Never a truncated or half-written payload, whoever won.
+                self.assertIn(json.load(f)['region'],
+                              (REGION_LEFT, REGION_RIGHT))
+
+    def test_the_scratch_file_does_not_outlive_the_write(self):
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        e.write_status()
+        self.assertFalse(os.path.exists(e._tmp_file),
+                         'the scratch file should have been renamed away')
+
+
 class TestTracker(unittest.TestCase):
     """The one part every other test stubs out: building the real tracker.
 
