@@ -93,6 +93,7 @@ The server is the central hub. It handles authentication, stores widget layouts 
 | **Widget Storage** | Each user's widget layout is saved as `data/<user_id>_widgets.json`; CRUD via REST endpoints |
 | **Notices** | Periodically fetches and caches school daily notices (`fetch_notices.py`) |
 | **Timetable** | Parses ICS calendar URLs and returns today's/weekly schedule |
+| **King's Week** | Hourly scrape of the school's weekly publication (`handlers_kingsweek.go`): the edition list comes from `kingshigh.school.nz`, and the latest edition's articles and images from the `hail.to` publication behind it. Cached to `data/kings_week.json` and served from memory |
 
 ### Python Scripts
 
@@ -126,6 +127,7 @@ GET    /api/dashboard/widgets       — Get your widget layout
 PUT    /api/dashboard/widgets/bulk  — Save your full widget layout
 GET    /api/notices                 — Get cached school notices
 GET    /api/timetable               — Get today's/weekly timetable
+GET    /api/kings-week              — Get the scraped King's Week edition + articles
 ```
 
 ### File Storage Layout
@@ -148,12 +150,13 @@ server/
 
 **Technology:** Python, Pygame, OpenCV — designed to run on a Raspberry Pi (or Windows for development)
 
-The mirror software runs on a Raspberry Pi hidden behind a two-way mirror. It runs two processes simultaneously:
+The mirror software runs on a Raspberry Pi hidden behind a two-way mirror. It runs three processes simultaneously:
 
 | Process | Script | Role |
 |---|---|---|
 | **Face Recognition Daemon** | `face_recognize.py` | Reads camera frames, detects faces, POSTs to the server, writes a state JSON file |
 | **Mirror UI** | `smart_mirror_pro.py` | Reads the state JSON file and renders the user's widgets on screen |
+| **Gesture Daemon** | `gesture_engine.py` | Tracks the hand with MediaPipe and writes a gesture JSON file. Started by the UI, not launched separately |
 
 ### Face Recognition Daemon (`face_recognize.py`)
 
@@ -265,6 +268,8 @@ VITE_AUTH0_CLIENT_ID=your_client_id
 ```
 API_URL=https://api.smartmirror.me
 MIRROR_WINDOWED=1   # set to 1 for windowed dev mode
+MIRROR_GESTURES=0   # set to 0 to stop the UI starting the gesture daemon
+GESTURE_CAMERA=0    # webcam index for gestures (default: 0, or the Pi loopback)
 ```
 
 ---
@@ -288,6 +293,7 @@ MIRROR_WINDOWED=1   # set to 1 for windowed dev mode
 │   ├── verify.py           # Face verifier (Python)
 │   ├── notices.go          # School notices handler
 │   ├── timetable.go        # ICS timetable parser
+│   ├── handlers_kingsweek.go # King's Week scraper (school site + hail.to)
 │   ├── encodings/          # Per-user face encoding pickles
 │   └── data/               # Per-user widget layout JSON files
 │

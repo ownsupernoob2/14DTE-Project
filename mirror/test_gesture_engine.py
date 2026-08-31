@@ -16,7 +16,7 @@ from gesture_engine import (
     GestureEngine,
     REGION_LEFT, REGION_CENTER, REGION_RIGHT,
     RIGHT_DWELL_SEC, TAP_MAX_SEC, HAND_LOST_SEC,
-    SCROLL_DEADZONE, HEARTBEAT_SEC,
+    SCROLL_DEADZONE, HEARTBEAT_SEC, POSITION_QUANTUM,
     classify_region,
 )
 
@@ -263,6 +263,79 @@ class TestStatusFile(unittest.TestCase):
         t1 = self._read()['timestamp']
         self.e.write_status(event="tap")
         self.assertGreaterEqual(self._read()['timestamp'], t1)
+
+    def test_moving_a_whole_cell_is_published(self):
+        # The King's Week grid picks a box from hand_y, so a real move has to
+        # reach the mirror without waiting for the heartbeat.
+        self.e.process_landmarks(make_hand(0.8, 0.2), 1000.0)
+        self.e.write_status()
+        before = self._read()
+        self.e.process_landmarks(make_hand(0.8, 0.2 + POSITION_QUANTUM * 2), 1000.1)
+        self.e.write_status()
+        after = self._read()
+        self.assertGreater(after['seq'], before['seq'])
+        self.assertGreater(after['hand_y'], before['hand_y'])
+
+    def test_jitter_inside_one_cell_is_not_published(self):
+        # Sub-cell wobble would otherwise rewrite the file on every frame.
+        self.e.process_landmarks(make_hand(0.8, 0.2), 1000.0)
+        self.e.write_status()
+        before = self._read()['seq']
+        self.e.process_landmarks(make_hand(0.8, 0.2 + POSITION_QUANTUM / 8), 1000.1)
+        self.e.write_status()
+        self.assertEqual(self._read()['seq'], before)
+
+
+class TestTracker(unittest.TestCase):
+    """The one part every other test stubs out: building the real tracker.
+
+    Every test here overrides _init_tracker, so the daemon crashed on startup for
+    a long time without a single failure — it used mediapipe's Solutions API,
+    which 1.x removed, so `mp.solutions.hands` raised AttributeError before the
+    camera was ever opened and nothing was ever published. Skipped rather than
+    failed where mediapipe or the model file is absent, since the suite is meant
+    to run without either.
+    """
+
+    def test_the_real_tracker_builds(self):
+        if gesture_engine.mp is None:
+            self.skipTest('mediapipe not installed')
+        if not os.path.exists(gesture_engine.MODEL_PATH):
+            self.skipTest(f'{gesture_engine.MODEL_PATH} not downloaded')
+
+        engine = GestureEngine()          # not StubEngine — the real thing
+        try:
+            self.assertIsNotNone(
+                engine.tracker,
+                'the hand tracker did not build, so the daemon would exit at once'
+            )
+        finally:
+            if engine.tracker is not None:
+                engine.tracker.close()
+
+    def test_a_missing_model_disables_gestures_without_raising(self):
+        real = gesture_engine.MODEL_PATH
+        gesture_engine.MODEL_PATH = os.path.join(tempfile.gettempdir(),
+                                                 'definitely-not-a-model.task')
+        try:
+            engine = GestureEngine()      # must not raise
+            self.assertIsNone(engine.tracker)
+        finally:
+            gesture_engine.MODEL_PATH = real
+
+
+class TestCameraArgs(unittest.TestCase):
+    """--rpi / --camera-id, matching face_recognize.py's flags."""
+
+    def test_rpi_reads_the_loopback_device(self):
+        self.assertEqual(gesture_engine.parse_args(['--rpi']),
+                         gesture_engine.RPI_CAMERA)
+
+    def test_a_webcam_index_comes_back_as_an_int(self):
+        self.assertEqual(gesture_engine.parse_args(['--camera-id', '4']), 4)
+
+    def test_the_default_is_the_first_webcam(self):
+        self.assertEqual(gesture_engine.parse_args([]), 0)
 
 
 if __name__ == '__main__':
