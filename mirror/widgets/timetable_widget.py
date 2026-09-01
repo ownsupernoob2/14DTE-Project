@@ -68,8 +68,11 @@ class TimetableWidget(QFrame):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 20, 0, 10)
+        lay.setContentsMargins(16, 20, 16, 20)
         lay.setSpacing(28)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lay.addStretch(1)
 
         # ── CURRENT CLASS BLOCK ──────────────────────────────────────────
         current_box = QWidget(self)
@@ -77,8 +80,10 @@ class TimetableWidget(QFrame):
         c_lay = QVBoxLayout(current_box)
         c_lay.setContentsMargins(0, 0, 0, 0)
         c_lay.setSpacing(8)
+        c_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.eyebrow_lbl = QLabel("CURRENT CLASS", current_box)
+        self.eyebrow_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.eyebrow_lbl.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 700; "
             "letter-spacing: 2px; color: #4fc3ff; text-transform: uppercase;"
@@ -86,6 +91,7 @@ class TimetableWidget(QFrame):
         c_lay.addWidget(self.eyebrow_lbl)
 
         self.subject_lbl = QLabel("13DTE (4)", current_box)
+        self.subject_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.subject_lbl.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 96px; font-weight: 700; "
             "color: #ffffff; line-height: 0.95; margin: 0; padding: 0;"
@@ -96,13 +102,17 @@ class TimetableWidget(QFrame):
         details_row = QHBoxLayout()
         details_row.setContentsMargins(0, 12, 0, 0)
         details_row.setSpacing(44)
+        details_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Room
         room_box = QVBoxLayout()
         room_box.setSpacing(4)
+        room_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         r_k = QLabel("ROOM", current_box)
+        r_k.setAlignment(Qt.AlignmentFlag.AlignCenter)
         r_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.room_v = QLabel("T5", current_box)
+        self.room_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.room_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
         room_box.addWidget(r_k)
         room_box.addWidget(self.room_v)
@@ -111,9 +121,12 @@ class TimetableWidget(QFrame):
         # Ends
         ends_box = QVBoxLayout()
         ends_box.setSpacing(4)
+        ends_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         e_k = QLabel("ENDS", current_box)
+        e_k.setAlignment(Qt.AlignmentFlag.AlignCenter)
         e_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.ends_v = QLabel("10:00am", current_box)
+        self.ends_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ends_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
         ends_box.addWidget(e_k)
         ends_box.addWidget(self.ends_v)
@@ -122,17 +135,18 @@ class TimetableWidget(QFrame):
         # Left
         left_box = QVBoxLayout()
         left_box.setSpacing(4)
+        left_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_k = QLabel("LEFT", current_box)
+        l_k.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.left_v = QLabel("68m", current_box)
+        self.left_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
         left_box.addWidget(l_k)
         left_box.addWidget(self.left_v)
         details_row.addLayout(left_box)
 
-        details_row.addStretch(1)
         c_lay.addLayout(details_row)
-
         lay.addWidget(current_box)
 
         # ── NEXT CLASS BLOCK ─────────────────────────────────────────────
@@ -141,13 +155,14 @@ class TimetableWidget(QFrame):
         next_box.setStyleSheet("""
             #NextBlock {
                 border-top: 1px solid #1c1c1c;
-                padding-top: 24px;
+                padding-top: 20px;
                 background: transparent;
             }
         """)
         n_lay = QHBoxLayout(next_box)
         n_lay.setContentsMargins(0, 16, 0, 0)
         n_lay.setSpacing(20)
+        n_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         next_eyebrow = QLabel("NEXT", next_box)
         next_eyebrow.setStyleSheet(
@@ -164,7 +179,6 @@ class TimetableWidget(QFrame):
         self.next_meta_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #d0d0d0;")
         n_lay.addWidget(self.next_meta_lbl)
 
-        n_lay.addStretch(1)
         lay.addWidget(next_box)
         lay.addStretch(1)
 

@@ -93,8 +93,8 @@ DRAG_SCROLL_GAIN   = 1100.0 # movement -> scroll pixels
 DRAG_DEADZONE      = 0.0015 # ignore minute jitter below this
 FLING_VELOCITY_SCALE = 600.0 # release velocity multiplier for inertia fling
 
-RIGHT_FAR_EDGE   = 0.80   # hand must be all the way to the right
-RIGHT_DWELL_SEC    = 1.0    # hold hand all the way to the right for 1.0s to fill indicator bar and show timetable
+RIGHT_FAR_EDGE     = 0.72   # right region dwell threshold
+RIGHT_DWELL_SEC    = 1.0    # hold hand in right region for 1.0s to toggle timetable / kings week
 HEARTBEAT_SEC      = 0.5    # republish presence at least this often
 HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
 
@@ -219,10 +219,9 @@ class GestureEngine:
         self.pinched = pinched
         event = None
 
-        # ── Edge Dwell Progress (Indicator Bar on Left or Right Edge) ────────
-        LEFT_FAR_EDGE = 0.15
-        if x <= LEFT_FAR_EDGE or x >= RIGHT_FAR_EDGE:
-            self.dwell_side = 'left' if x <= LEFT_FAR_EDGE else 'right'
+        # ── Edge Dwell Progress (Right side only) ─────────────────────────
+        if x >= RIGHT_FAR_EDGE:
+            self.dwell_side = 'right'
             if self.right_since is None:
                 self.right_since = now
                 self.right_dwell_progress = 0.0
@@ -231,7 +230,12 @@ class GestureEngine:
                 self.right_dwell_progress = min(1.0, elapsed / RIGHT_DWELL_SEC)
                 if self.right_armed and elapsed >= RIGHT_DWELL_SEC:
                     self.right_armed = False
-                    event = "enter_right" if self.dwell_side == 'right' else "enter_left"
+                    self._last_dwell_trigger = now
+                    event = "enter_right"
+                elif not self.right_armed and (now - getattr(self, '_last_dwell_trigger', 0)) > 1.8:
+                    # Allow continuous re-arming if user keeps hand in zone
+                    self.right_armed = True
+                    self.right_since = now
         else:
             self.right_since = None
             self.right_armed = True

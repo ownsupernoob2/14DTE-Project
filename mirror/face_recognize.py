@@ -27,13 +27,25 @@ import os
 import sys
 import threading
 import time
-import re
-import pytesseract
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 import cv2
 import requests
 import numpy as np
-import face_recognition
+try:
+    import face_recognition
+except ImportError:
+    class _DummyFaceRecognition:
+        @staticmethod
+        def face_locations(*args, **kwargs):
+            return []
+        @staticmethod
+        def face_encodings(*args, **kwargs):
+            return []
+    face_recognition = _DummyFaceRecognition
 try:
     import faiss
 except ImportError:
@@ -401,6 +413,8 @@ def main():
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
     parser.add_argument('--camera-id', default=4, type=int,
                         help="Webcam index for desktop/dev mode (default: 4)")
+    parser.add_argument('--enable-camera-barcode', action='store_true',
+                        help="Enable legacy camera frame student ID barcode sign-in")
     parser.add_argument('--no-barcode', action='store_true',
                         help="Disable student ID barcode sign-in")
     args = parser.parse_args()
@@ -416,10 +430,10 @@ def main():
 
     cap = open_camera(args.rpi, args.camera_id)
 
-    # ── Barcode sign-in ──────────────────────────────────────────────────────
+    # ── Barcode sign-in (camera decoding is off by default since physical scanner acts as keyboard) ──
     barcode_reader = None
-    barcode_backend = 'disabled'
-    if not args.no_barcode:
+    barcode_backend = 'disabled (using physical scanner input)'
+    if args.enable_camera_barcode and not args.no_barcode:
         reader = BarcodeReader()
         if reader.available:
             barcode_reader = reader

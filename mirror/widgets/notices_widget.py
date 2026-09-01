@@ -90,27 +90,57 @@ def _make_notice_card(notice):
     is_urgent = notice.get('importance', 'normal') == 'high'
     is_medium = category in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']
 
+    title = notice.get('title', category)
+    body_raw = notice.get('notice', '')
+    body_text = strip_html(body_raw)
+    combined = f"{title} {body_text} {category}".lower()
+
+    is_room_change = (
+        'room change' in combined or
+        'room changes' in combined or
+        'relocated' in combined or
+        'relocation' in combined or
+        'class change' in combined or
+        'moved to room' in combined or
+        category.lower() in ('room change', 'room changes', 'relocations')
+    )
+
+    card_bg = '#0c0c0c'
+    border_main = '#1a1a1a'
+
     if is_urgent:
         border_color = '#ff4d4d'
         meta_color = '#ff4d4d'
+        prefix = 'URGENT'
+    elif is_room_change:
+        border_color = '#38bdf8'
+        meta_color = '#38bdf8'
+        prefix = 'ROOM CHANGE'
+        card_bg = '#091524'
+        border_main = '#1e3a5f'
     elif is_medium:
         border_color = '#ffb020'
         meta_color = '#ffb020'
+        prefix = category.upper()
     else:
         border_color = '#3a3a3a'
         meta_color = '#8f8f8f'
+        prefix = category.upper()
 
-    details = extract_details(notice.get('notice', ''))
+    details = extract_details(body_raw)
     date_str = details.get('date', '')
     if not date_str:
         date_str = datetime.now().strftime('%d %B %Y')
+
+    loc_str = details.get('location', '')
+    loc_part = f" · {loc_str.upper()}" if loc_str and is_room_change else ""
 
     card = QFrame()
     card.setObjectName('NoticeCard')
     card.setStyleSheet(f"""
         #NoticeCard {{
-            background-color: #0c0c0c;
-            border: 1px solid #1a1a1a;
+            background-color: {card_bg};
+            border: 1px solid {border_main};
             border-left: 4px solid {border_color};
             border-radius: 4px;
         }}
@@ -120,10 +150,10 @@ def _make_notice_card(notice):
     lay.setContentsMargins(18, 16, 18, 16)
     lay.setSpacing(6)
 
-    # ── Meta row: CATEGORY · DATE · SEE NAME ──────────────────────────────
+    # ── Meta row: CATEGORY · DATE · SEE NAME · LOCATION ──────────────────
     contact = notice.get('contact', '').strip()
     contact_part = f" · SEE {contact.upper()}" if contact else ""
-    meta_tag = f"URGENT · {date_str.upper()}{contact_part}" if is_urgent else f"{category.upper()} · {date_str.upper()}{contact_part}"
+    meta_tag = f"{prefix} · {date_str.upper()}{loc_part}{contact_part}"
     meta_lbl = QLabel(meta_tag)
     meta_lbl.setStyleSheet(
         f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
@@ -133,8 +163,7 @@ def _make_notice_card(notice):
     lay.addWidget(meta_lbl)
 
     # ── Title ──────────────────────────────────────────────────────────────
-    title_text = notice.get('title', category)
-    title_lbl = QLabel(title_text)
+    title_lbl = QLabel(title)
     title_lbl.setWordWrap(True)
     title_lbl.setStyleSheet(
         "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
@@ -415,7 +444,24 @@ class NoticesWidget(QFrame):
 
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
-            filtered.sort(key=lambda n: n.get('importance', 'normal') != 'high')
+            
+            def _priority(n):
+                is_urg = n.get('importance', 'normal') == 'high'
+                t_and_b = f"{n.get('title', '')} {strip_html(n.get('notice', ''))} {n.get('category', '')}".lower()
+                is_rc = ('room change' in t_and_b or 'relocated' in t_and_b or
+                         'relocation' in t_and_b or 'class change' in t_and_b or
+                         'moved to room' in t_and_b or n.get('category', '').lower() in ('room change', 'room changes'))
+                if is_urg and is_rc:
+                    return 0
+                if is_rc:
+                    return 1
+                if is_urg:
+                    return 2
+                if n.get('category') in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']:
+                    return 3
+                return 4
+
+            filtered.sort(key=_priority)
             error_msg = self.error_msg
             fetched_at = self.fetched_at
 
