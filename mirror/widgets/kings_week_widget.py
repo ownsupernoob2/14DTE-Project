@@ -14,6 +14,7 @@ Data comes from GET /api/kings-week, which the Go server scrapes hourly.
 """
 
 import math
+import time
 import threading
 
 import requests
@@ -723,6 +724,7 @@ class KingsWeekWidget(QFrame):
 
     def scroll_by_pixels(self, delta):
         """Same open-palm scroll the notices column uses."""
+        self._last_scroll_time = time.time()
         if self._modal_open:
             self.modal.scroll_by_pixels(delta)
             return
@@ -759,6 +761,10 @@ class KingsWeekWidget(QFrame):
 
     def activate_selected(self):
         """Tap handler: open the selected story. True if a modal opened."""
+        import time as _t
+        if _t.time() - getattr(self, '_last_scroll_time', 0.0) < 0.35:
+            return False
+
         card = self._selected_card()
         if card is None or self._modal_open:
             return False

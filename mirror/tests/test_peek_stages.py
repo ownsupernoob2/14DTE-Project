@@ -146,23 +146,23 @@ class TestTimetableKingsWeekSwitch(unittest.TestCase):
         fire(self.mirror.timetable_display_timer)
         settle(self.mirror)
         self.assertTrue(self.mirror._timetable_slid_away)
-        self.assertLess(self.mirror.timetable_widget.x(), 0)
+        self.assertLess(self.mirror.timetable_widget.y(), 0)
 
     def test_right_dwell_fills_indicator_bar_and_reshows_timetable(self):
         # Timetable slides out
         self.mirror._slide_timetable_out(animate=False)
         self.assertTrue(self.mirror._timetable_slid_away)
 
-        # Holding hand on far-right shows vertical indicator bar progress
+        # Holding hand on top-right shows horizontal indicator bar progress
         self.mirror._handle_gesture(gesture(region='right', right_dwell=0.5))
         self.assertTrue(self.mirror.indicator_bar.isVisible())
-        self.assertGreater(self.mirror.indicator_fill.height(), 0)
+        self.assertGreater(self.mirror.indicator_fill.width(), 0)
 
         # Completion of right dwell triggers enter_right and reshows timetable
         self.mirror._handle_gesture(gesture(region='right', event='enter_right', right_dwell=1.0))
         settle(self.mirror)
         self.assertFalse(self.mirror._timetable_slid_away)
-        self.assertEqual(self.mirror.timetable_widget.x(), 0)
+        self.assertEqual(self.mirror.timetable_widget.y(), 0)
         self.assertTrue(self.mirror.timetable_display_timer.isActive())
 
 

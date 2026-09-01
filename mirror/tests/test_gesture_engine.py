@@ -139,11 +139,11 @@ class TestPinchDrag(unittest.TestCase):
         self.assertEqual(event, "tap")
 
     def test_right_dwell_progress_tracks_and_triggers_enter_right(self):
-        self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.12, pinch=False), 1000.0)
         self.assertEqual(self.e.right_dwell_progress, 0.0)
-        self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1000.5)
+        self.e.process_landmarks(make_hand(0.85, 0.12, pinch=False), 1000.0 + RIGHT_DWELL_SEC / 2)
         self.assertAlmostEqual(self.e.right_dwell_progress, 0.5, places=2)
-        event = self.e.process_landmarks(make_hand(0.85, 0.5, pinch=False), 1001.05)
+        event = self.e.process_landmarks(make_hand(0.85, 0.12, pinch=False), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertEqual(event, "enter_right")
         self.assertEqual(self.e.right_dwell_progress, 1.0)
 
@@ -274,32 +274,32 @@ class TestRightDwell(unittest.TestCase):
         self.e = StubEngine()
 
     def test_dwell_fires_once(self):
-        self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0))
-        event = self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0))
+        event = self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertEqual(event, "enter_right")
         # Leaving the hand there must not re-trigger the peek every frame.
         for i in range(5):
-            self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.5), 1002.0 + i * 0.1))
+            self.assertIsNone(self.e.process_landmarks(make_hand(0.85, 0.12), 1002.0 + i * 0.1))
 
     def test_passing_through_quickly_does_not_fire(self):
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
-        event = self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC / 2)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0)
+        event = self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0 + RIGHT_DWELL_SEC / 2)
         self.assertIsNone(event)
 
     def test_leaving_and_returning_rearms(self):
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0)
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
+            self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
         )
         self.e.process_landmarks(make_hand(0.2, 0.5), 1002.0)   # back to notices
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1003.0)   # returns to right
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1003.0)   # returns to right
         self.assertEqual(
-            self.e.process_landmarks(make_hand(0.85, 0.5), 1003.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
+            self.e.process_landmarks(make_hand(0.85, 0.12), 1003.0 + RIGHT_DWELL_SEC + 0.05), "enter_right"
         )
 
     def test_hand_lost_rearms(self):
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertFalse(self.e.right_armed)
         self.assertTrue(self.e.mark_absent(1002.0 + HAND_LOST_SEC + 0.1))
         self.assertTrue(self.e.right_armed)
@@ -326,8 +326,8 @@ class TestAbsence(unittest.TestCase):
     def test_absent_hand_resets_armed_state(self):
         # Trigger dwell, then drop the hand for long enough to lose it. When it
         # comes back it must be re-armed without having to leave the region.
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0)
-        self.e.process_landmarks(make_hand(0.85, 0.5), 1000.0 + RIGHT_DWELL_SEC + 0.05)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0)
+        self.e.process_landmarks(make_hand(0.85, 0.12), 1000.0 + RIGHT_DWELL_SEC + 0.05)
         self.assertFalse(self.e.right_armed)
         self.e.mark_absent(1002.0 + HAND_LOST_SEC + 0.1)
         self.assertTrue(self.e.right_armed)

@@ -86,15 +86,17 @@ PINCH_ENTER_RATIO  = 0.55   # thumb-index gap / palm size to start a pinch
 PINCH_EXIT_RATIO   = 0.75   # and to release it again
 MIN_PALM_SIZE      = 0.02   # below this the hand is too far away to trust
 
-TAP_MAX_SEC        = 0.6    # pinch held longer than this without drag is not a tap
-TAP_COOLDOWN_SEC   = 0.4    # ignore repeat taps inside this window
-DRAG_TAP_THRESHOLD = 0.03   # movement threshold during pinch to distinguish tap vs drag
+TAP_MAX_SEC        = 0.65   # pinch held up to 0.65s without drag is a tap
+TAP_COOLDOWN_SEC   = 0.35   # ignore repeat taps inside this window
+DRAG_TAP_THRESHOLD = 0.025  # movement threshold during pinch to distinguish tap vs drag
 DRAG_SCROLL_GAIN   = 1100.0 # movement -> scroll pixels
-DRAG_DEADZONE      = 0.0015 # ignore minute jitter below this
+DRAG_DEADZONE      = 0.003  # ignore minute jitter below this
 FLING_VELOCITY_SCALE = 600.0 # release velocity multiplier for inertia fling
 
-RIGHT_FAR_EDGE     = 0.72   # right region dwell threshold
-RIGHT_DWELL_SEC    = 1.0    # hold hand in right region for 1.0s to toggle timetable / kings week
+TOP_RIGHT_X        = 0.62   # top-right quadrant dwell threshold (hand must be clearly in right half)
+TOP_RIGHT_Y        = 0.18   # top-right height limit (palm must be raised high up near top edge <= 0.18)
+RIGHT_FAR_EDGE     = 0.62   # right region dwell threshold (top-right only)
+RIGHT_DWELL_SEC    = 1.6    # hold hand in top-right region for 1.6s to toggle timetable / kings week
 HEARTBEAT_SEC      = 0.5    # republish presence at least this often
 HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
 
@@ -219,9 +221,11 @@ class GestureEngine:
         self.pinched = pinched
         event = None
 
-        # ── Edge Dwell Progress (Right side only) ─────────────────────────
-        if x >= RIGHT_FAR_EDGE:
-            self.dwell_side = 'right'
+        # ── Edge Dwell Progress (Top-Right Arm / Palm Quadrant ONLY) ─────
+        in_top_right = (x >= TOP_RIGHT_X and y <= TOP_RIGHT_Y)
+
+        if in_top_right:
+            self.dwell_side = 'top_right'
             if self.right_since is None:
                 self.right_since = now
                 self.right_dwell_progress = 0.0
@@ -251,6 +255,7 @@ class GestureEngine:
                 self.last_drag_y = y
                 self.drag_dist = 0.0
                 self.drag_velocity = 0.0
+                self.had_scroll = False
                 self.last_frame_time = now
             else:
                 dy = y - self.last_drag_y
@@ -262,16 +267,18 @@ class GestureEngine:
                 self.drag_dist += abs(dy)
                 self.last_drag_y = y
 
-                if abs(dy) > DRAG_DEADZONE:
+                # Only engage scrolling if movement has exceeded the intentional drag threshold
+                if self.drag_dist > DRAG_TAP_THRESHOLD and abs(dy) > DRAG_DEADZONE:
                     delta = int(-dy * DRAG_SCROLL_GAIN)
                     if delta != 0:
-                        self.scroll_delta = delta
+                        self.had_scroll = True
+                        self.scroll_delta = max(-80, min(80, delta))
                         if event is None:
                             event = "scroll"
         else:
             if self.pinch_start is not None:
                 held = now - self.pinch_start
-                was_drag = self.drag_dist > DRAG_TAP_THRESHOLD
+                was_drag = (self.drag_dist > DRAG_TAP_THRESHOLD) or getattr(self, 'had_scroll', False)
                 released_velocity = self.drag_velocity
 
                 self.pinch_start = None
@@ -279,6 +286,7 @@ class GestureEngine:
                 self.last_drag_y = None
                 self.drag_dist = 0.0
                 self.drag_velocity = 0.0
+                self.had_scroll = False
 
                 if not was_drag and held <= TAP_MAX_SEC:
                     cooled = (self.last_tap_time is None
@@ -289,7 +297,8 @@ class GestureEngine:
                             event = "tap"
                 elif was_drag and abs(released_velocity) > 0.15:
                     if event is None:
-                        self.scroll_delta = int(-released_velocity * FLING_VELOCITY_SCALE)
+                        fling_delta = int(-released_velocity * FLING_VELOCITY_SCALE)
+                        self.scroll_delta = max(-350, min(350, fling_delta))
                         event = "fling"
 
         return event

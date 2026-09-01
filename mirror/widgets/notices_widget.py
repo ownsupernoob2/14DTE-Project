@@ -297,7 +297,7 @@ class NoticesWidget(QFrame):
         # ── Timers ───────────────────────────────────────────────────────
         self.fetch_timer = QTimer(self)
         self.fetch_timer.timeout.connect(self._start_fetch)
-        self.fetch_timer.start(600_000)
+        self.fetch_timer.start(15_000)
 
         # Auto-scroll ticker (every 30ms)
         self.scroll_timer = QTimer(self)
@@ -311,14 +311,11 @@ class NoticesWidget(QFrame):
     # ──────────────────────────────────────────────────────────────────────
 
     def scroll_by_pixels(self, delta_y):
-        """Manual scroll (e.g. from hand gesture).
-
-        Works whether or not the list is tap-paused — a deliberate scroll should
-        always move the list.
-        """
+        """Manual scroll clamping cleanly within scrollbar limits."""
         sb = self.scroll_area.verticalScrollBar()
-        sb.setValue(sb.value() + int(delta_y))
+        cur = sb.value()
         self._auto_scroll_paused_until = time.time() + 10.0
+        sb.setValue(cur + int(delta_y))
 
     @property
     def scroll_paused(self):
@@ -391,6 +388,30 @@ class NoticesWidget(QFrame):
             else:
                 notices = data.get('notices', [])
                 fetched_at = data.get('fetchedAt', None)
+
+            # Fetch remote notice configuration
+            try:
+                cfg_res = requests.get(f'{self.api_url}/api/notices/config', timeout=5)
+                if cfg_res.status_code == 200:
+                    cfg = cfg_res.json()
+                    if isinstance(cfg, dict):
+                        if 'yearFilter' in cfg:
+                            self.year_filter = cfg['yearFilter']
+                        if 'catFilters' in cfg and isinstance(cfg['catFilters'], list):
+                            self.cat_filters = cfg['catFilters']
+                        if 'catOrder' in cfg and isinstance(cfg['catOrder'], list):
+                            self.cat_order = cfg['catOrder']
+                        if 'className' in cfg:
+                            self.class_name = str(cfg['className']).strip()
+                        if 'keywordFilter' in cfg:
+                            kf = cfg['keywordFilter']
+                            if isinstance(kf, list):
+                                self.keyword_filter = ','.join(kf)
+                            else:
+                                self.keyword_filter = str(kf or '').strip().lower()
+            except Exception:
+                pass
+
             with self._lock:
                 self.notices = notices
                 self.fetched_at = fetched_at
@@ -417,7 +438,7 @@ class NoticesWidget(QFrame):
                     and self.year_filter not in [str(y) for y in target_years]:
                 return False
 
-        if self.cat_filters is not None:
+        if self.cat_filters is not None and len(self.cat_filters) > 0:
             if notice.get('category', 'General') not in self.cat_filters:
                 return False
 
@@ -444,22 +465,30 @@ class NoticesWidget(QFrame):
 
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
-            
+            cat_order_list = getattr(self, 'cat_order', [])
+            user_cls = getattr(self, 'class_name', '').lower()
+
             def _priority(n):
-                is_urg = n.get('importance', 'normal') == 'high'
                 t_and_b = f"{n.get('title', '')} {strip_html(n.get('notice', ''))} {n.get('category', '')}".lower()
+                is_urg = n.get('importance', 'normal') == 'high'
                 is_rc = ('room change' in t_and_b or 'relocated' in t_and_b or
                          'relocation' in t_and_b or 'class change' in t_and_b or
                          'moved to room' in t_and_b or n.get('category', '').lower() in ('room change', 'room changes'))
-                if is_urg and is_rc:
-                    return 0
+                is_user_class = bool(user_cls and user_cls in t_and_b)
+
+                if is_user_class or (is_urg and is_rc):
+                    return (0, 0)
                 if is_rc:
-                    return 1
+                    return (1, 0)
                 if is_urg:
-                    return 2
-                if n.get('category') in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']:
-                    return 3
-                return 4
+                    return (2, 0)
+
+                cat = n.get('category', 'General')
+                if cat_order_list and cat in cat_order_list:
+                    return (3, cat_order_list.index(cat))
+                if cat in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']:
+                    return (4, 0)
+                return (5, 0)
 
             filtered.sort(key=_priority)
             error_msg = self.error_msg

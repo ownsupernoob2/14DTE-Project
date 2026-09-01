@@ -6,6 +6,7 @@ Run from the mirror/ directory:  python -m unittest test_barcode_keyboard
 
 import os
 import sys
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -120,7 +121,7 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self._settle()
         
         self.assertEqual(self.mirror._last_state, 'guest')
-        self.assertEqual(self.mirror.guest_barcode_status_lbl.text(), "Barcode Not Detected")
+        self.assertEqual(self.mirror.guest_barcode_status_lbl.text(), "ID Not Recognized")
         self.assertTrue(self.mirror.guest_barcode_status_lbl.isVisible())
 
     def test_normal_guest_mode_hides_barcode_error(self):
@@ -142,20 +143,26 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         })
         self.assertTrue(self.mirror.indicator_bar.isHidden())
 
-    def test_right_side_dwell_shows_indicator_bar_and_hint(self):
-        """Verify hand dwelling on the right side displays the indicator bar and subtle hint."""
+    def test_right_side_dwell_shows_indicator_bar(self):
+        """Verify hand dwelling on the right side displays the horizontal indicator bar."""
         self.mirror._last_state = 'user'
         self.mirror._timetable_slid_away = False
         self.mirror._update_arrow_indicator()
-        self.assertTrue(self.mirror.edge_hint_label.isVisible())
-        self.assertIn("King's Week", self.mirror.edge_hint_label.text())
+        # Arrow is hidden when timetable is visible
+        self.assertTrue(self.mirror.edge_arrow_label.isHidden())
+
+        # Arrow is shown when timetable has slid away
+        self.mirror._timetable_slid_away = True
+        self.mirror._update_arrow_indicator()
+        self.assertFalse(self.mirror.edge_arrow_label.isHidden())
 
         self.mirror._handle_gesture({
             'present': True,
             'region': 'right',
             'hand_x': 0.85,
-            'dwell_side': 'right',
-            'right_dwell_progress': 0.5
+            'hand_y': 0.12,
+            'dwell_side': 'top_right',
+            'top_right_dwell_progress': 0.5
         })
         self.assertFalse(self.mirror.indicator_bar.isHidden())
 
@@ -163,12 +170,56 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         """Verify timetable display duration is configured to 10 seconds."""
         self.assertEqual(smp.TIMETABLE_DISPLAY_MS, 10_000)
 
-    def test_barcode_success_banner(self):
-        """Verify barcode verification sets banner message."""
+    def test_same_barcode_logs_out(self):
+        """Verify scanning the same barcode while logged in logs out the user."""
+        self.mirror._last_state = 'user'
+        self.mirror.current_user_id = 'STU12345'
+        self.mirror.face_detected = True
         self.mirror._on_barcode_verified("STU12345", [], {}, True, "12345")
-        self.assertTrue(self.mirror.banner_frame.isVisible())
-        self.assertIn("STU12345", self.mirror.banner_label.text())
+        self.assertEqual(self.mirror._last_state, 'guest')
+        self.assertIsNone(self.mirror.current_user_id)
+        self.assertIn("Logged Out", self.mirror.toast_lbl.text())
+
+    def test_barcode_5min_session_timeout(self):
+        """Verify 5-minute barcode session timeout automatically logs out user."""
+        self.mirror._last_state = 'user'
+        self.mirror.current_user_id = 'STU12345'
+        self.mirror._auth_method = 'barcode'
+        self.mirror._barcode_auth_time = time.time() - 305.0
+        self.mirror._last_interaction_time = time.time() - 305.0
+        self.mirror.face_detected = True
+        self.mirror._update_inputs()
+        self.assertEqual(self.mirror._last_state, 'guest')
+        self.assertIsNone(self.mirror.current_user_id)
+
+    def test_barcode_worker_thread_signal_unrecognized(self):
+        """Verify worker thread emits signal and triggers guest screen transition."""
+        self.mirror._last_state = 'idle'
+        with patch('requests.post', return_value=_MockResponse(404, {"error": "Not found"})):
+            self._type_string("UNKNOWN999", press_enter=True)
+            # Give background thread time to post signal
+            time.sleep(0.1)
+            app.processEvents()
+            self._settle()
+
+        self.assertEqual(self.mirror._last_state, 'guest')
+        self.assertTrue(self.mirror.guest_barcode_status_lbl.isVisible())
+        self.assertIn("Not Recognized", self.mirror.toast_lbl.text())
+
+    def test_barcode_worker_thread_signal_recognized(self):
+        """Verify worker thread emits signal and triggers user sign-in transition."""
+        self.mirror._last_state = 'idle'
+        resp_data = {"user_id": "STU18234", "widgets": [], "config": {}}
+        with patch('requests.post', return_value=_MockResponse(200, resp_data)):
+            self._type_string("18234", press_enter=True)
+            time.sleep(0.1)
+            app.processEvents()
+            self._settle()
+
+        self.assertEqual(self.mirror._last_state, 'user')
+        self.assertEqual(self.mirror.current_user_id, "STU18234")
 
 
 if __name__ == '__main__':
     unittest.main()
+

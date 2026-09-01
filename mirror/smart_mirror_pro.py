@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, pyqtSignal
 from PyQt6.QtGui import QFont, QFontDatabase, QPixmap, QMovie, QKeySequence
 
 from config import *
@@ -41,10 +41,17 @@ KINGS_IDLE_MS        = 20_000
 # Main smart mirror window — clean 2-column layout matching web screenshot
 # ─────────────────────────────────────────────────────────────────────────────
 class SmartMirrorPro(QMainWindow):
+    barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
+    banner_fetched_signal = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Smart Mirror")
         self.setStyleSheet("background-color: #000000;")
+
+        # ── Cross-thread signal connections ──────────────────────────────
+        self.barcode_verified_signal.connect(self._on_barcode_verified)
+        self.banner_fetched_signal.connect(self._update_banner)
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         hk_id = QFontDatabase.addApplicationFont(
@@ -74,6 +81,9 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Inactivity Darkened Scrim Overlay ─────────────────────────────
         self._build_gesture_demo()
+
+        # ── Floating Toast Overlay for Alerts / Barcode Scans ────────────
+        self._build_toast()
 
         # ── Status dot ───────────────────────────────────────────────────
         self.status_dot = QLabel(self.central_widget)
@@ -135,12 +145,6 @@ class SmartMirrorPro(QMainWindow):
         self.banner_timer.start(30000)
         self._poll_banner()
 
-        # Periodic navigation hint timer (every 30 seconds)
-        self._hint_visible_until = time.time() + 6.0
-        self.hint_timer = QTimer(self)
-        self.hint_timer.timeout.connect(self._trigger_hint_pulse)
-        self.hint_timer.start(30000)
-
         # ── Window mode ───────────────────────────────────────────────────
         if os.environ.get('MIRROR_WINDOWED') == '1':
             self.resize(REF_WIDTH, REF_HEIGHT)
@@ -183,7 +187,7 @@ class SmartMirrorPro(QMainWindow):
         lay.addWidget(self.banner_label, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: right-side vertical indicator bar (all white)
+    # Build: top horizontal indicator bar and header arrow indicator
     # ─────────────────────────────────────────────────────────────────────
     def _build_indicator_bar(self):
         self.indicator_bar = QFrame(self.central_widget)
@@ -200,42 +204,77 @@ class SmartMirrorPro(QMainWindow):
             background: #ffffff;
             border-radius: 2px;
         """)
-        self.indicator_fill.setGeometry(0, INDICATOR_BAR_HEIGHT, INDICATOR_BAR_WIDTH, 0)
+        self.indicator_fill.setGeometry(0, 0, 0, 4)
+        self.indicator_bar.setFixedHeight(4)
         self.indicator_bar.hide()
 
-        # Right-side arrow indicator pointing right (›)
-        self.edge_arrow_label = QLabel("›", self.central_widget)
+        # Indicator arrow in the header between date and clock (▲ / ▼)
+        self.edge_arrow_label = QLabel("▲", self.central_widget)
         self.edge_arrow_label.setObjectName("EdgeArrow")
         self.edge_arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.edge_arrow_label.setStyleSheet("""
             #EdgeArrow {
                 font-family: 'Segoe UI', system-ui, sans-serif;
-                font-size: 32px;
+                font-size: 20px;
                 font-weight: 700;
                 color: #ffffff;
                 background: transparent;
                 border: none;
             }
         """)
-        self.edge_arrow_label.setFixedSize(24, 48)
+        self.edge_arrow_label.setFixedSize(32, 32)
         self.edge_arrow_label.hide()
 
-        # Clean white right-edge navigation text without container box
-        self.edge_hint_label = QLabel(self.central_widget)
-        self.edge_hint_label.setObjectName("EdgeHint")
-        self.edge_hint_label.setStyleSheet("""
-            #EdgeHint {
-                font-family: 'Segoe UI', system-ui, sans-serif;
-                font-size: 13px;
-                font-weight: 600;
-                color: #ffffff;
-                background: transparent;
-                border: none;
-                padding: 0;
+    # ─────────────────────────────────────────────────────────────────────
+    # Build: Floating Toast Notification
+    # ─────────────────────────────────────────────────────────────────────
+    def _build_toast(self):
+        self.toast_frame = QFrame(self.central_widget)
+        self.toast_frame.setObjectName("ToastFrame")
+        self.toast_frame.setStyleSheet("""
+            #ToastFrame {
+                background: rgba(6, 78, 59, 0.95);
+                border: 1px solid #10b981;
+                border-radius: 22px;
             }
         """)
-        self.edge_hint_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.edge_hint_label.hide()
+        t_lay = QHBoxLayout(self.toast_frame)
+        t_lay.setContentsMargins(24, 8, 24, 8)
+        self.toast_lbl = QLabel(self.toast_frame)
+        self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #ffffff; background: transparent; border: none;")
+        self.toast_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t_lay.addWidget(self.toast_lbl)
+        self.toast_frame.hide()
+
+    def show_toast(self, message, is_success=True, duration_ms=4500):
+        """Display an unmistakable floating notification toast at top-center."""
+        if is_success:
+            self.toast_frame.setStyleSheet("""
+                #ToastFrame {
+                    background: rgba(6, 78, 59, 0.95);
+                    border: 1px solid #10b981;
+                    border-radius: 22px;
+                }
+            """)
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #ecfdf5; background: transparent; border: none;")
+        else:
+            self.toast_frame.setStyleSheet("""
+                #ToastFrame {
+                    background: rgba(127, 29, 29, 0.95);
+                    border: 1px solid #ef4444;
+                    border-radius: 22px;
+                }
+            """)
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef2f2; background: transparent; border: none;")
+
+        self.toast_lbl.setText(message)
+        self.toast_lbl.adjustSize()
+        tw = max(320, self.toast_lbl.sizeHint().width() + 64)
+        th = 44
+        self.toast_frame.setGeometry((self.width() - tw) // 2, 24, tw, th)
+        self.toast_frame.show()
+        self.toast_frame.raise_()
+        QTimer.singleShot(duration_ms, self.toast_frame.hide)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: gesture demo / inactivity darkened background scrim
@@ -307,7 +346,7 @@ class SmartMirrorPro(QMainWindow):
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position user layout elements matching web screenshot (50/50 split)."""
+        """Position user layout elements matching 50/50 split and vertical accordion."""
         banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
         top = banner_h
 
@@ -328,14 +367,24 @@ class SmartMirrorPro(QMainWindow):
         # Right main: Stack Container
         self.right_stack_container.setGeometry(content_x, 90, content_w, content_h)
 
-        # King's Week fills the stack container underneath
-        self.kings_widget.setGeometry(0, 0, content_w, content_h)
-
-        # Timetable position depending on whether it's slid away (slides to the left)
-        if not self._timetable_slid_away:
+        split_h = int(content_h * 0.46)
+        if getattr(self, '_timetable_full_mode', False) and not self._timetable_slid_away:
+            self.timetable_widget.set_mode('full')
             self.timetable_widget.setGeometry(0, 0, content_w, content_h)
+            self.timetable_widget.show()
+            self.kings_widget.setGeometry(0, content_h, content_w, content_h)
+        elif not self._timetable_slid_away:
+            # Initial Split View
+            self.timetable_widget.set_mode('compact')
+            self.timetable_widget.setGeometry(0, 0, content_w, split_h)
+            self.timetable_widget.show()
+            self.kings_widget.setGeometry(0, split_h, content_w, content_h - split_h)
+            self.kings_widget.show()
         else:
-            self.timetable_widget.setGeometry(-content_w, 0, content_w, content_h)
+            # Timetable collapsed UP, King's Week expanded to full height
+            self.timetable_widget.setGeometry(0, -split_h, content_w, split_h)
+            self.kings_widget.setGeometry(0, 0, content_w, content_h)
+            self.kings_widget.show()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: guest layout (clock + notices + smartmirror.me sliding over King's Week)
@@ -428,12 +477,17 @@ class SmartMirrorPro(QMainWindow):
         self.guest_clock.setGeometry(content_x, 20, content_w, 65)
 
         self.guest_stack_container.setGeometry(content_x, 90, content_w, content_h)
-        self.guest_kings_widget.setGeometry(0, 0, content_w, content_h)
 
+        split_h = int(content_h * 0.46)
         if not self._guest_card_slid_away:
-            self.guest_register_card.setGeometry(0, 0, content_w, content_h)
+            self.guest_register_card.setGeometry(0, 0, content_w, split_h)
+            self.guest_kings_widget.setGeometry(0, split_h, content_w, content_h - split_h)
+            self.guest_register_card.show()
+            self.guest_kings_widget.show()
         else:
-            self.guest_register_card.setGeometry(content_w, 0, content_w, content_h)
+            self.guest_register_card.setGeometry(0, -split_h, content_w, split_h)
+            self.guest_kings_widget.setGeometry(0, 0, content_w, content_h)
+            self.guest_kings_widget.show()
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -468,7 +522,7 @@ class SmartMirrorPro(QMainWindow):
                 res = requests.get(f"{API_URL}/api/banner", timeout=4)
                 if res.status_code == 200:
                     msg = res.json().get("message", "")
-                    QTimer.singleShot(0, lambda: self._update_banner(msg))
+                    self.banner_fetched_signal.emit(msg)
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
@@ -543,27 +597,31 @@ class SmartMirrorPro(QMainWindow):
 
     def _momentum_tick(self):
         if self._momentum_target is None or abs(self._momentum_velocity) < 0.8:
+            target = self._momentum_target
             self._stop_momentum()
+            if target is not None and hasattr(target, 'snap_to_nearest_box'):
+                target.snap_to_nearest_box()
             return
         step = int(self._momentum_velocity)
         if step != 0 and hasattr(self._momentum_target, 'scroll_by_pixels'):
             self._momentum_target.scroll_by_pixels(step)
-        self._momentum_velocity *= 0.91
+        self._momentum_velocity *= 0.90
 
     # ─────────────────────────────────────────────────────────────────────
     # Timetable & King's Week Layered Slide Transition
     # ─────────────────────────────────────────────────────────────────────
-    def _show_timetable(self, animate=True):
-        """Reveal the Timetable over King's Week by fading in from the right."""
+    # ─────────────────────────────────────────────────────────────────────
+    # Timetable & King's Week Accordion Slide Transitions
+    # ─────────────────────────────────────────────────────────────────────
+    def _show_timetable(self, animate=True, is_initial_split=False):
+        """Reveal the Timetable. If re-activated, expands to full schedule view."""
         if self.right_stack_container is None:
             return
         self.timetable_display_timer.stop()
         self._timetable_slid_away = False
         cw = self.right_stack_container.width()
         ch = self.right_stack_container.height()
-
-        self.timetable_widget.show()
-        self.timetable_widget.raise_()
+        split_h = int(ch * 0.46)
 
         if self.kings_widget is not None and self.kings_widget.modal_open:
             self.kings_widget.close_modal(animate=False)
@@ -571,71 +629,98 @@ class SmartMirrorPro(QMainWindow):
         if self._timetable_anim is not None:
             self._timetable_anim.stop()
 
-        if animate:
-            effect = QGraphicsOpacityEffect(self.timetable_widget)
-            self.timetable_widget.setGraphicsEffect(effect)
-            effect.setOpacity(0.0)
-
-            fade = QPropertyAnimation(effect, b"opacity", self)
-            fade.setDuration(TIMETABLE_ANIM_MS)
-            fade.setStartValue(0.0)
-            fade.setEndValue(1.0)
-            fade.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-            slide = QPropertyAnimation(self.timetable_widget, b"geometry", self)
-            slide.setDuration(TIMETABLE_ANIM_MS)
-            slide.setStartValue(QRect(cw // 2, 0, cw, ch))
-            slide.setEndValue(QRect(0, 0, cw, ch))
-            slide.setEasingCurve(QEasingCurve.Type.OutCubic)
-            slide.finished.connect(lambda: self.timetable_widget.setGraphicsEffect(None))
-
-            fade.start()
-            slide.start()
-            self._timetable_anim = slide
-            self._timetable_fade = fade
+        if is_initial_split:
+            self._timetable_full_mode = False
+            self.timetable_widget.set_mode('compact')
+            self.timetable_widget.setGeometry(0, 0, cw, split_h)
+            self.kings_widget.setGeometry(0, split_h, cw, ch - split_h)
+            self.timetable_widget.show()
+            self.kings_widget.show()
+            self.timetable_widget.raise_()
+            self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
         else:
-            self.timetable_widget.setGeometry(0, 0, cw, ch)
-            self.timetable_widget.setGraphicsEffect(None)
+            self._timetable_full_mode = True
+            self.timetable_widget.set_mode('full')
+            self.timetable_widget.show()
+            self.timetable_widget.raise_()
+
+            if animate:
+                anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
+                anim_tt.setDuration(TIMETABLE_ANIM_MS)
+                anim_tt.setStartValue(QRect(0, -ch, cw, ch))
+                anim_tt.setEndValue(QRect(0, 0, cw, ch))
+                anim_tt.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_kw = QPropertyAnimation(self.kings_widget, b"geometry", self)
+                anim_kw.setDuration(TIMETABLE_ANIM_MS)
+                anim_kw.setStartValue(self.kings_widget.geometry())
+                anim_kw.setEndValue(QRect(0, ch, cw, ch))
+                anim_kw.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_tt.start()
+                anim_kw.start()
+                self._timetable_anim = anim_tt
+                self._kings_anim = anim_kw
+            else:
+                self.timetable_widget.setGeometry(0, 0, cw, ch)
+                self.kings_widget.setGeometry(0, ch, cw, ch)
+
+            self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
 
         self._update_arrow_indicator()
-        self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
 
     def _slide_timetable_out(self, animate=True):
-        """Slide the Timetable to the left out of the stack, revealing King's Week."""
+        """Slide Timetable UP, smoothly expanding King's Week to full column height."""
         if self.right_stack_container is None:
             return
         self.timetable_display_timer.stop()
         self._timetable_slid_away = True
+        self._timetable_full_mode = False
         cw = self.right_stack_container.width()
         ch = self.right_stack_container.height()
+        split_h = int(ch * 0.46)
 
         if self._timetable_anim is not None:
             self._timetable_anim.stop()
 
+        target_tt_y = -ch if self.timetable_widget.height() > split_h else -split_h
+        tt_h = self.timetable_widget.height()
+
         if animate:
-            anim = QPropertyAnimation(self.timetable_widget, b"geometry", self)
-            anim.setDuration(TIMETABLE_ANIM_MS)
-            anim.setStartValue(self.timetable_widget.geometry())
-            anim.setEndValue(QRect(-cw, 0, cw, ch))
-            anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-            anim.finished.connect(self._update_arrow_indicator)
-            anim.start()
-            self._timetable_anim = anim
+            anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
+            anim_tt.setDuration(TIMETABLE_ANIM_MS)
+            anim_tt.setStartValue(self.timetable_widget.geometry())
+            anim_tt.setEndValue(QRect(0, -tt_h, cw, tt_h))
+            anim_tt.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+            anim_kw = QPropertyAnimation(self.kings_widget, b"geometry", self)
+            anim_kw.setDuration(TIMETABLE_ANIM_MS)
+            anim_kw.setStartValue(self.kings_widget.geometry())
+            anim_kw.setEndValue(QRect(0, 0, cw, ch))
+            anim_kw.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            anim_kw.finished.connect(self._update_arrow_indicator)
+
+            anim_tt.start()
+            anim_kw.start()
+            self._timetable_anim = anim_tt
+            self._kings_anim = anim_kw
         else:
-            self.timetable_widget.setGeometry(-cw, 0, cw, ch)
+            self.timetable_widget.setGeometry(0, -tt_h, cw, tt_h)
+            self.kings_widget.setGeometry(0, 0, cw, ch)
             self._update_arrow_indicator()
 
         if self.kings_widget is not None and not self.kings_widget.has_content:
             self.kings_widget.refresh()
 
-    def _show_guest_card(self, animate=True):
-        """Reveal the smartmirror.me suggestion card over King's Week."""
+    def _show_guest_card(self, animate=True, is_initial_split=False):
+        """Reveal the smartmirror.me suggestion card."""
         if self.guest_stack_container is None:
             return
         self.guest_display_timer.stop()
         self._guest_card_slid_away = False
         cw = self.guest_stack_container.width()
         ch = self.guest_stack_container.height()
+        split_h = int(ch * 0.46)
 
         self.guest_register_card.show()
         self.guest_register_card.raise_()
@@ -646,69 +731,75 @@ class SmartMirrorPro(QMainWindow):
         if self._guest_card_anim is not None:
             self._guest_card_anim.stop()
 
-        if animate:
-            effect = QGraphicsOpacityEffect(self.guest_register_card)
-            self.guest_register_card.setGraphicsEffect(effect)
-            effect.setOpacity(0.0)
-
-            fade = QPropertyAnimation(effect, b"opacity", self)
-            fade.setDuration(TIMETABLE_ANIM_MS)
-            fade.setStartValue(0.0)
-            fade.setEndValue(1.0)
-            fade.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-            slide = QPropertyAnimation(self.guest_register_card, b"geometry", self)
-            slide.setDuration(TIMETABLE_ANIM_MS)
-            slide.setStartValue(QRect(cw // 2, 0, cw, ch))
-            slide.setEndValue(QRect(0, 0, cw, ch))
-            slide.setEasingCurve(QEasingCurve.Type.OutCubic)
-            slide.finished.connect(lambda: self.guest_register_card.setGraphicsEffect(None))
-
-            fade.start()
-            slide.start()
-            self._guest_card_anim = slide
+        if is_initial_split:
+            self.guest_register_card.setGeometry(0, 0, cw, split_h)
+            self.guest_kings_widget.setGeometry(0, split_h, cw, ch - split_h)
+            self.guest_kings_widget.show()
         else:
-            self.guest_register_card.setGeometry(0, 0, cw, ch)
-            self.guest_register_card.setGraphicsEffect(None)
+            if animate:
+                anim_gc = QPropertyAnimation(self.guest_register_card, b"geometry", self)
+                anim_gc.setDuration(TIMETABLE_ANIM_MS)
+                anim_gc.setStartValue(QRect(0, -ch, cw, ch))
+                anim_gc.setEndValue(QRect(0, 0, cw, ch))
+                anim_gc.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_kw = QPropertyAnimation(self.guest_kings_widget, b"geometry", self)
+                anim_kw.setDuration(TIMETABLE_ANIM_MS)
+                anim_kw.setStartValue(self.guest_kings_widget.geometry())
+                anim_kw.setEndValue(QRect(0, ch, cw, ch))
+                anim_kw.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_gc.start()
+                anim_kw.start()
+                self._guest_card_anim = anim_gc
+            else:
+                self.guest_register_card.setGeometry(0, 0, cw, ch)
+                self.guest_kings_widget.setGeometry(0, ch, cw, ch)
 
         self._update_arrow_indicator()
         self.guest_display_timer.start(TIMETABLE_DISPLAY_MS)
 
     def _slide_guest_card_out(self, animate=True):
-        """Slide the smartmirror.me suggestion card to the right out of the stack, revealing King's Week."""
+        """Slide the smartmirror.me card UP, expanding King's Week to full height."""
         if self.guest_stack_container is None:
             return
         self.guest_display_timer.stop()
         self._guest_card_slid_away = True
         cw = self.guest_stack_container.width()
         ch = self.guest_stack_container.height()
+        split_h = int(ch * 0.46)
+        gc_h = self.guest_register_card.height()
 
         if self._guest_card_anim is not None:
             self._guest_card_anim.stop()
 
         if animate:
-            anim = QPropertyAnimation(self.guest_register_card, b"geometry", self)
-            anim.setDuration(TIMETABLE_ANIM_MS)
-            anim.setStartValue(self.guest_register_card.geometry())
-            anim.setEndValue(QRect(cw, 0, cw, ch))
-            anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-            anim.finished.connect(self._update_arrow_indicator)
-            anim.start()
-            self._guest_card_anim = anim
+            anim_gc = QPropertyAnimation(self.guest_register_card, b"geometry", self)
+            anim_gc.setDuration(TIMETABLE_ANIM_MS)
+            anim_gc.setStartValue(self.guest_register_card.geometry())
+            anim_gc.setEndValue(QRect(0, -gc_h, cw, gc_h))
+            anim_gc.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+            anim_kw = QPropertyAnimation(self.guest_kings_widget, b"geometry", self)
+            anim_kw.setDuration(TIMETABLE_ANIM_MS)
+            anim_kw.setStartValue(self.guest_kings_widget.geometry())
+            anim_kw.setEndValue(QRect(0, 0, cw, ch))
+            anim_kw.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            anim_kw.finished.connect(self._update_arrow_indicator)
+
+            anim_gc.start()
+            anim_kw.start()
+            self._guest_card_anim = anim_gc
         else:
-            self.guest_register_card.setGeometry(cw, 0, cw, ch)
+            self.guest_register_card.setGeometry(0, -gc_h, cw, gc_h)
+            self.guest_kings_widget.setGeometry(0, 0, cw, ch)
             self._update_arrow_indicator()
 
         if self.guest_kings_widget is not None and not self.guest_kings_widget.has_content:
             self.guest_kings_widget.refresh()
 
-    def _trigger_hint_pulse(self):
-        """Pulse the navigation hint text for 5 seconds."""
-        self._hint_visible_until = time.time() + 5.0
-        self._update_arrow_indicator()
-
-    def _update_arrow_indicator(self, force_hint=False):
-        """Show subtle right-edge navigation hint and arrow."""
+    def _update_arrow_indicator(self):
+        """Show subtle arrow (▲) between date and clock in header ONLY when timetable/card is collapsed."""
         if not hasattr(self, 'edge_arrow_label') or self.edge_arrow_label is None:
             return
 
@@ -717,41 +808,33 @@ class SmartMirrorPro(QMainWindow):
 
         if not is_active or is_dwelling:
             self.edge_arrow_label.hide()
-            if hasattr(self, 'edge_hint_label'):
-                self.edge_hint_label.hide()
             return
 
-        top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
-        hint_text = ""
-
+        # Arrow is ONLY shown when timetable or guest card is slid away (collapsed), never when visible
         if self._last_state == 'user':
-            if self._timetable_slid_away:
-                hint_text = "Hold hand on right for Timetable"
-            else:
-                hint_text = "Hold hand on right for King's Week"
-        elif self._last_state == 'guest':
-            if self._guest_card_slid_away:
-                hint_text = "Hold hand on right for Info"
-            else:
-                hint_text = "Hold hand on right for King's Week"
+            if not self._timetable_slid_away:
+                self.edge_arrow_label.hide()
+                return
+            self.edge_arrow_label.setText("▲")
+        else:
+            if not self._guest_card_slid_away:
+                self.edge_arrow_label.hide()
+                return
+            self.edge_arrow_label.setText("▲")
 
-        # Edge arrow (right edge, vertically centered)
-        arrow_y = top + (self.height() - top - 48) // 2
-        self.edge_arrow_label.move(self.width() - 28, arrow_y)
+        w = self.width()
+        left_w = int(w * 0.50)
+        right_w = w - left_w
+        content_x = left_w + 30
+        content_w = right_w - 60
+        top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+
+        # Position arrow centered in the header area between date and clock
+        arrow_x = content_x + (content_w - 32) // 2
+        arrow_y = top + 20 + (65 - 32) // 2
+        self.edge_arrow_label.move(arrow_x, arrow_y)
         self.edge_arrow_label.show()
         self.edge_arrow_label.raise_()
-
-        # Clean white text placed right where the arrow is, shown periodically (every 30s)
-        show_hint = force_hint or (time.time() < getattr(self, '_hint_visible_until', 0.0))
-        if hasattr(self, 'edge_hint_label') and hint_text and show_hint:
-            self.edge_hint_label.setText(hint_text)
-            self.edge_hint_label.adjustSize()
-            hw = self.edge_hint_label.width() + 8
-            self.edge_hint_label.setGeometry(self.width() - hw - 32, arrow_y + 12, hw, 24)
-            self.edge_hint_label.show()
-            self.edge_hint_label.raise_()
-        elif hasattr(self, 'edge_hint_label'):
-            self.edge_hint_label.hide()
 
     def _show_gesture_scrim(self):
         """Darken the screen background slightly for ~3.5 seconds and play demo GIF."""
@@ -803,46 +886,56 @@ class SmartMirrorPro(QMainWindow):
         region      = data.get("region") if present else None
         event       = data.get("event")
         delta       = data.get("scroll_delta", 0)
-        right_dwell = data.get("right_dwell_progress", 0.0)
-        dwell_side  = data.get("dwell_side") or ("right" if data.get("hand_x", 0.5) >= 0.5 else "left")
+        right_dwell = data.get("top_right_dwell_progress", data.get("right_dwell_progress", 0.0))
+        dwell_side  = data.get("dwell_side") or ("top_right" if data.get("hand_x", 0.5) >= 0.5 else "left")
         notices     = self._active_notices()
 
         if present:
             self._last_activity_time = time.time()
             self._last_interaction_time = time.time()
 
-        # ── Indicator Bar on Edge Dwell (Left or Right) ───────────────────
-        # ── Indicator Bar on Edge Dwell (Right side only) ────────────────
+        # ── Horizontal Top Indicator Bar on Edge Dwell (Top-Right Arm) ───
         if self._last_state in ('user', 'guest'):
-            if right_dwell > 0.02 and dwell_side == 'right':
+            if right_dwell > 0.02 and dwell_side in ('top_right', 'right'):
                 self._last_interaction_time = time.time()
                 if hasattr(self, 'edge_arrow_label'):
                     self.edge_arrow_label.hide()
-                if hasattr(self, 'edge_hint_label'):
-                    self.edge_hint_label.hide()
+
+                w = self.width()
+                left_w = int(w * 0.50)
+                right_w = w - left_w
+                content_x = left_w + 30
+                content_w = right_w - 60
                 top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
-                bar_y = top + (self.height() - top - INDICATOR_BAR_HEIGHT) // 2
-                bar_x = self.width() - INDICATOR_BAR_WIDTH - 12
-                self.indicator_bar.setGeometry(bar_x, bar_y, INDICATOR_BAR_WIDTH, INDICATOR_BAR_HEIGHT)
-                fill_h = int(INDICATOR_BAR_HEIGHT * right_dwell)
-                self.indicator_fill.setGeometry(0, INDICATOR_BAR_HEIGHT - fill_h, INDICATOR_BAR_WIDTH, fill_h)
+                bar_y = top + 86
+
+                self.indicator_bar.setGeometry(content_x, bar_y, content_w, 4)
+                fill_w = max(1, int(content_w * right_dwell))
+                self.indicator_fill.setGeometry(0, 0, fill_w, 4)
                 self.indicator_bar.show()
                 self.indicator_bar.raise_()
             else:
                 self.indicator_bar.hide()
                 self._update_arrow_indicator()
 
-        # ── Handle Events (Right-side Dwell Toggle) ───────────────────────
-        if event in ("enter_right", "enter_dwell") or (event == "enter_left" and False):
+        # ── Handle Events (Right-side / Top-Right Dwell Toggle) ───────────
+        dwell_filled = (right_dwell >= 0.98)
+        dwell_trigger = (event in ("enter_top_right", "enter_right", "enter_dwell")) or (dwell_filled and not getattr(self, '_dwell_already_triggered', False))
+
+        if right_dwell < 0.2:
+            self._dwell_already_triggered = False
+
+        if dwell_trigger:
+            self._dwell_already_triggered = True
             self.indicator_bar.hide()
             if self._last_state == 'user':
                 if self._timetable_slid_away:
-                    self._show_timetable(animate=True)
+                    self._show_timetable(animate=True, is_initial_split=False)
                 else:
                     self._slide_timetable_out(animate=True)
             elif self._last_state == 'guest':
                 if self._guest_card_slid_away:
-                    self._show_guest_card(animate=True)
+                    self._show_guest_card(animate=True, is_initial_split=False)
                 else:
                     self._slide_guest_card_out(animate=True)
 
@@ -987,6 +1080,19 @@ class SmartMirrorPro(QMainWindow):
     # Face-data polling → show/hide containers
     # ─────────────────────────────────────────────────────────────────────
     def _update_inputs(self):
+        # ── 5-Minute Inactivity Auto Logout for Barcode Sessions ─────────
+        if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode' and not self._transitioning:
+            if (time.time() - getattr(self, '_barcode_auth_time', time.time()) >= 300.0) or (time.time() - self._last_interaction_time >= 300.0):
+                print("[BARCODE] 5-minute session expired. Auto logging out to guest.")
+                self.show_toast("Session Expired — Auto Logged Out", is_success=False)
+                self._auth_method = ""
+                self.face_recognized = False
+                self.current_user_id = None
+                self._last_state = 'guest'
+                self._last_user_id = None
+                self._trigger_transition('guest', None, {'state': 'guest'})
+                return
+
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
@@ -999,6 +1105,19 @@ class SmartMirrorPro(QMainWindow):
 
                 new_state   = fdata.get('state', 'idle')
                 new_user_id = fdata.get('user_id', 'idle')
+
+                # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
+                if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
+                    if new_state in ('idle', 'guest'):
+                        new_state = 'user'
+                        new_user_id = self.current_user_id
+
+                # Hold guest screen for at least 15s after a barcode scan attempt
+                if self._last_state == 'guest' and getattr(self, '_last_barcode_scan_time', 0) > 0:
+                    if time.time() - self._last_barcode_scan_time < 15.0:
+                        if new_state == 'idle':
+                            new_state = 'guest'
+                            new_user_id = 'guest'
 
                 state_changed = (new_state != self._last_state)
                 user_switched = (
@@ -1054,17 +1173,7 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.hide()
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
-        """Dissolve from whatever is on screen to the new state.
-
-        The old version faded the current screen out to black over 280ms and only
-        then began fading the new one in over another 380ms: two thirds of a
-        second, with a fully black screen in the middle of it. One trip through
-        that is a transition. A run of them — which is what a recognition that
-        keeps dropping out produces — is a strobe, and that is what "flashing"
-        was. USER_HOLD_SEC stops the state from bouncing in the first place; this
-        makes the one transition that remains half as long and never dark, by
-        building the new screen underneath the old one and dissolving across.
-        """
+        """Dissolve from whatever is on screen to the new state."""
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container
@@ -1078,24 +1187,18 @@ class SmartMirrorPro(QMainWindow):
         else:
             incoming = None
 
-        # The peek belongs to whoever was just on screen — drop it outright
-        # rather than sliding it out over a different student's dashboard.
         self._hide_timetable_peek(animate=False)
         self.notices_widget.reset_gesture_state()
         self.guest_notices.reset_gesture_state()
         if self.kings_panel is not None:
             self.kings_panel.reset_gesture_state()
 
-        # If incoming is the same container that is already visible (e.g. user updating or staying active),
-        # update data in place smoothly without any full-screen fade/blink.
         if incoming is not None and incoming is visible:
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._update_arrow_indicator()
             self._transitioning = False
             return
 
-        # Otherwise: whatever is leaving drops to the bottom of the stack so the
-        # arriving screen dissolves in over the top of it without going dark.
         if visible is not None:
             visible.setGraphicsEffect(None)
             visible.lower()
@@ -1105,12 +1208,10 @@ class SmartMirrorPro(QMainWindow):
             self._fade_in(incoming, retire=visible)
 
         elif visible is not None:
-            # Idle: there is nothing to dissolve to, so this one really does fade
-            # to black — which is the intended end state, not a gap.
             self._fade_out(visible, on_done=self._on_fade_to_idle_done)
 
         else:
-            self._transitioning = False   # already blank, nothing to animate
+            self._transitioning = False
 
     def _prepare(self, container, new_state, new_user_id, fdata):
         """Fill in and lay out a container before it is displayed."""
@@ -1118,15 +1219,14 @@ class SmartMirrorPro(QMainWindow):
             self.timetable_widget.set_user_id(new_user_id)
             self._apply_user_theme(fdata.get('config', {}))
             self._apply_user_layout(self.width(), self.height())
-            self._show_timetable(animate=False)
+            self._show_timetable(animate=False, is_initial_split=True)
         else:
             self.timetable_widget.set_user_id('')
             self._apply_guest_layout(self.width(), self.height())
-            # "Barcode Not Detected" only shows if there was an actual failed barcode scan attempt
             if not fdata.get('barcode_failed', False):
                 if hasattr(self, 'guest_barcode_status_lbl'):
                     self.guest_barcode_status_lbl.hide()
-            self._show_guest_card(animate=False)
+            self._show_guest_card(animate=False, is_initial_split=True)
         self._update_arrow_indicator()
 
     def _on_fade_to_idle_done(self):
@@ -1192,40 +1292,87 @@ class SmartMirrorPro(QMainWindow):
             return
 
         print(f"[BARCODE] Scanned barcode: {code}")
+        self._last_barcode_scan_time = time.time()
         self._last_interaction_time = time.time()
         self._last_activity_time = time.time()
 
         def worker():
-            try:
-                res = requests.post(
-                    f"{API_URL}/api/verify-barcode",
-                    json={"barcode": code},
-                    timeout=4.0
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    user_id = data.get("user_id") or data.get("student_id") or code
-                    widgets = data.get("widgets", [])
-                    config = data.get("config", {})
-                    QTimer.singleShot(0, lambda: self._on_barcode_verified(user_id, widgets, config, True, code))
-                    return
-                else:
-                    print(f"[BARCODE] Verify failed (status {res.status_code}) for code: {code}")
-            except Exception as e:
-                print(f"[BARCODE] Verify error: {e}")
-            QTimer.singleShot(0, lambda: self._on_barcode_verified(None, [], {}, False, code))
+            urls = [API_URL]
+            if "localhost" not in API_URL and "127.0.0.1" not in API_URL:
+                urls.extend(["http://localhost:8080", "http://127.0.0.1:8080"])
+
+            for base_url in urls:
+                try:
+                    res = requests.post(
+                        f"{base_url}/api/verify-barcode",
+                        json={"barcode": code},
+                        timeout=3.0
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        user_id = data.get("user_id") or data.get("student_id") or code
+                        widgets = data.get("widgets", [])
+                        config = data.get("config", {})
+                        self.barcode_verified_signal.emit(user_id, widgets, config, True, code)
+                        return
+                    elif res.status_code in (400, 404):
+                        print(f"[BARCODE] Verify failed (status {res.status_code}: Student ID not recognized) for code: {code}")
+                        break
+                    else:
+                        print(f"[BARCODE] Verify failed (status {res.status_code}) at {base_url} for code: {code}")
+                except Exception as e:
+                    print(f"[BARCODE] Verify error at {base_url}: {e}")
+
+            self.barcode_verified_signal.emit(None, [], {}, False, code)
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _write_face_data(self, data):
+        try:
+            target_dir = os.path.dirname(os.path.abspath(FACE_DATA_FILE))
+            tmp = os.path.join(target_dir, f'face_status.mirror_{os.getpid()}.tmp')
+            with open(tmp, 'w') as f:
+                json.dump(data, f)
+            for attempt in range(3):
+                try:
+                    os.replace(tmp, FACE_DATA_FILE)
+                    break
+                except PermissionError:
+                    time.sleep(0.005)
+        except Exception as e:
+            pass
+
     def _on_barcode_verified(self, user_id, widgets, config, success, code=""):
         """Apply verification outcome: switch to user dashboard or show guest screen."""
+        self._last_barcode_scan_time = time.time()
         self._last_interaction_time = time.time()
         self._last_activity_time = time.time()
 
         if success and user_id:
+            # If same barcode is scanned while logged in -> LOG OUT
+            if self._last_state == 'user' and self.current_user_id == user_id:
+                print(f"[BARCODE] Same barcode scanned for {user_id}. Logging out.")
+                self.show_toast(f"✓ Logged Out: {user_id}", is_success=True)
+                self._auth_method = ""
+                self.face_recognized = False
+                self.current_user_id = None
+                target_state = 'guest' if self.face_detected else 'idle'
+                self._last_state = target_state
+                self._last_user_id = None
+                self._write_face_data({
+                    "state": target_state,
+                    "user_id": target_state,
+                    "recognized": False,
+                    "detected": bool(self.face_detected),
+                    "auth_method": "",
+                    "timestamp": time.time(),
+                })
+                self._trigger_transition(target_state, None, {'state': target_state})
+                return
+
             print(f"[BARCODE] Sign-in accepted for {user_id}")
-            self._update_banner(f"✓ Student ID Scanned — Signed in as {user_id}")
-            QTimer.singleShot(4500, self._poll_banner)
+            self._auth_method = "barcode"
+            self._barcode_auth_time = time.time()
 
             fdata = {
                 "state": "user",
@@ -1236,7 +1383,9 @@ class SmartMirrorPro(QMainWindow):
                 "recognized": True,
                 "detected": True,
                 "auth_method": "barcode",
+                "timestamp": time.time(),
             }
+            self._write_face_data(fdata)
             self.face_detected = True
             self.face_recognized = True
             self.current_user_id = user_id
@@ -1244,10 +1393,12 @@ class SmartMirrorPro(QMainWindow):
             self._last_state = 'user'
             self._last_user_id = user_id
             self._trigger_transition('user', user_id, fdata)
+            self._show_timetable(animate=True, is_initial_split=True)
         else:
             print(f"[BARCODE] Barcode {code} not recognized / not linked. Showing guest screen.")
+            self.show_toast(f"❌ ID Not Recognized: {code or 'Unknown'}", is_success=False)
             if hasattr(self, 'guest_barcode_status_lbl'):
-                self.guest_barcode_status_lbl.setText("Barcode Not Detected")
+                self.guest_barcode_status_lbl.setText("ID Not Recognized")
                 self.guest_barcode_status_lbl.show()
 
             fdata = {
@@ -1256,13 +1407,16 @@ class SmartMirrorPro(QMainWindow):
                 "recognized": False,
                 "detected": True,
                 "barcode_failed": True,
+                "timestamp": time.time(),
             }
+            self._write_face_data(fdata)
+            self._auth_method = ""
             if self._last_state != 'guest':
                 self._last_state = 'guest'
                 self._last_user_id = 'guest'
                 self._trigger_transition('guest', None, fdata)
             else:
-                self._show_guest_card(animate=True)
+                self._show_guest_card(animate=True, is_initial_split=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

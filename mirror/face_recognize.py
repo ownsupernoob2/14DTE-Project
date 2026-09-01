@@ -369,6 +369,20 @@ def write_face_status(state, detected, faces_count,
     os.replace() never crosses a filesystem boundary (which causes WinError 5
     when antivirus or another process briefly holds the handle).
     """
+    # ── Preserve active barcode session when no face is detected ─────────
+    if state in (STATE_IDLE, STATE_GUEST) and os.path.exists(FACE_DATA_FILE):
+        try:
+            with open(FACE_DATA_FILE) as f:
+                cur = json.load(f)
+            # Hold active barcode login session for up to 300s
+            if cur.get('auth_method') == 'barcode' and (time.time() - cur.get('timestamp', 0) < 300.0):
+                return
+            # Hold guest screen on barcode scan failure for at least 15s
+            if cur.get('barcode_failed') and (time.time() - cur.get('timestamp', 0) < 15.0):
+                return
+        except Exception:
+            pass
+
     is_recognised = (state == STATE_USER)
     data = {
         "state":      state,
