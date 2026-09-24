@@ -1,38 +1,51 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+# ----------------------------------------------------
+# Stage 1: Build the Go Server
+# ----------------------------------------------------
+FROM golang:1.22-bookworm AS builder
 
 WORKDIR /app
 
-# Install dependencies
+# Cache Go modules
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
+# Copy Go code and build static binary
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o smart-mirror-api .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o smart-mirror-api .
+# ----------------------------------------------------
+# Stage 2: Runtime Image with Python & Face Recognition
+# ----------------------------------------------------
+FROM python:3.11-slim-bookworm
 
-# Final stage
-FROM alpine:latest
+WORKDIR /root
 
-WORKDIR /root/
+# Install essential dependencies for dlib / face_recognition and certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    libopenblas-dev \
+    liblapack-dev \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install ca-certificates for HTTPS, along with Python
-RUN apk --no-cache add ca-certificates python3 py3-pip
-
-# Copy requirements and install Python dependencies
+# Install Python requirements
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y build-essential cmake \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
 
-# Copy binary from builder
+# Copy compiled Go binary
 COPY --from=builder /app/smart-mirror-api .
 
-# Copy python scripts
+# Copy Python helper scripts
 COPY *.py ./
 
-# Expose port
+# Create default directories for data persistence
+RUN mkdir -p data encodings faces temp
+
 EXPOSE 8080
 
-# Run the application
 CMD ["./smart-mirror-api"]

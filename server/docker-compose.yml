@@ -1,36 +1,30 @@
 version: '3.8'
 
 services:
-  api:
-    build: .
+  smart-mirror-api:
+    image: ghcr.io/ownsupernoob2/smart-mirror-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-mirror-api
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      - AUTH0_DOMAIN=${AUTH0_DOMAIN}
-      - AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID}
-      - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET}
-      - AUTH0_AUDIENCE=${AUTH0_AUDIENCE}
-      - DATABASE_URL=${DATABASE_URL}
+      - AUTH0_DOMAIN=${AUTH0_DOMAIN:-dev-pgz1qjberxzo8hkl.us.auth0.com}
+      - AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-https://dev-pgz1qjberxzo8hkl.us.auth0.com/api/v2/}
       - PORT=8080
-    depends_on:
-      - db
-    networks:
-      - smart-mirror
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=smart_mirror
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=smart_mirror
+      - MIRROR_API_KEY=${MIRROR_API_KEY:-}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - smart_mirror
+      - ./data:/root/data
+      - ./encodings:/root/encodings
+      - ./faces:/root/faces
 
-volumes:
-  postgres_data:
-
-networks:
-  smart-mirror:
-    driver: bridge
+  # Watchtower checks for newly pushed Docker images from GitHub and automatically updates the container
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: smart-mirror-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --cleanup smart-mirror-api

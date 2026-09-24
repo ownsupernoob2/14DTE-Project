@@ -1,55 +1,69 @@
-name: Deploy Backend
+name: Deploy Backend & Build Docker
 
 on:
   push:
     branches:
       - main
+      - development
     paths:
       - 'server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  deploy:
+  docker:
+    name: Build & Push Docker Image to GHCR
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-          
-      # Usually you will build the docker image here or SSH into a droplet.
-      # If using DigitalOcean App Platform, DO detects the Dockerfile automatically and builds it.
-      # This action uses SSH to deploy to a Droplet:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Downcase repository owner
+        id: repo_owner
+        run: |
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo_owner.outputs.owner }}/smart-mirror-api:latest
+            ghcr.io/${{ steps.repo_owner.outputs.owner }}/smart-mirror-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-droplet:
+    name: Optional Deploy to Droplet
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to DigitalOcean Droplet
+        if: "${{ secrets.DO_SSH_KEY != '' && secrets.DO_DROPLET_IP != '' }}"
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_DROPLET_IP }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            cd /root/14DTE-Project/server
-            git pull origin main
-            /usr/bin/go build -o smart-mirror-api
-            
-            # Update the systemd service to ensure it runs the built executable instead of main.go
-            cat << 'EOF' > /etc/systemd/system/smart-mirror-api.service
-            [Unit]
-            Description=Smart Mirror API
-            After=network.target
-
-            [Service]
-            WorkingDirectory=/root/14DTE-Project/server
-            ExecStart=/root/14DTE-Project/server/smart-mirror-api
-            Restart=always
-            RestartSec=3
-
-            [Install]
-            WantedBy=multi-user.target
-            EOF
-            
-            systemctl daemon-reload
-            systemctl restart smart-mirror-api
+            if [ -d "/root/14DTE-Project/server" ]; then
+              cd /root/14DTE-Project/server
+              git pull origin main
+              /usr/bin/go build -o smart-mirror-api
+              systemctl restart smart-mirror-api
+            fi
