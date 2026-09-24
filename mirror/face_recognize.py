@@ -27,13 +27,25 @@ import os
 import sys
 import threading
 import time
-import re
-import pytesseract
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 import cv2
 import requests
 import numpy as np
-import face_recognition
+try:
+    import face_recognition
+except ImportError:
+    class _DummyFaceRecognition:
+        @staticmethod
+        def face_locations(*args, **kwargs):
+            return []
+        @staticmethod
+        def face_encodings(*args, **kwargs):
+            return []
+    face_recognition = _DummyFaceRecognition
 try:
     import faiss
 except ImportError:
@@ -45,6 +57,7 @@ from config import FACE_DATA_FILE, VISION_FILE
 from timing_config import (
     IDLE_TIMEOUT_SEC,
     GUEST_GRACE_SEC,
+    USER_HOLD_SEC,
     API_POLL_INTERVAL,
     API_POLL_GUEST,
     API_POLL_RECOGNISED,
@@ -130,6 +143,56 @@ def download_and_load_index():
             print(f"[FAISS] Error compiling local index: {e}")
 
 
+# The Haar cascade the fallback uses. Built once and shared: loading the XML
+# costs a few milliseconds, which is not something to pay on every frame.
+_fallback_cascade = None
+
+
+def _haar_locations(gray):
+    """Haar face boxes in face_recognition's (top, right, bottom, left) order."""
+    global _fallback_cascade
+    if _fallback_cascade is None:
+        _fallback_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+    boxes = _fallback_cascade.detectMultiScale(gray, 1.1, 4)
+    return [(y, x + w, y + h, x) for (x, y, w, h) in boxes]
+
+
+def locate_faces(rgb_frame):
+    """Find faces, trying progressively more tolerant detectors.
+
+    dlib's HOG detector — face_recognition's default — is strict about pose. It
+    reads a known-good frontal portrait perfectly (7 faces in dlib's own test
+    image) but returns nothing for a head tilted back, chin up, or eyes shut,
+    which is exactly how somebody stands at a mirror. The Haar cascade in the
+    capture loop is far more forgiving, so it would report `detected=True` while
+    this path printed "No face detected in frame." and recognition never even
+    started.
+
+    So: HOG first, because its boxes frame a face the way the encoder was
+    trained to expect; then HOG upsampled once, which catches a face that is
+    simply small in frame; then Haar, which gets a usable box out of a pose
+    dlib will not accept at all. Encodings from a Haar box are a little looser,
+    so this is a last resort rather than the default.
+    """
+    locations = face_recognition.face_locations(rgb_frame)
+    if locations:
+        return locations, "hog"
+
+    locations = face_recognition.face_locations(rgb_frame,
+                                                number_of_times_to_upsample=1)
+    if locations:
+        return locations, "hog-upsampled"
+
+    gray = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2GRAY)
+    locations = _haar_locations(gray)
+    if locations:
+        return locations, "haar"
+
+    return [], "none"
+
+
 def verify_face_worker(frame, on_result):
     """
     Background thread: Perform face verification natively in RAM using FAISS
@@ -149,13 +212,19 @@ def verify_face_worker(frame, on_result):
 
         # Detect all face locations in the frame first
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations = face_recognition.face_locations(rgb_frame)
+        face_locations, detector = locate_faces(rgb_frame)
         total_faces = len(face_locations)
 
         if total_faces == 0:
             print("[FAISS] No face detected in frame.")
             on_result(None, [], None)
             return
+
+        if detector != "hog":
+            # Worth saying out loud: a run that only ever matches via the
+            # fallback means the strict detector is not seeing the student, and
+            # the looser box may be costing match accuracy.
+            print(f"[FAISS] Located the face with the {detector} fallback.")
 
         # Calculate bounding box area for each detected face
         areas = []
@@ -300,6 +369,20 @@ def write_face_status(state, detected, faces_count,
     os.replace() never crosses a filesystem boundary (which causes WinError 5
     when antivirus or another process briefly holds the handle).
     """
+    # ── Preserve active barcode session when no face is detected ─────────
+    if state in (STATE_IDLE, STATE_GUEST) and os.path.exists(FACE_DATA_FILE):
+        try:
+            with open(FACE_DATA_FILE) as f:
+                cur = json.load(f)
+            # Hold active barcode login session for up to 300s
+            if cur.get('auth_method') == 'barcode' and (time.time() - cur.get('timestamp', 0) < 300.0):
+                return
+            # Hold guest screen on barcode scan failure for at least 15s
+            if cur.get('barcode_failed') and (time.time() - cur.get('timestamp', 0) < 15.0):
+                return
+        except Exception:
+            pass
+
     is_recognised = (state == STATE_USER)
     data = {
         "state":      state,
@@ -317,8 +400,10 @@ def write_face_status(state, detected, faces_count,
     }
     # Keep .tmp in same directory as the target so os.replace() is atomic
     # on every platform and never triggers a cross-device / access-denied error.
+    # The name carries the pid: two daemons left running from separate launches
+    # would otherwise fight over one scratch file and both fail to publish.
     target_dir = os.path.dirname(os.path.abspath(FACE_DATA_FILE))
-    tmp = os.path.join(target_dir, 'face_status.tmp')
+    tmp = os.path.join(target_dir, f'face_status.{os.getpid()}.tmp')
     try:
         with open(tmp, 'w') as f:
             json.dump(data, f)
@@ -342,6 +427,8 @@ def main():
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
     parser.add_argument('--camera-id', default=4, type=int,
                         help="Webcam index for desktop/dev mode (default: 4)")
+    parser.add_argument('--enable-camera-barcode', action='store_true',
+                        help="Enable legacy camera frame student ID barcode sign-in")
     parser.add_argument('--no-barcode', action='store_true',
                         help="Disable student ID barcode sign-in")
     args = parser.parse_args()
@@ -350,16 +437,17 @@ def main():
     print("Smart Mirror — Face Recognition Daemon")
     print(f"  Mode       : {'Raspberry Pi (rpicam → /dev/video10)' if args.rpi else f'Desktop (camera {args.camera_id})'}")
     print(f"  API        : {API_URL}")
-    print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s")
+    print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s  "
+          f"|  USER hold: {USER_HOLD_SEC}s")
     print(f"  Poll IDLE  : {API_POLL_INTERVAL}s  |  GUEST: {API_POLL_GUEST}s  |  USER: {API_POLL_RECOGNISED}s")
     print(f"  Status file: {FACE_DATA_FILE}")
 
     cap = open_camera(args.rpi, args.camera_id)
 
-    # ── Barcode sign-in ──────────────────────────────────────────────────────
+    # ── Barcode sign-in (camera decoding is off by default since physical scanner acts as keyboard) ──
     barcode_reader = None
-    barcode_backend = 'disabled'
-    if not args.no_barcode:
+    barcode_backend = 'disabled (using physical scanner input)'
+    if args.enable_camera_barcode and not args.no_barcode:
         reader = BarcodeReader()
         if reader.available:
             barcode_reader = reader
@@ -510,8 +598,13 @@ def main():
                     # passer-by behind them) must not demote them to GUEST.
                     if unrecognised_since is None:
                         unrecognised_since = now
-                        print(f"[STATE] Unrecognised face -- grace timer started "
-                              f"({GUEST_GRACE_SEC}s)")
+                        # Name the timer that will actually fire. A signed-in
+                        # student is held far longer than a stranger, and a log
+                        # line promising 1.5s before a 25s wait reads as a bug.
+                        window = USER_HOLD_SEC if state == STATE_USER else GUEST_GRACE_SEC
+                        print(f"[STATE] Unrecognised face -- "
+                              f"{'holding the signed-in student' if state == STATE_USER else 'grace timer started'} "
+                              f"({window}s)")
 
                 # p_rec is None → no face / error → let timers handle it
 
@@ -560,9 +653,13 @@ def main():
                 auth_method       = AUTH_FACE
                 unrecognised_since = None
 
-            # Unrecognised for GUEST_GRACE_SEC → go GUEST
+            # Unrecognised for long enough → go GUEST. A signed-in student gets
+            # USER_HOLD_SEC rather than the much shorter GUEST_GRACE_SEC: they
+            # have already been identified, so a failed match is far more likely
+            # to be one bad frame than a different person.
+            demote_after = USER_HOLD_SEC if state == STATE_USER else GUEST_GRACE_SEC
             if (unrecognised_since is not None
-                    and now - unrecognised_since >= GUEST_GRACE_SEC
+                    and now - unrecognised_since >= demote_after
                     and not barcode_active):
                 if state != STATE_GUEST:
                     print(f"[STATE] {state.upper()} -> GUEST  "
@@ -589,6 +686,11 @@ def main():
                     barcode_reader.reset()
 
             # ── Compute in_grace for the status dot ──────────────────────────
+            # Always the *guest* grace, never USER_HOLD_SEC: the dot means "an
+            # unknown face is being given a moment to resolve". A signed-in
+            # student holding through a bad frame is excluded by the state check
+            # anyway, and their hold is long enough that a countdown dot would
+            # just be a light left on.
             in_grace = (unrecognised_since is not None
                         and now - unrecognised_since < GUEST_GRACE_SEC
                         and state != STATE_USER)

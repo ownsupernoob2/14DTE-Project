@@ -6,12 +6,13 @@ import subprocess
 import time
 import threading
 import requests
+import re
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, pyqtSignal
+from PyQt6.QtGui import QFont, QFontDatabase, QPixmap, QMovie, QKeySequence
 
 from config import *
 from widgets.notices_widget import NoticesWidget
@@ -24,41 +25,33 @@ API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
 
-# Gesture regions, mirroring gesture_engine.py. Duplicated as literals rather
-# than imported so this process never pulls in cv2/mediapipe.
+# Gesture regions, mirroring gesture_engine.py.
 GESTURE_REGION_LEFT  = 'left'
 GESTURE_REGION_RIGHT = 'right'
 
-# Right-side gesture panel. It reveals in two stages: the day's timetable first,
-# and once that slides out of the way the King's Week grid underneath takes over
-# the column.
-PEEK_VISIBLE_MS  = 10_000     # timetable holds this long, then slides away
-PEEK_WIDTH_FRAC  = 0.42
-PEEK_MIN_WIDTH   = 360
-PEEK_ANIM_IN_MS  = 420
-PEEK_ANIM_OUT_MS = 380
-PEEK_STAGE_MS    = 460        # the timetable's slide out / back in
+TIMETABLE_DISPLAY_MS = 10_000       # timetable holds 10s, then slides away to king's week
+TIMETABLE_ANIM_MS    = 460
+INDICATOR_BAR_WIDTH  = 4
+INDICATOR_BAR_HEIGHT = 100
 
-# Share of the panel the timetable takes while both are showing. King's Week
-# gets the rest, so it is visibly waiting below before it takes over.
-PEEK_SPLIT_FRAC  = 0.56
-
-# With no hand in the right region for this long the whole panel goes away, so
-# one student's browsing can't be left stranded on the mirror.
-KINGS_IDLE_MS    = 20_000
-
-PEEK_STAGE_TIMETABLE = 1
-PEEK_STAGE_KINGS     = 2
+KINGS_IDLE_MS        = 20_000
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main smart mirror window — clean 2-column layout matching web screenshot
 # ─────────────────────────────────────────────────────────────────────────────
 class SmartMirrorPro(QMainWindow):
+    barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
+    banner_fetched_signal = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Smart Mirror")
         self.setStyleSheet("background-color: #000000;")
+
+        # ── Cross-thread signal connections ──────────────────────────────
+        self.barcode_verified_signal.connect(self._on_barcode_verified)
+        self.banner_fetched_signal.connect(self._update_banner)
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         hk_id = QFontDatabase.addApplicationFont(
@@ -83,6 +76,15 @@ class SmartMirrorPro(QMainWindow):
         # ── Guest screen (clock + notices + onboarding) ───────────────────
         self._build_guest_layout()
 
+        # ── Vertical Right Dwell Indicator Bar ────────────────────────────
+        self._build_indicator_bar()
+
+        # ── Inactivity Darkened Scrim Overlay ─────────────────────────────
+        self._build_gesture_demo()
+
+        # ── Floating Toast Overlay for Alerts / Barcode Scans ────────────
+        self._build_toast()
+
         # ── Status dot ───────────────────────────────────────────────────
         self.status_dot = QLabel(self.central_widget)
         self.status_dot.setFixedSize(10, 10)
@@ -103,22 +105,31 @@ class SmartMirrorPro(QMainWindow):
         self._anim_in          = None    # keep refs alive to prevent GC
         self._anim_out         = None
 
-        # ── Right-side peek: timetable, then King's Week ───────────────────
-        self.peek_container = None       # built lazily on first peek
-        self.peek_panel     = None       # the day's timetable
-        self.kings_panel    = None       # the King's Week grid, below it
-        self._peek_visible  = False
-        self._peek_stage    = PEEK_STAGE_TIMETABLE
-        self._peek_anim     = None
-        self._stage_anims   = None
+        # ── Physical barcode / student ID scanner input state ─────────────
+        self._barcode_buffer = ""
+        self._barcode_buffer_time = 0.0
 
-        self.peek_timer = QTimer(self)
-        self.peek_timer.setSingleShot(True)
-        self.peek_timer.timeout.connect(self._promote_peek)
+        # ── Timetable & King's Week slide state ────────────────────────────
+        self._timetable_slid_away = False
+        self._timetable_anim = None
+        self.timetable_display_timer = QTimer(self)
+        self.timetable_display_timer.setSingleShot(True)
+        self.timetable_display_timer.timeout.connect(self._slide_timetable_out)
 
-        self.kings_idle_timer = QTimer(self)
-        self.kings_idle_timer.setSingleShot(True)
-        self.kings_idle_timer.timeout.connect(self._hide_timetable_peek)
+        self.guest_display_timer = QTimer(self)
+        self.guest_display_timer.setSingleShot(True)
+        self.guest_display_timer.timeout.connect(self._slide_guest_card_out)
+
+        # ── Momentum scrolling engine ─────────────────────────────────────
+        self._momentum_timer = QTimer(self)
+        self._momentum_timer.timeout.connect(self._momentum_tick)
+        self._momentum_velocity = 0.0
+        self._momentum_target = None
+
+        # ── Activity & Inactivity Timing ──────────────────────────────────
+        self._last_activity_time = time.time()
+        self._last_interaction_time = 0.0
+        self._demo_anim = None
 
         # ── Timers ────────────────────────────────────────────────────────
         self.poll_timer = QTimer(self)
@@ -127,7 +138,7 @@ class SmartMirrorPro(QMainWindow):
 
         self.gesture_timer = QTimer(self)
         self.gesture_timer.timeout.connect(self._poll_gestures)
-        self.gesture_timer.start(100)
+        self.gesture_timer.start(50)
 
         self.banner_timer = QTimer(self)
         self.banner_timer.timeout.connect(self._poll_banner)
@@ -176,7 +187,130 @@ class SmartMirrorPro(QMainWindow):
         lay.addWidget(self.banner_label, 1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: user layout (matching web screenshot: 34% / 66% 2-column)
+    # Build: top horizontal indicator bar and header arrow indicator
+    # ─────────────────────────────────────────────────────────────────────
+    def _build_indicator_bar(self):
+        self.indicator_bar = QFrame(self.central_widget)
+        self.indicator_bar.setObjectName("IndicatorBar")
+        self.indicator_bar.setStyleSheet("""
+            #IndicatorBar {
+                background: rgba(255, 255, 255, 0.16);
+                border: none;
+                border-radius: 2px;
+            }
+        """)
+        self.indicator_fill = QFrame(self.indicator_bar)
+        self.indicator_fill.setStyleSheet("""
+            background: #ffffff;
+            border-radius: 2px;
+        """)
+        self.indicator_fill.setGeometry(0, 0, 0, 4)
+        self.indicator_bar.setFixedHeight(4)
+        self.indicator_bar.hide()
+
+        # Indicator arrow in the header between date and clock (▲ / ▼)
+        self.edge_arrow_label = QLabel("▲", self.central_widget)
+        self.edge_arrow_label.setObjectName("EdgeArrow")
+        self.edge_arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.edge_arrow_label.setStyleSheet("""
+            #EdgeArrow {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 20px;
+                font-weight: 700;
+                color: #ffffff;
+                background: transparent;
+                border: none;
+            }
+        """)
+        self.edge_arrow_label.setFixedSize(32, 32)
+        self.edge_arrow_label.hide()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Build: Floating Toast Notification
+    # ─────────────────────────────────────────────────────────────────────
+    def _build_toast(self):
+        self.toast_frame = QFrame(self.central_widget)
+        self.toast_frame.setObjectName("ToastFrame")
+        self.toast_frame.setStyleSheet("""
+            #ToastFrame {
+                background: rgba(6, 78, 59, 0.95);
+                border: 1px solid #10b981;
+                border-radius: 22px;
+            }
+        """)
+        t_lay = QHBoxLayout(self.toast_frame)
+        t_lay.setContentsMargins(24, 8, 24, 8)
+        self.toast_lbl = QLabel(self.toast_frame)
+        self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #ffffff; background: transparent; border: none;")
+        self.toast_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t_lay.addWidget(self.toast_lbl)
+        self.toast_frame.hide()
+
+    def show_toast(self, message, is_success=True, duration_ms=4500):
+        """Display an unmistakable floating notification toast at top-center."""
+        if is_success:
+            self.toast_frame.setStyleSheet("""
+                #ToastFrame {
+                    background: rgba(6, 78, 59, 0.95);
+                    border: 1px solid #10b981;
+                    border-radius: 22px;
+                }
+            """)
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #ecfdf5; background: transparent; border: none;")
+        else:
+            self.toast_frame.setStyleSheet("""
+                #ToastFrame {
+                    background: rgba(127, 29, 29, 0.95);
+                    border: 1px solid #ef4444;
+                    border-radius: 22px;
+                }
+            """)
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef2f2; background: transparent; border: none;")
+
+        self.toast_lbl.setText(message)
+        self.toast_lbl.adjustSize()
+        tw = max(320, self.toast_lbl.sizeHint().width() + 64)
+        th = 44
+        self.toast_frame.setGeometry((self.width() - tw) // 2, 24, tw, th)
+        self.toast_frame.show()
+        self.toast_frame.raise_()
+        QTimer.singleShot(duration_ms, self.toast_frame.hide)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Build: gesture demo / inactivity darkened background scrim
+    # ─────────────────────────────────────────────────────────────────────
+    def _build_gesture_demo(self):
+        self.gesture_demo_overlay = QWidget(self.central_widget)
+        self.gesture_demo_overlay.setObjectName("GestureDemoOverlay")
+        self.gesture_demo_overlay.setStyleSheet("background: rgba(0, 0, 0, 0.72);")
+
+        lay = QVBoxLayout(self.gesture_demo_overlay)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.demo_img_label = QLabel(self.gesture_demo_overlay)
+        self.demo_img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.demo_img_label.setStyleSheet("background: transparent; border: none;")
+        
+        gif_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.gif')
+        png_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.png')
+        self.demo_movie = None
+
+        if os.path.exists(gif_path):
+            self.demo_movie = QMovie(gif_path)
+            self.demo_movie.setFormat(b"gif")
+            self.demo_movie.setScaledSize(QSize(360, 240))
+            self.demo_img_label.setMovie(self.demo_movie)
+        elif os.path.exists(png_path):
+            pix = QPixmap(png_path)
+            if not pix.isNull():
+                self.demo_img_label.setPixmap(
+                    pix.scaled(360, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                )
+        lay.addWidget(self.demo_img_label)
+        self.gesture_demo_overlay.hide()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
     # ─────────────────────────────────────────────────────────────────────
     def _build_user_layout(self):
         self.user_container = QWidget(self.central_widget)
@@ -190,15 +324,29 @@ class SmartMirrorPro(QMainWindow):
         # Right top: Clock header row
         self.clock_widget = ClockWidget(parent=self.user_container)
 
-        # Right main: Timetable Class Focus block
-        self.timetable_widget = TimetableWidget(
-            api_url=API_URL, parent=self.user_container
+        # Right main: Stack container holding King's Week underneath Timetable
+        self.right_stack_container = QFrame(self.user_container)
+        self.right_stack_container.setStyleSheet("background: transparent; border: none;")
+
+        # King's Week Widget (Underneath)
+        self.kings_widget = KingsWeekWidget(
+            parent=self.right_stack_container,
+            api_url=API_URL
         )
+
+        # Timetable Class Focus block (On top, slides out to the left after 5s)
+        self.timetable_widget = TimetableWidget(
+            api_url=API_URL, parent=self.right_stack_container
+        )
+
+        # For backwards compatibility in tests that access peek_panel / kings_panel
+        self.peek_panel = self.timetable_widget
+        self.kings_panel = self.kings_widget
 
         self.user_container.hide()
 
     def _apply_user_layout(self, w, h):
-        """Position user layout elements matching web screenshot (50/50 split)."""
+        """Position user layout elements matching 50/50 split and vertical accordion."""
         banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
         top = banner_h
 
@@ -206,20 +354,40 @@ class SmartMirrorPro(QMainWindow):
 
         left_w = int(w * 0.50)
         right_w = w - left_w
+        content_x = left_w + 30
+        content_w = right_w - 60
+        content_h = h - top - 100
 
-        # Left column: Notices (50% width scaled up)
+        # Left column: Notices
         self.notices_widget.setGeometry(0, 0, left_w, h - top)
 
         # Right top: Clock row
-        self.clock_widget.setGeometry(left_w + 30, 20, right_w - 60, 65)
+        self.clock_widget.setGeometry(content_x, 20, content_w, 65)
 
-        # Right main: Timetable Class Focus
-        self.timetable_widget.setGeometry(left_w + 30, 90, right_w - 60, h - top - 100)
+        # Right main: Stack Container
+        self.right_stack_container.setGeometry(content_x, 90, content_w, content_h)
 
-
+        split_h = int(content_h * 0.46)
+        if getattr(self, '_timetable_full_mode', False) and not self._timetable_slid_away:
+            self.timetable_widget.set_mode('full')
+            self.timetable_widget.setGeometry(0, 0, content_w, content_h)
+            self.timetable_widget.show()
+            self.kings_widget.setGeometry(0, content_h, content_w, content_h)
+        elif not self._timetable_slid_away:
+            # Initial Split View
+            self.timetable_widget.set_mode('compact')
+            self.timetable_widget.setGeometry(0, 0, content_w, split_h)
+            self.timetable_widget.show()
+            self.kings_widget.setGeometry(0, split_h, content_w, content_h - split_h)
+            self.kings_widget.show()
+        else:
+            # Timetable collapsed UP, King's Week expanded to full height
+            self.timetable_widget.setGeometry(0, -split_h, content_w, split_h)
+            self.kings_widget.setGeometry(0, 0, content_w, content_h)
+            self.kings_widget.show()
 
     # ─────────────────────────────────────────────────────────────────────
-    # Build: guest layout (clock + notices + onboarding)
+    # Build: guest layout (clock + notices + smartmirror.me sliding over King's Week)
     # ─────────────────────────────────────────────────────────────────────
     def _build_guest_layout(self):
         self.guest_container = QWidget(self.central_widget)
@@ -231,33 +399,64 @@ class SmartMirrorPro(QMainWindow):
         # Right top: clock
         self.guest_clock = ClockWidget(parent=self.guest_container)
 
-        # Right bottom hint strip
-        self.guest_hint = QFrame(self.guest_container)
-        self.guest_hint.setObjectName('GuestHint')
-        self.guest_hint.setStyleSheet("""
-            #GuestHint {
-                background: rgba(96, 165, 250, 0.08);
-                border: 1px solid rgba(96, 165, 250, 0.18);
-                border-radius: 0px;
-            }
-        """)
-        h_lay = QHBoxLayout(self.guest_hint)
-        h_lay.setContentsMargins(24, 0, 24, 0)
+        # Right main: Stack container holding King's Week underneath smartmirror.me card
+        self.guest_stack_container = QFrame(self.guest_container)
+        self.guest_stack_container.setStyleSheet("background: transparent; border: none;")
 
-        hint_icon = QLabel('◎', self.guest_hint)
-        hint_icon.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; "
-            "color: #60a5fa; background: transparent; border: none;"
+        # King's Week Widget (Underneath)
+        self.guest_kings_widget = KingsWeekWidget(
+            parent=self.guest_stack_container,
+            api_url=API_URL
         )
-        h_lay.addWidget(hint_icon)
 
-        title = QLabel('STAND IN FRONT OF THE MIRROR TO IDENTIFY YOURSELF', self.guest_hint)
-        title.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
-            "color: #60a5fa; letter-spacing: 2px; background: transparent; border: none;"
+        # Right main: Centered smartmirror.me registration prompt (On top, slides away)
+        self.guest_register_card = QWidget(self.guest_stack_container)
+        self.guest_register_card.setObjectName('GuestRegisterCard')
+        self.guest_register_card.setStyleSheet("background: #000000; border: none;")
+
+        card_lay = QVBoxLayout(self.guest_register_card)
+        card_lay.setContentsMargins(16, 16, 16, 16)
+        card_lay.setSpacing(24)
+        card_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Barcode status banner / headline in large bold typography
+        self.guest_barcode_status_lbl = QLabel("Barcode Not Detected", self.guest_register_card)
+        self.guest_barcode_status_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 36px; font-weight: 700; "
+            "color: #f59e0b; background: transparent; border: none; letter-spacing: 0.5px;"
         )
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h_lay.addWidget(title, 1)
+        self.guest_barcode_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.guest_barcode_status_lbl.hide()
+        card_lay.addWidget(self.guest_barcode_status_lbl)
+
+        # Domain title with increased, bold prominence
+        domain_lbl = QLabel("smartmirror.me", self.guest_register_card)
+        domain_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 72px; font-weight: 900; "
+            "color: #ffffff; background: transparent; border: none; letter-spacing: 2px;"
+        )
+        domain_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_lay.addWidget(domain_lbl)
+        self.guest_domain_lbl = domain_lbl
+
+        # Information text with increased size and readability
+        info_lbl = QLabel(
+            "Visit smartmirror.me to link your student ID barcode, register your face, and customize your timetable.",
+            self.guest_register_card
+        )
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; font-weight: 500; "
+            "color: #cbd5e1; background: transparent; border: none; line-height: 1.5;"
+        )
+        info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_lay.addWidget(info_lbl)
+        self.guest_info_lbl = info_lbl
+
+        # For test backwards compatibility
+        self.guest_hint = self.guest_register_card
+        self._guest_card_slid_away = False
+        self._guest_card_anim = None
 
         self.guest_container.hide()
 
@@ -270,10 +469,25 @@ class SmartMirrorPro(QMainWindow):
 
         left_w = int(w * 0.50)
         right_w = w - left_w
+        content_x = left_w + 30
+        content_w = right_w - 60
+        content_h = h - top - 100
 
         self.guest_notices.setGeometry(0, 0, left_w, h - top)
-        self.guest_clock.setGeometry(left_w + 30, 20, right_w - 60, 65)
-        self.guest_hint.setGeometry(left_w + 30, h - top - 70, right_w - 60, 50)
+        self.guest_clock.setGeometry(content_x, 20, content_w, 65)
+
+        self.guest_stack_container.setGeometry(content_x, 90, content_w, content_h)
+
+        split_h = int(content_h * 0.46)
+        if not self._guest_card_slid_away:
+            self.guest_register_card.setGeometry(0, 0, content_w, split_h)
+            self.guest_kings_widget.setGeometry(0, split_h, content_w, content_h - split_h)
+            self.guest_register_card.show()
+            self.guest_kings_widget.show()
+        else:
+            self.guest_register_card.setGeometry(0, -split_h, content_w, split_h)
+            self.guest_kings_widget.setGeometry(0, 0, content_w, content_h)
+            self.guest_kings_widget.show()
 
     # ─────────────────────────────────────────────────────────────────────
     # Resize
@@ -308,7 +522,7 @@ class SmartMirrorPro(QMainWindow):
                 res = requests.get(f"{API_URL}/api/banner", timeout=4)
                 if res.status_code == 200:
                     msg = res.json().get("message", "")
-                    QTimer.singleShot(0, lambda: self._update_banner(msg))
+                    self.banner_fetched_signal.emit(msg)
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
@@ -358,93 +572,427 @@ class SmartMirrorPro(QMainWindow):
             return self.guest_notices
         return None
 
-    def _handle_gesture(self, data):
-        if self._last_state == 'idle' or self._last_state is None:
+    def _active_notices(self):
+        """The notices panel currently on screen, or None."""
+        if self._last_state == 'user':
+            return self.notices_widget
+        if self._last_state == 'guest':
+            return self.guest_notices
+        return None
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Momentum Scrolling Engine
+    # ─────────────────────────────────────────────────────────────────────
+    def _start_momentum(self, target, velocity):
+        self._momentum_target = target
+        self._momentum_velocity = float(velocity)
+        if not self._momentum_timer.isActive():
+            self._momentum_timer.start(16)
+
+    def _stop_momentum(self):
+        if self._momentum_timer.isActive():
+            self._momentum_timer.stop()
+        self._momentum_velocity = 0.0
+        self._momentum_target = None
+
+    def _momentum_tick(self):
+        if self._momentum_target is None or abs(self._momentum_velocity) < 0.8:
+            target = self._momentum_target
+            self._stop_momentum()
+            if target is not None and hasattr(target, 'snap_to_nearest_box'):
+                target.snap_to_nearest_box()
+            return
+        step = int(self._momentum_velocity)
+        if step != 0 and hasattr(self._momentum_target, 'scroll_by_pixels'):
+            self._momentum_target.scroll_by_pixels(step)
+        self._momentum_velocity *= 0.90
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Timetable & King's Week Layered Slide Transition
+    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
+    # Timetable & King's Week Accordion Slide Transitions
+    # ─────────────────────────────────────────────────────────────────────
+    def _show_timetable(self, animate=True, is_initial_split=False):
+        """Reveal the Timetable. If re-activated, expands to full schedule view."""
+        if self.right_stack_container is None:
+            return
+        self.timetable_display_timer.stop()
+        self._timetable_slid_away = False
+        cw = self.right_stack_container.width()
+        ch = self.right_stack_container.height()
+        split_h = int(ch * 0.46)
+
+        if self.kings_widget is not None and self.kings_widget.modal_open:
+            self.kings_widget.close_modal(animate=False)
+
+        if self._timetable_anim is not None:
+            self._timetable_anim.stop()
+
+        if is_initial_split:
+            self._timetable_full_mode = False
+            self.timetable_widget.set_mode('compact')
+            self.timetable_widget.setGeometry(0, 0, cw, split_h)
+            self.kings_widget.setGeometry(0, split_h, cw, ch - split_h)
+            self.timetable_widget.show()
+            self.kings_widget.show()
+            self.timetable_widget.raise_()
+            self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
+        else:
+            self._timetable_full_mode = True
+            self.timetable_widget.set_mode('full')
+            self.timetable_widget.show()
+            self.timetable_widget.raise_()
+
+            if animate:
+                anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
+                anim_tt.setDuration(TIMETABLE_ANIM_MS)
+                anim_tt.setStartValue(QRect(0, -ch, cw, ch))
+                anim_tt.setEndValue(QRect(0, 0, cw, ch))
+                anim_tt.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_kw = QPropertyAnimation(self.kings_widget, b"geometry", self)
+                anim_kw.setDuration(TIMETABLE_ANIM_MS)
+                anim_kw.setStartValue(self.kings_widget.geometry())
+                anim_kw.setEndValue(QRect(0, ch, cw, ch))
+                anim_kw.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_tt.start()
+                anim_kw.start()
+                self._timetable_anim = anim_tt
+                self._kings_anim = anim_kw
+            else:
+                self.timetable_widget.setGeometry(0, 0, cw, ch)
+                self.kings_widget.setGeometry(0, ch, cw, ch)
+
+            self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
+
+        self._update_arrow_indicator()
+
+    def _slide_timetable_out(self, animate=True):
+        """Slide Timetable UP, smoothly expanding King's Week to full column height."""
+        if self.right_stack_container is None:
+            return
+        self.timetable_display_timer.stop()
+        self._timetable_slid_away = True
+        self._timetable_full_mode = False
+        cw = self.right_stack_container.width()
+        ch = self.right_stack_container.height()
+        split_h = int(ch * 0.46)
+
+        if self._timetable_anim is not None:
+            self._timetable_anim.stop()
+
+        target_tt_y = -ch if self.timetable_widget.height() > split_h else -split_h
+        tt_h = self.timetable_widget.height()
+
+        if animate:
+            anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
+            anim_tt.setDuration(TIMETABLE_ANIM_MS)
+            anim_tt.setStartValue(self.timetable_widget.geometry())
+            anim_tt.setEndValue(QRect(0, -tt_h, cw, tt_h))
+            anim_tt.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+            anim_kw = QPropertyAnimation(self.kings_widget, b"geometry", self)
+            anim_kw.setDuration(TIMETABLE_ANIM_MS)
+            anim_kw.setStartValue(self.kings_widget.geometry())
+            anim_kw.setEndValue(QRect(0, 0, cw, ch))
+            anim_kw.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            anim_kw.finished.connect(self._update_arrow_indicator)
+
+            anim_tt.start()
+            anim_kw.start()
+            self._timetable_anim = anim_tt
+            self._kings_anim = anim_kw
+        else:
+            self.timetable_widget.setGeometry(0, -tt_h, cw, tt_h)
+            self.kings_widget.setGeometry(0, 0, cw, ch)
+            self._update_arrow_indicator()
+
+        if self.kings_widget is not None and not self.kings_widget.has_content:
+            self.kings_widget.refresh()
+
+    def _show_guest_card(self, animate=True, is_initial_split=False):
+        """Reveal the smartmirror.me suggestion card."""
+        if self.guest_stack_container is None:
+            return
+        self.guest_display_timer.stop()
+        self._guest_card_slid_away = False
+        cw = self.guest_stack_container.width()
+        ch = self.guest_stack_container.height()
+        split_h = int(ch * 0.46)
+
+        self.guest_register_card.show()
+        self.guest_register_card.raise_()
+
+        if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None and self.guest_kings_widget.modal_open:
+            self.guest_kings_widget.close_modal(animate=False)
+
+        if self._guest_card_anim is not None:
+            self._guest_card_anim.stop()
+
+        if is_initial_split:
+            self.guest_register_card.setGeometry(0, 0, cw, split_h)
+            self.guest_kings_widget.setGeometry(0, split_h, cw, ch - split_h)
+            self.guest_kings_widget.show()
+        else:
+            if animate:
+                anim_gc = QPropertyAnimation(self.guest_register_card, b"geometry", self)
+                anim_gc.setDuration(TIMETABLE_ANIM_MS)
+                anim_gc.setStartValue(QRect(0, -ch, cw, ch))
+                anim_gc.setEndValue(QRect(0, 0, cw, ch))
+                anim_gc.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_kw = QPropertyAnimation(self.guest_kings_widget, b"geometry", self)
+                anim_kw.setDuration(TIMETABLE_ANIM_MS)
+                anim_kw.setStartValue(self.guest_kings_widget.geometry())
+                anim_kw.setEndValue(QRect(0, ch, cw, ch))
+                anim_kw.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_gc.start()
+                anim_kw.start()
+                self._guest_card_anim = anim_gc
+            else:
+                self.guest_register_card.setGeometry(0, 0, cw, ch)
+                self.guest_kings_widget.setGeometry(0, ch, cw, ch)
+
+        self._update_arrow_indicator()
+        self.guest_display_timer.start(TIMETABLE_DISPLAY_MS)
+
+    def _slide_guest_card_out(self, animate=True):
+        """Slide the smartmirror.me card UP, expanding King's Week to full height."""
+        if self.guest_stack_container is None:
+            return
+        self.guest_display_timer.stop()
+        self._guest_card_slid_away = True
+        cw = self.guest_stack_container.width()
+        ch = self.guest_stack_container.height()
+        split_h = int(ch * 0.46)
+        gc_h = self.guest_register_card.height()
+
+        if self._guest_card_anim is not None:
+            self._guest_card_anim.stop()
+
+        if animate:
+            anim_gc = QPropertyAnimation(self.guest_register_card, b"geometry", self)
+            anim_gc.setDuration(TIMETABLE_ANIM_MS)
+            anim_gc.setStartValue(self.guest_register_card.geometry())
+            anim_gc.setEndValue(QRect(0, -gc_h, cw, gc_h))
+            anim_gc.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+            anim_kw = QPropertyAnimation(self.guest_kings_widget, b"geometry", self)
+            anim_kw.setDuration(TIMETABLE_ANIM_MS)
+            anim_kw.setStartValue(self.guest_kings_widget.geometry())
+            anim_kw.setEndValue(QRect(0, 0, cw, ch))
+            anim_kw.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            anim_kw.finished.connect(self._update_arrow_indicator)
+
+            anim_gc.start()
+            anim_kw.start()
+            self._guest_card_anim = anim_gc
+        else:
+            self.guest_register_card.setGeometry(0, -gc_h, cw, gc_h)
+            self.guest_kings_widget.setGeometry(0, 0, cw, ch)
+            self._update_arrow_indicator()
+
+        if self.guest_kings_widget is not None and not self.guest_kings_widget.has_content:
+            self.guest_kings_widget.refresh()
+
+    def _update_arrow_indicator(self):
+        """Show subtle arrow (▲) between date and clock in header ONLY when timetable/card is collapsed."""
+        if not hasattr(self, 'edge_arrow_label') or self.edge_arrow_label is None:
             return
 
-        present = data.get("present", False)
-        region  = data.get("region") if present else None
-        event   = data.get("event")
-        notices = self._active_notices()
+        is_active = self._last_state in ('user', 'guest')
+        is_dwelling = hasattr(self, 'indicator_bar') and not self.indicator_bar.isHidden()
 
-        if region == GESTURE_REGION_RIGHT and self._peek_visible:
-            # Any sign of a hand on this side keeps the panel alive, and while
-            # King's Week is up the palm position picks a box.
-            self.kings_idle_timer.start(KINGS_IDLE_MS)
-            if self._peek_stage == PEEK_STAGE_KINGS and self.kings_panel is not None:
-                self._focus_kings(data)
+        if not is_active or is_dwelling:
+            self.edge_arrow_label.hide()
+            return
 
-        if event:
-            if region == GESTURE_REGION_LEFT and notices is not None:
-                if event == "scroll":
-                    delta = data.get("scroll_delta", 0)
-                    if delta:
-                        notices.scroll_by_pixels(delta)
+        # Arrow is ONLY shown when timetable or guest card is slid away (collapsed), never when visible
+        if self._last_state == 'user':
+            if not self._timetable_slid_away:
+                self.edge_arrow_label.hide()
+                return
+            self.edge_arrow_label.setText("▲")
+        else:
+            if not self._guest_card_slid_away:
+                self.edge_arrow_label.hide()
+                return
+            self.edge_arrow_label.setText("▲")
+
+        w = self.width()
+        left_w = int(w * 0.50)
+        right_w = w - left_w
+        content_x = left_w + 30
+        content_w = right_w - 60
+        top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+
+        # Position arrow centered in the header area between date and clock
+        arrow_x = content_x + (content_w - 32) // 2
+        arrow_y = top + 20 + (65 - 32) // 2
+        self.edge_arrow_label.move(arrow_x, arrow_y)
+        self.edge_arrow_label.show()
+        self.edge_arrow_label.raise_()
+
+    def _show_gesture_scrim(self):
+        """Darken the screen background slightly for ~3.5 seconds and play demo GIF."""
+        if self.gesture_demo_overlay is None:
+            return
+        self.gesture_demo_overlay.setGeometry(0, 0, self.width(), self.height())
+        effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
+        self.gesture_demo_overlay.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        self.gesture_demo_overlay.show()
+        self.gesture_demo_overlay.raise_()
+
+        if hasattr(self, 'demo_movie') and self.demo_movie is not None:
+            self.demo_movie.start()
+
+        anim_in = QPropertyAnimation(effect, b"opacity", self)
+        anim_in.setDuration(500)
+        anim_in.setStartValue(0.0)
+        anim_in.setEndValue(1.0)
+        anim_in.start()
+        self._demo_anim = anim_in
+
+        def fade_out():
+            anim_out = QPropertyAnimation(effect, b"opacity", self)
+            anim_out.setDuration(500)
+            anim_out.setStartValue(1.0)
+            anim_out.setEndValue(0.0)
+
+            def on_done():
+                self.gesture_demo_overlay.hide()
+                if hasattr(self, 'demo_movie') and self.demo_movie is not None:
+                    self.demo_movie.stop()
+
+            anim_out.finished.connect(on_done)
+            anim_out.start()
+            self._demo_anim = anim_out
+
+        QTimer.singleShot(3500, fade_out)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Gesture Dispatch
+    # ─────────────────────────────────────────────────────────────────────
+    def _handle_gesture(self, data):
+        # Don't turn on gestures until it's either in guest or recognized
+        if self._last_state not in ('guest', 'user'):
+            return
+
+        present     = data.get("present", False)
+        region      = data.get("region") if present else None
+        event       = data.get("event")
+        delta       = data.get("scroll_delta", 0)
+        right_dwell = data.get("top_right_dwell_progress", data.get("right_dwell_progress", 0.0))
+        dwell_side  = data.get("dwell_side") or ("top_right" if data.get("hand_x", 0.5) >= 0.5 else "left")
+        notices     = self._active_notices()
+
+        if present:
+            self._last_activity_time = time.time()
+            self._last_interaction_time = time.time()
+
+        # ── Horizontal Top Indicator Bar on Edge Dwell (Top-Right Arm) ───
+        if self._last_state in ('user', 'guest'):
+            if right_dwell > 0.02 and dwell_side in ('top_right', 'right'):
+                self._last_interaction_time = time.time()
+                if hasattr(self, 'edge_arrow_label'):
+                    self.edge_arrow_label.hide()
+
+                w = self.width()
+                left_w = int(w * 0.50)
+                right_w = w - left_w
+                content_x = left_w + 30
+                content_w = right_w - 60
+                top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+                bar_y = top + 86
+
+                self.indicator_bar.setGeometry(content_x, bar_y, content_w, 4)
+                fill_w = max(1, int(content_w * right_dwell))
+                self.indicator_fill.setGeometry(0, 0, fill_w, 4)
+                self.indicator_bar.show()
+                self.indicator_bar.raise_()
+            else:
+                self.indicator_bar.hide()
+                self._update_arrow_indicator()
+
+        # ── Handle Events (Right-side / Top-Right Dwell Toggle) ───────────
+        dwell_filled = (right_dwell >= 0.98)
+        dwell_trigger = (event in ("enter_top_right", "enter_right", "enter_dwell")) or (dwell_filled and not getattr(self, '_dwell_already_triggered', False))
+
+        if right_dwell < 0.2:
+            self._dwell_already_triggered = False
+
+        if dwell_trigger:
+            self._dwell_already_triggered = True
+            self.indicator_bar.hide()
+            if self._last_state == 'user':
+                if self._timetable_slid_away:
+                    self._show_timetable(animate=True, is_initial_split=False)
+                else:
+                    self._slide_timetable_out(animate=True)
+            elif self._last_state == 'guest':
+                if self._guest_card_slid_away:
+                    self._show_guest_card(animate=True, is_initial_split=False)
+                else:
+                    self._slide_guest_card_out(animate=True)
+
+        elif region == GESTURE_REGION_LEFT and notices is not None:
+            if event == "scroll" and delta != 0:
+                self._stop_momentum()
+                notices.scroll_by_pixels(delta)
+            elif event == "fling" and delta != 0:
+                self._start_momentum(notices, delta)
+            elif event == "tap":
+                self._stop_momentum()
+                notices.toggle_scroll_pause()
+
+        elif region == GESTURE_REGION_RIGHT:
+            active_kings = None
+            if self._last_state == 'user' and self._timetable_slid_away:
+                active_kings = self.kings_widget
+            elif self._last_state == 'guest' and self._guest_card_slid_away:
+                active_kings = self.guest_kings_widget
+
+            if active_kings is not None:
+                if event == "scroll" and delta != 0:
+                    self._stop_momentum()
+                    active_kings.clear_selection()
+                    active_kings.scroll_by_pixels(delta)
+                elif event == "fling" and delta != 0:
+                    active_kings.clear_selection()
+                    self._start_momentum(active_kings, delta)
                 elif event == "tap":
-                    notices.toggle_scroll_pause()
+                    self._stop_momentum()
+                    if active_kings.modal_open:
+                        active_kings.close_modal()
+                    else:
+                        active_kings.activate_selected()
+                elif event not in ("scroll", "fling"):
+                    self._focus_kings_target(active_kings, data)
 
-            elif region == GESTURE_REGION_RIGHT:
-                if event == "enter_right":
-                    self._show_timetable_peek()
-                elif event == "scroll":
-                    self._handle_peek_scroll(data.get("scroll_delta", 0))
-                elif event == "tap":
-                    self._handle_peek_tap()
-
-        # Affordance last, so a gesture that changes which panel is in front —
-        # the scroll that promotes King's Week, say — lights up the right one in
-        # the same frame rather than a tenth of a second later.
+        # Affordances
         if notices is not None:
             notices.set_gesture_active(region == GESTURE_REGION_LEFT)
-        if self.kings_panel is not None:
-            self.kings_panel.set_gesture_active(
+        if self.kings_widget is not None:
+            self.kings_widget.set_gesture_active(
                 region == GESTURE_REGION_RIGHT
-                and self._peek_visible
-                and self._peek_stage == PEEK_STAGE_KINGS
+                and self._last_state == 'user'
+                and self._timetable_slid_away
+            )
+        if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+            self.guest_kings_widget.set_gesture_active(
+                region == GESTURE_REGION_RIGHT
+                and self._last_state == 'guest'
+                and self._guest_card_slid_away
             )
 
-    def _handle_peek_scroll(self, delta):
-        """Scrolling walks down through timetable → King's Week grid → article."""
-        if not delta or not self._peek_visible:
-            return
-        kings = self.kings_panel
-
-        if self._peek_stage == PEEK_STAGE_TIMETABLE:
-            # Scrolling down past the timetable is what reveals King's Week.
-            if delta > 0:
-                self._promote_peek()
-            return
-
-        if kings is None:
-            return
-        if kings.modal_open:
-            kings.scroll_by_pixels(delta)
-        elif delta < 0 and kings.at_top():
-            # Scrolling back up off the top of the grid brings the timetable back.
-            self._demote_peek()
-        else:
-            kings.scroll_by_pixels(delta)
-
-    def _handle_peek_tap(self):
-        if not self._peek_visible:
-            return
-        kings = self.kings_panel
-
-        if self._peek_stage == PEEK_STAGE_TIMETABLE:
-            # Tap to dismiss early instead of waiting out the 10 seconds.
-            self._hide_timetable_peek()
-        elif kings is not None and kings.modal_open:
-            kings.close_modal()
-        elif kings is not None:
-            kings.activate_selected()
-
     def _focus_kings(self, data):
-        """Turn the published palm position into a box selection.
+        self._focus_kings_target(self.kings_widget, data)
 
-        gesture_engine publishes a whole-screen fraction, so it is mapped through
-        the panel's actual geometry rather than assuming where the panel sits.
-        """
-        panel = self.kings_panel
+    def _focus_kings_target(self, panel, data):
         if panel is None or panel.width() <= 0 or panel.height() <= 0:
             return
         origin = panel.mapTo(self.central_widget, QPoint(0, 0))
@@ -453,181 +1001,28 @@ class SmartMirrorPro(QMainWindow):
         panel.focus_at(x, y)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Right-side peek: the day's timetable, with King's Week below it
+    # Legacy peek helpers for backward compatibility in tests
     # ─────────────────────────────────────────────────────────────────────
     def _ensure_peek(self):
-        if self.peek_container is None:
-            # A plain container so the timetable is clipped as it slides out
-            # past the edge rather than drifting across the dashboard.
-            self.peek_container = QFrame(self.central_widget)
-            self.peek_container.setStyleSheet('background: #000000; border: none;')
-            self.peek_panel = SchedulePeekWidget(
-                parent=self.peek_container,
-                api_url=API_URL,
-                user_id=self.current_user_id or '',
-            )
-            self.kings_panel = KingsWeekWidget(
-                parent=self.peek_container,
-                api_url=API_URL,
-            )
-            self.peek_container.hide()
-            self._layout_peek_stage(animate=False)
-        return self.peek_container
-
-    def _peek_geometry(self, offscreen=False):
-        w, h = self.width(), self.height()
-        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
-        panel_w = max(PEEK_MIN_WIDTH, int(w * PEEK_WIDTH_FRAC))
-        x = w if offscreen else w - panel_w
-        return QRect(x, banner_h, panel_w, h - banner_h)
-
-    def _stage_geometries(self):
-        """Where the timetable and King's Week sit, for the current stage."""
-        rect = self.peek_container.rect() if self.peek_container else QRect()
-        w, h = rect.width(), rect.height()
-        split = int(h * PEEK_SPLIT_FRAC)
-
-        if self._peek_stage == PEEK_STAGE_KINGS:
-            # Timetable parked off the container's right edge; King's Week fills it.
-            return QRect(w, 0, w, split), QRect(0, 0, w, h)
-        return QRect(0, 0, w, split), QRect(0, split, w, h - split)
-
-    def _stop_anims(self, *anims):
-        """Stop animations that are about to be replaced.
-
-        They are parented to the window, so dropping the Python reference does
-        not stop them: two geometry animations would then fight over the same
-        widget, and whichever finished last would snap it to the wrong place.
-        """
-        for anim in anims:
-            if anim is not None:
-                anim.stop()
-
-    def _layout_peek_stage(self, animate=True):
-        if self.peek_container is None:
-            return
-        sched_rect, kings_rect = self._stage_geometries()
-        self._stop_anims(*(self._stage_anims or ()))
-        self._stage_anims = None
-
-        if not animate:
-            self.peek_panel.setGeometry(sched_rect)
-            self.kings_panel.setGeometry(kings_rect)
-            return
-
-        anims = []
-        for widget, end in ((self.peek_panel, sched_rect), (self.kings_panel, kings_rect)):
-            anim = QPropertyAnimation(widget, b"geometry", self)
-            anim.setDuration(PEEK_STAGE_MS)
-            anim.setStartValue(widget.geometry())
-            anim.setEndValue(end)
-            anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-            anim.start()
-            anims.append(anim)
-        self._stage_anims = anims
-
-    def _promote_peek(self):
-        """Slide the timetable out of the way and hand the column to King's Week."""
-        if not self._peek_visible or self._peek_stage == PEEK_STAGE_KINGS:
-            return
-        self.peek_timer.stop()
-        self._peek_stage = PEEK_STAGE_KINGS
-        self._layout_peek_stage()
-        if self.peek_panel is not None:
-            # Keep the timetable on top so it visibly slides away over the grid
-            # rather than being covered by it.
-            self.peek_panel.raise_()
-        if self.kings_panel is not None and not self.kings_panel.has_content:
-            self.kings_panel.refresh()
-        self.kings_idle_timer.start(KINGS_IDLE_MS)
-
-    def _demote_peek(self):
-        """Bring the timetable back over the top of the grid."""
-        if not self._peek_visible or self._peek_stage == PEEK_STAGE_TIMETABLE:
-            return
-        self._peek_stage = PEEK_STAGE_TIMETABLE
-        if self.kings_panel is not None:
-            self.kings_panel.set_gesture_active(False)
-        self._layout_peek_stage()
-        self.peek_panel.raise_()
-        # Back to the normal countdown, so it promotes again if left alone.
-        self.peek_timer.start(PEEK_VISIBLE_MS)
-        self.kings_idle_timer.start(KINGS_IDLE_MS)
+        return self.right_stack_container
 
     def _show_timetable_peek(self):
-        if self._last_state in (None, 'idle'):
-            return
-
-        container = self._ensure_peek()
-        # set_user_id only refetches when the user actually changed, so ask for a
-        # refresh ourselves otherwise — the panel is up for 10s and should be current.
-        if not self.peek_panel.set_user_id(self.current_user_id or ''):
-            self.peek_panel.refresh()
-
-        if self._peek_visible:
-            # Already up; another dwell just buys more time on whatever stage it's on.
-            self.kings_idle_timer.start(KINGS_IDLE_MS)
-            if self._peek_stage == PEEK_STAGE_TIMETABLE:
-                self.peek_timer.start(PEEK_VISIBLE_MS)
-            return
-
-        self._peek_visible = True
-        self._peek_stage = PEEK_STAGE_TIMETABLE
-        start, end = self._peek_geometry(offscreen=True), self._peek_geometry()
-        container.setGeometry(start)
-        self._layout_peek_stage(animate=False)
-        container.show()
-        container.raise_()
-
-        # A hide may still be sliding out; letting it finish would hide the
-        # container we have just brought back.
-        self._stop_anims(self._peek_anim)
-        anim = QPropertyAnimation(container, b"geometry", self)
-        anim.setDuration(PEEK_ANIM_IN_MS)
-        anim.setStartValue(start)
-        anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.start()
-        self._peek_anim = anim
-
-        self.peek_timer.start(PEEK_VISIBLE_MS)
-        self.kings_idle_timer.start(KINGS_IDLE_MS)
+        self._show_timetable(animate=True)
 
     def _hide_timetable_peek(self, animate=True):
-        """Slide the whole panel back out to the right (or drop it instantly)."""
-        self.peek_timer.stop()
-        self.kings_idle_timer.stop()
-        if not self._peek_visible or self.peek_container is None:
-            return
-        self._peek_visible = False
-        container = self.peek_container
-
-        # Reset the stage now so the next peek always opens on the timetable.
-        self._peek_stage = PEEK_STAGE_TIMETABLE
-        if self.kings_panel is not None:
-            self.kings_panel.reset_gesture_state()
-
-        if not animate:
-            container.hide()
-            self._layout_peek_stage(animate=False)
-            return
-
-        self._stop_anims(self._peek_anim)
-        anim = QPropertyAnimation(container, b"geometry", self)
-        anim.setDuration(PEEK_ANIM_OUT_MS)
-        anim.setStartValue(container.geometry())
-        anim.setEndValue(self._peek_geometry(offscreen=True))
-        anim.setEasingCurve(QEasingCurve.Type.InCubic)
-        anim.finished.connect(container.hide)
-        anim.finished.connect(lambda: self._layout_peek_stage(animate=False))
-        anim.start()
-        self._peek_anim = anim
+        self._slide_timetable_out(animate=animate)
 
     # ─────────────────────────────────────────────────────────────────────
     # Fade helpers
     # ─────────────────────────────────────────────────────────────────────
-    def _fade_in(self, widget, duration=380):
-        """Show widget and animate opacity 0 → 1."""
+    def _fade_in(self, widget, duration=380, retire=None):
+        """Show widget and animate opacity 0 → 1.
+
+        `retire` is whatever was on screen before: it stays fully opaque
+        underneath and is hidden once the new screen has finished arriving. That
+        makes this a dissolve rather than a fade to black and back — see
+        _trigger_transition for why that matters.
+        """
         effect = QGraphicsOpacityEffect(widget)
         widget.setGraphicsEffect(effect)
         effect.setOpacity(0.0)
@@ -637,13 +1032,16 @@ class SmartMirrorPro(QMainWindow):
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: self._on_fade_in_done(widget))
+        anim.finished.connect(lambda: self._on_fade_in_done(widget, retire))
         anim.start()
         self._anim_in = anim
 
-    def _on_fade_in_done(self, widget):
+    def _on_fade_in_done(self, widget, retire=None):
         # Remove effect so child painting isn't affected by opacity layer
         widget.setGraphicsEffect(None)
+        if retire is not None:
+            retire.hide()
+            retire.setGraphicsEffect(None)
         self._transitioning = False
 
     def _fade_out(self, widget, on_done, duration=280):
@@ -682,6 +1080,19 @@ class SmartMirrorPro(QMainWindow):
     # Face-data polling → show/hide containers
     # ─────────────────────────────────────────────────────────────────────
     def _update_inputs(self):
+        # ── 5-Minute Inactivity Auto Logout for Barcode Sessions ─────────
+        if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode' and not self._transitioning:
+            if (time.time() - getattr(self, '_barcode_auth_time', time.time()) >= 300.0) or (time.time() - self._last_interaction_time >= 300.0):
+                print("[BARCODE] 5-minute session expired. Auto logging out to guest.")
+                self.show_toast("Session Expired — Auto Logged Out", is_success=False)
+                self._auth_method = ""
+                self.face_recognized = False
+                self.current_user_id = None
+                self._last_state = 'guest'
+                self._last_user_id = None
+                self._trigger_transition('guest', None, {'state': 'guest'})
+                return
+
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
@@ -695,6 +1106,19 @@ class SmartMirrorPro(QMainWindow):
                 new_state   = fdata.get('state', 'idle')
                 new_user_id = fdata.get('user_id', 'idle')
 
+                # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
+                if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
+                    if new_state in ('idle', 'guest'):
+                        new_state = 'user'
+                        new_user_id = self.current_user_id
+
+                # Hold guest screen for at least 15s after a barcode scan attempt
+                if self._last_state == 'guest' and getattr(self, '_last_barcode_scan_time', 0) > 0:
+                    if time.time() - self._last_barcode_scan_time < 15.0:
+                        if new_state == 'idle':
+                            new_state = 'guest'
+                            new_user_id = 'guest'
+
                 state_changed = (new_state != self._last_state)
                 user_switched = (
                     new_state == 'user'
@@ -702,16 +1126,41 @@ class SmartMirrorPro(QMainWindow):
                     and new_user_id not in ('', 'idle')
                 )
 
-                if (state_changed or user_switched) and not self._transitioning:
+                # ── Guard: Don't interrupt active interactions ─────────────
+                is_interacting = (
+                    (time.time() - self._last_interaction_time < 6.0)
+                    or (self.kings_widget and self.kings_widget.modal_open)
+                    or (self.indicator_bar and not self.indicator_bar.isHidden())
+                )
+                if is_interacting and not user_switched:
+                    # If state is trying to demote from user -> guest/idle or guest -> idle while interacting
+                    if (self._last_state == 'user' and new_state in ('guest', 'idle')) or (self._last_state == 'guest' and new_state == 'idle'):
+                        pass  # Defer transition while user is actively interacting
+                    elif (state_changed or user_switched) and not self._transitioning:
+                        self._transitioning = True
+                        self._last_state    = new_state
+                        self._last_user_id  = new_user_id
+                        self.current_user_id   = new_user_id
+                        self.current_user_name = fdata.get('user_name', '')
+                        self._last_activity_time = time.time()
+                        self._trigger_transition(new_state, new_user_id, fdata)
+                elif (state_changed or user_switched) and not self._transitioning:
                     self._transitioning = True
                     self._last_state    = new_state
                     self._last_user_id  = new_user_id
                     self.current_user_id   = new_user_id
                     self.current_user_name = fdata.get('user_name', '')
+                    self._last_activity_time = time.time()
                     self._trigger_transition(new_state, new_user_id, fdata)
 
             except Exception:
                 pass
+
+        # ── 20-second Inactivity Darkened Overlay ─────────────────────────
+        if self._last_state in ('guest', 'user') and not self._transitioning:
+            if time.time() - self._last_activity_time >= 20.0:
+                self._last_activity_time = time.time()
+                self._show_gesture_scrim()
 
         # Status dot
         if self.face_recognized:
@@ -724,52 +1173,250 @@ class SmartMirrorPro(QMainWindow):
             self.status_dot.hide()
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
-        """Fade out whatever is currently visible, then apply + fade in new state."""
+        """Dissolve from whatever is on screen to the new state."""
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container
         elif not self.guest_container.isHidden():
             visible = self.guest_container
 
-        def apply_new():
-            # The peek belongs to whoever was just on screen — drop it outright
-            # rather than sliding it out over a different student's dashboard.
-            self._hide_timetable_peek(animate=False)
-            self.notices_widget.reset_gesture_state()
-            self.guest_notices.reset_gesture_state()
-            if self.kings_panel is not None:
-                self.kings_panel.reset_gesture_state()
-
-            self.user_container.hide()
-            self.guest_container.hide()
-            if visible:
-                visible.setGraphicsEffect(None)
-
-            if new_state == 'user' and new_user_id not in ('', 'idle'):
-                self.timetable_widget.set_user_id(new_user_id)
-                if self.peek_panel is not None:
-                    self.peek_panel.set_user_id(new_user_id)
-                self._apply_user_theme(fdata.get('config', {}))
-                self._apply_user_layout(self.width(), self.height())
-                self._fade_in(self.user_container)
-
-            elif new_state == 'guest':
-                self.timetable_widget.set_user_id('')
-                if self.peek_panel is not None:
-                    self.peek_panel.set_user_id('')
-                self._apply_guest_layout(self.width(), self.height())
-                self._fade_in(self.guest_container)
-
-            else:  # idle
-                self._transitioning = False   # nothing to fade in
-
-        if visible:
-            self._fade_out(visible, on_done=apply_new)
+        if new_state == 'user' and new_user_id not in ('', 'idle'):
+            incoming = self.user_container
+        elif new_state == 'guest':
+            incoming = self.guest_container
         else:
-            apply_new()
+            incoming = None
 
+        self._hide_timetable_peek(animate=False)
+        self.notices_widget.reset_gesture_state()
+        self.guest_notices.reset_gesture_state()
+        if self.kings_panel is not None:
+            self.kings_panel.reset_gesture_state()
+
+        if incoming is not None and incoming is visible:
+            self._prepare(incoming, new_state, new_user_id, fdata)
+            self._update_arrow_indicator()
+            self._transitioning = False
+            return
+
+        if visible is not None:
+            visible.setGraphicsEffect(None)
+            visible.lower()
+
+        if incoming is not None:
+            self._prepare(incoming, new_state, new_user_id, fdata)
+            self._fade_in(incoming, retire=visible)
+
+        elif visible is not None:
+            self._fade_out(visible, on_done=self._on_fade_to_idle_done)
+
+        else:
+            self._transitioning = False
+
+    def _prepare(self, container, new_state, new_user_id, fdata):
+        """Fill in and lay out a container before it is displayed."""
+        if container is self.user_container:
+            self.timetable_widget.set_user_id(new_user_id)
+            self._apply_user_theme(fdata.get('config', {}))
+            self._apply_user_layout(self.width(), self.height())
+            self._show_timetable(animate=False, is_initial_split=True)
+        else:
+            self.timetable_widget.set_user_id('')
+            self._apply_guest_layout(self.width(), self.height())
+            if not fdata.get('barcode_failed', False):
+                if hasattr(self, 'guest_barcode_status_lbl'):
+                    self.guest_barcode_status_lbl.hide()
+            self._show_guest_card(animate=False, is_initial_split=True)
+        self._update_arrow_indicator()
+
+    def _on_fade_to_idle_done(self):
+        self.user_container.hide()
+        self.guest_container.hide()
+        self.user_container.setGraphicsEffect(None)
+        self.guest_container.setGraphicsEffect(None)
+        self._transitioning = False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Hardware Barcode Scanner & Keyboard / Paste Input
+    # ─────────────────────────────────────────────────────────────────────
     def keyPressEvent(self, event):
-        pass
+        # Support Paste shortcuts (Ctrl+V / Shift+Insert)
+        if event.matches(QKeySequence.StandardKey.Paste):
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                text = clipboard.text()
+                if text:
+                    self._on_barcode_scanned(text)
+                    return
+
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            code = self._barcode_buffer.strip()
+            self._barcode_buffer = ""
+            if code:
+                self._on_barcode_scanned(code)
+            return
+
+        if key == Qt.Key.Key_Escape:
+            self._barcode_buffer = ""
+            return
+
+        if key == Qt.Key.Key_Backspace:
+            self._barcode_buffer = self._barcode_buffer[:-1]
+            return
+
+        # Regular characters typed by barcode reader or user
+        text = event.text()
+        if text:
+            # If there's an embedded newline in pasted text
+            if '\n' in text or '\r' in text:
+                full_text = (self._barcode_buffer + text).strip()
+                self._barcode_buffer = ""
+                if full_text:
+                    self._on_barcode_scanned(full_text)
+                return
+
+            now = time.time()
+            if now - self._barcode_buffer_time > 3.0:
+                self._barcode_buffer = ""
+            self._barcode_buffer += text
+            self._barcode_buffer_time = now
+
+    def _on_barcode_scanned(self, raw_code):
+        """Process scanned/pasted student ID barcode."""
+        if not raw_code:
+            return
+        code = str(raw_code).strip().upper()
+        code = re.sub(r'[\r\n\t ]+', '', code)
+        if not code:
+            return
+
+        print(f"[BARCODE] Scanned barcode: {code}")
+        self._last_barcode_scan_time = time.time()
+        self._last_interaction_time = time.time()
+        self._last_activity_time = time.time()
+
+        def worker():
+            urls = [API_URL]
+            if "localhost" not in API_URL and "127.0.0.1" not in API_URL:
+                urls.extend(["http://localhost:8080", "http://127.0.0.1:8080"])
+
+            for base_url in urls:
+                try:
+                    res = requests.post(
+                        f"{base_url}/api/verify-barcode",
+                        json={"barcode": code},
+                        timeout=3.0
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        user_id = data.get("user_id") or data.get("student_id") or code
+                        widgets = data.get("widgets", [])
+                        config = data.get("config", {})
+                        self.barcode_verified_signal.emit(user_id, widgets, config, True, code)
+                        return
+                    elif res.status_code in (400, 404):
+                        print(f"[BARCODE] Verify failed (status {res.status_code}: Student ID not recognized) for code: {code}")
+                        break
+                    else:
+                        print(f"[BARCODE] Verify failed (status {res.status_code}) at {base_url} for code: {code}")
+                except Exception as e:
+                    print(f"[BARCODE] Verify error at {base_url}: {e}")
+
+            self.barcode_verified_signal.emit(None, [], {}, False, code)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _write_face_data(self, data):
+        try:
+            target_dir = os.path.dirname(os.path.abspath(FACE_DATA_FILE))
+            tmp = os.path.join(target_dir, f'face_status.mirror_{os.getpid()}.tmp')
+            with open(tmp, 'w') as f:
+                json.dump(data, f)
+            for attempt in range(3):
+                try:
+                    os.replace(tmp, FACE_DATA_FILE)
+                    break
+                except PermissionError:
+                    time.sleep(0.005)
+        except Exception as e:
+            pass
+
+    def _on_barcode_verified(self, user_id, widgets, config, success, code=""):
+        """Apply verification outcome: switch to user dashboard or show guest screen."""
+        self._last_barcode_scan_time = time.time()
+        self._last_interaction_time = time.time()
+        self._last_activity_time = time.time()
+
+        if success and user_id:
+            # If same barcode is scanned while logged in -> LOG OUT
+            if self._last_state == 'user' and self.current_user_id == user_id:
+                print(f"[BARCODE] Same barcode scanned for {user_id}. Logging out.")
+                self.show_toast(f"✓ Logged Out: {user_id}", is_success=True)
+                self._auth_method = ""
+                self.face_recognized = False
+                self.current_user_id = None
+                target_state = 'guest' if self.face_detected else 'idle'
+                self._last_state = target_state
+                self._last_user_id = None
+                self._write_face_data({
+                    "state": target_state,
+                    "user_id": target_state,
+                    "recognized": False,
+                    "detected": bool(self.face_detected),
+                    "auth_method": "",
+                    "timestamp": time.time(),
+                })
+                self._trigger_transition(target_state, None, {'state': target_state})
+                return
+
+            print(f"[BARCODE] Sign-in accepted for {user_id}")
+            self._auth_method = "barcode"
+            self._barcode_auth_time = time.time()
+
+            fdata = {
+                "state": "user",
+                "user_id": user_id,
+                "user_name": user_id,
+                "widgets": widgets,
+                "config": config,
+                "recognized": True,
+                "detected": True,
+                "auth_method": "barcode",
+                "timestamp": time.time(),
+            }
+            self._write_face_data(fdata)
+            self.face_detected = True
+            self.face_recognized = True
+            self.current_user_id = user_id
+            self.current_user_name = user_id
+            self._last_state = 'user'
+            self._last_user_id = user_id
+            self._trigger_transition('user', user_id, fdata)
+            self._show_timetable(animate=True, is_initial_split=True)
+        else:
+            print(f"[BARCODE] Barcode {code} not recognized / not linked. Showing guest screen.")
+            self.show_toast(f"❌ ID Not Recognized: {code or 'Unknown'}", is_success=False)
+            if hasattr(self, 'guest_barcode_status_lbl'):
+                self.guest_barcode_status_lbl.setText("ID Not Recognized")
+                self.guest_barcode_status_lbl.show()
+
+            fdata = {
+                "state": "guest",
+                "user_id": "guest",
+                "recognized": False,
+                "detected": True,
+                "barcode_failed": True,
+                "timestamp": time.time(),
+            }
+            self._write_face_data(fdata)
+            self._auth_method = ""
+            if self._last_state != 'guest':
+                self._last_state = 'guest'
+                self._last_user_id = 'guest'
+                self._trigger_transition('guest', None, fdata)
+            else:
+                self._show_guest_card(animate=True, is_initial_split=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -784,6 +1431,16 @@ def start_gesture_daemon():
     Set MIRROR_GESTURES=0 to opt out (no camera to spare, or you are running the
     daemon yourself). GESTURE_CAMERA picks the device: an index on a desktop
     webcam, or --rpi for the loopback device the Pi's camera pipeline feeds.
+    GESTURE_FLIP=0/1 sets which physical side of you drives which panel — the
+    daemon reads it directly, so nothing needs passing here.
+
+    The daemon is given a pipe on stdin and told to exit when it closes. The
+    `finally` block below only runs on a graceful exit, and during a debugging
+    session the mirror is mostly killed rather than closed — which left a daemon
+    behind every time. Eight of them accumulated, all publishing to the same
+    status file, and the log filled with WinError 5 as each replaced a scratch
+    file another had already moved. A pipe cannot be leaked: the OS closes this
+    end however the mirror dies, so the daemon always learns about it.
     """
     if os.environ.get('MIRROR_GESTURES', '1') == '0':
         print('[MIRROR] MIRROR_GESTURES=0 — not starting the gesture daemon.')
@@ -796,9 +1453,11 @@ def start_gesture_daemon():
         args = ['--rpi'] if sys.platform.startswith('linux') else ['--camera-id', '0']
     else:
         args = ['--camera-id', camera]
+    args.append('--exit-with-parent')
 
     try:
-        proc = subprocess.Popen([sys.executable, '-u', script] + args)
+        proc = subprocess.Popen([sys.executable, '-u', script] + args,
+                                stdin=subprocess.PIPE)
         print(f'[MIRROR] Gesture daemon started (pid {proc.pid}, {" ".join(args)}).')
         return proc
     except Exception as e:

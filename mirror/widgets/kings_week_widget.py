@@ -14,6 +14,7 @@ Data comes from GET /api/kings-week, which the Go server scrapes hourly.
 """
 
 import math
+import time
 import threading
 
 import requests
@@ -30,11 +31,11 @@ from PyQt6.QtGui import (
     QLinearGradient
 )
 
-ACCENT = '#4fc3ff'          # same accent as the timetable peek and notices
+ACCENT = '#ffffff'          # white accent for selection outline
 CARD_RADIUS = 14
 
 GRID_COLUMNS = 2
-FEATURE_MIN_HEIGHT = 210    # the latest story, spanning the full width
+FEATURE_MIN_HEIGHT = 260    # the latest story, spanning the full width
 CARD_MIN_HEIGHT = 132
 GRID_SPACING = 12
 
@@ -140,9 +141,9 @@ class ArticleCard(QFrame):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        pad = 14 if self.feature else 10
+        pad = 16 if self.feature else 10
         lay.setContentsMargins(pad, pad, pad, pad)
-        lay.setSpacing(4)
+        lay.setSpacing(10 if self.feature else 10)
         lay.addStretch(1)   # push the text block to the bottom, over the scrim
 
         meta = ' • '.join(x for x in (self.article.get('author', ''),
@@ -150,7 +151,7 @@ class ArticleCard(QFrame):
         if meta:
             self.meta_lbl = QLabel(meta, self)
             self.meta_lbl.setStyleSheet(
-                f"font-size: {10 if self.feature else 9}px; font-weight: 700; "
+                f"font-size: {16 if self.feature else 9}px; font-weight: 700; "
                 f"letter-spacing: 1px; color: {ACCENT}; background: transparent; border: none;"
             )
             lay.addWidget(self.meta_lbl)
@@ -158,17 +159,21 @@ class ArticleCard(QFrame):
         self.title_lbl = QLabel(self.article.get('title', ''), self)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet(
-            f"font-size: {17 if self.feature else 12}px; font-weight: 700; "
-            f"color: #ffffff; background: transparent; border: none;"
+            f"font-size: {22 if self.feature else 13}px; font-weight: 700; "
+            f"color: #ffffff; background: transparent; border: none; line-height: 1.2;"
         )
         lay.addWidget(self.title_lbl)
 
-        # Only the feature box has the room for a standfirst.
+        # Only the feature box has the room for a standfirst. Truncate words shown.
         if self.feature and self.article.get('summary'):
-            self.summary_lbl = QLabel(self.article['summary'], self)
+            summary_text = self.article['summary'].strip()
+            words = summary_text.split()
+            if len(words) > 16:
+                summary_text = ' '.join(words[:16]) + '...'
+            self.summary_lbl = QLabel(summary_text, self)
             self.summary_lbl.setWordWrap(True)
             self.summary_lbl.setStyleSheet(
-                "font-size: 11px; color: #c9c9d4; background: transparent; border: none;"
+                "font-size: 12px; color: #c9c9d4; background: transparent; border: none; line-height: 1.4;"
             )
             lay.addWidget(self.summary_lbl)
 
@@ -284,17 +289,13 @@ class ArticleModal(QFrame):
 
         head = QHBoxLayout()
         head.setSpacing(8)
-        self.eyebrow = QLabel("KING'S WEEK", self)
-        self.eyebrow.setStyleSheet(
-            f"font-size: 9px; font-weight: 700; letter-spacing: 2px; "
-            f"color: {ACCENT}; background: transparent; border: none;"
-        )
-        head.addWidget(self.eyebrow)
+        self.eyebrow = QLabel("", self)
+        self.eyebrow.hide()
         head.addStretch(1)
         hint = QLabel("TAP TO CLOSE", self)
         hint.setStyleSheet(
-            "font-size: 9px; font-weight: 700; letter-spacing: 1px; "
-            "color: #55555f; background: transparent; border: none;"
+            "font-size: 11px; font-weight: 700; letter-spacing: 1px; "
+            "color: #71717a; background: transparent; border: none;"
         )
         head.addWidget(hint)
         root.addLayout(head)
@@ -310,7 +311,7 @@ class ArticleModal(QFrame):
         body.setStyleSheet('background: transparent;')
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(0, 0, 0, 0)
-        body_lay.setSpacing(10)
+        body_lay.setSpacing(12)
 
         self.hero = QLabel(body)
         self.hero.setScaledContents(False)
@@ -322,15 +323,15 @@ class ArticleModal(QFrame):
         self.title_lbl = QLabel(body)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet(
-            'font-size: 19px; font-weight: 700; color: #ffffff; '
-            'background: transparent; border: none;'
+            'font-size: 23px; font-weight: 700; color: #ffffff; '
+            'background: transparent; border: none; line-height: 1.25;'
         )
         body_lay.addWidget(self.title_lbl)
 
         self.meta_lbl = QLabel(body)
         self.meta_lbl.setStyleSheet(
-            'font-size: 10px; font-weight: 600; letter-spacing: 1px; '
-            'color: #8a8a96; background: transparent; border: none;'
+            'font-size: 12px; font-weight: 600; letter-spacing: 1px; '
+            'color: #94a3b8; background: transparent; border: none;'
         )
         body_lay.addWidget(self.meta_lbl)
 
@@ -341,7 +342,7 @@ class ArticleModal(QFrame):
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
         self.text_lbl.setStyleSheet(
-            'font-size: 12px; line-height: 150%; color: #d6d6de; '
+            'font-size: 15px; line-height: 160%; color: #e2e2ea; '
             'background: transparent; border: none;'
         )
         body_lay.addWidget(self.text_lbl)
@@ -349,7 +350,7 @@ class ArticleModal(QFrame):
         self.link_lbl = QLabel(body)
         self.link_lbl.setWordWrap(True)
         self.link_lbl.setStyleSheet(
-            'font-size: 9px; color: #4a4a55; background: transparent; border: none;'
+            'font-size: 11px; color: #64748b; background: transparent; border: none;'
         )
         body_lay.addWidget(self.link_lbl)
         body_lay.addStretch(1)
@@ -516,13 +517,11 @@ class KingsWeekWidget(QFrame):
     # ── Build ────────────────────────────────────────────────────────────────
 
     def _apply_frame_style(self):
-        border = ACCENT if getattr(self, '_gesture_active', False) else '#1c1c1c'
-        self.setStyleSheet(f"""
-            #KingsWeekWidget {{
+        self.setStyleSheet("""
+            #KingsWeekWidget {
                 background-color: #000000;
-                border-left: 1px solid {border};
-                border-top: 1px solid #1c1c1c;
-            }}
+                border: none;
+            }
         """)
 
     def _build_ui(self):
@@ -533,33 +532,14 @@ class KingsWeekWidget(QFrame):
         head = QHBoxLayout()
         head.setSpacing(8)
 
-        eyebrow = QLabel("KING'S WEEK", self)
-        eyebrow.setStyleSheet(
-            f"font-size: 10px; font-weight: 700; letter-spacing: 2px; "
-            f"color: {ACCENT}; background: transparent; border: none;"
-        )
-        head.addWidget(eyebrow)
-
-        self.gesture_dot = QLabel('●', self)
-        self.gesture_dot.setStyleSheet(
-            f"font-size: 9px; color: {ACCENT}; background: transparent; border: none;"
-        )
-        self.gesture_dot.hide()
-        head.addWidget(self.gesture_dot)
-        head.addStretch(1)
-
         self.edition_lbl = QLabel('', self)
         self.edition_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 600; color: #6f6f7a; "
+            "font-size: 11px; font-weight: 600; color: #8a8a96; "
             "background: transparent; border: none;"
         )
         head.addWidget(self.edition_lbl)
+        head.addStretch(1)
         root.addLayout(head)
-
-        div = QFrame(self)
-        div.setFixedHeight(1)
-        div.setStyleSheet('background: #1c1c1c;')
-        root.addWidget(div)
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
@@ -720,9 +700,6 @@ class KingsWeekWidget(QFrame):
                 best, best_dist = i, dist
 
         card = self.select_index(best)
-        # Pointing at a box that is only half on screen should bring it in.
-        if card is not None:
-            self._keep_visible(card)
         return card
 
     def _keep_visible(self, card):
@@ -740,14 +717,20 @@ class KingsWeekWidget(QFrame):
         sb = self.scroll_area.verticalScrollBar()
         return sb.value() >= sb.maximum()
 
+    def clear_selection(self):
+        self.selected_index = -1
+        for card in self.cards:
+            card.set_selected(False)
+
     def scroll_by_pixels(self, delta):
         """Same open-palm scroll the notices column uses."""
+        self._last_scroll_time = time.time()
         if self._modal_open:
             self.modal.scroll_by_pixels(delta)
             return
+        self.clear_selection()
         sb = self.scroll_area.verticalScrollBar()
         sb.setValue(sb.value() + int(delta))
-        self._snap_timer.start(SCROLL_SNAP_MS)
 
     def snap_to_nearest_box(self):
         """Come to rest with a row of boxes aligned to the top of the view."""
@@ -778,6 +761,10 @@ class KingsWeekWidget(QFrame):
 
     def activate_selected(self):
         """Tap handler: open the selected story. True if a modal opened."""
+        import time as _t
+        if _t.time() - getattr(self, '_last_scroll_time', 0.0) < 0.35:
+            return False
+
         card = self._selected_card()
         if card is None or self._modal_open:
             return False
@@ -800,13 +787,17 @@ class KingsWeekWidget(QFrame):
         self.modal.open_from(origin, self._modal_geometry())
         return True
 
-    def close_modal(self):
+    def close_modal(self, animate=True):
         """True if a modal was open and is now closing."""
         if not self._modal_open:
             return False
         self._modal_open = False
-        origin = self._modal_origin or self._modal_geometry()
-        self.modal.close_to(origin)
+        if animate:
+            origin = self._modal_origin or self._modal_geometry()
+            self.modal.close_to(origin)
+        else:
+            self.modal.stop_animations()
+            self.modal.hide()
         return True
 
     def _modal_geometry(self):
@@ -822,10 +813,11 @@ class KingsWeekWidget(QFrame):
     # ── Gesture affordance ───────────────────────────────────────────────────
 
     def set_gesture_active(self, active):
+        if not active:
+            self.clear_selection()
         if active == self._gesture_active:
             return
         self._gesture_active = active
-        self.gesture_dot.setVisible(active)
         self._apply_frame_style()
 
     def reset_gesture_state(self):
@@ -834,6 +826,7 @@ class KingsWeekWidget(QFrame):
         if self._scroll_anim is not None:
             self._scroll_anim.stop()
             self._scroll_anim = None
+        self.clear_selection()
         self.modal.stop_animations()
         if self._modal_open:
             self._modal_open = False

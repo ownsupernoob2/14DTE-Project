@@ -47,7 +47,7 @@ class TimetableWidget(QFrame):
     def __init__(self, parent=None, api_url='https://api.smartmirror.me', user_id=''):
         super().__init__(parent)
         self.setObjectName("TimetableWidget")
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setStyleSheet("background-color: #000000; border: none;")
         self.api_url = api_url
         self.user_id = user_id
         self.periods = []
@@ -68,8 +68,8 @@ class TimetableWidget(QFrame):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 20, 0, 10)
-        lay.setSpacing(28)
+        lay.setContentsMargins(0, 40, 0, 20)
+        lay.setSpacing(32)
 
         # ── CURRENT CLASS BLOCK ──────────────────────────────────────────
         current_box = QWidget(self)
@@ -79,13 +79,15 @@ class TimetableWidget(QFrame):
         c_lay.setSpacing(8)
 
         self.eyebrow_lbl = QLabel("CURRENT CLASS", current_box)
+        self.eyebrow_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.eyebrow_lbl.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 700; "
-            "letter-spacing: 2px; color: #4fc3ff; text-transform: uppercase;"
+            "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
         )
         c_lay.addWidget(self.eyebrow_lbl)
 
         self.subject_lbl = QLabel("13DTE (4)", current_box)
+        self.subject_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.subject_lbl.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 96px; font-weight: 700; "
             "color: #ffffff; line-height: 0.95; margin: 0; padding: 0;"
@@ -101,8 +103,10 @@ class TimetableWidget(QFrame):
         room_box = QVBoxLayout()
         room_box.setSpacing(4)
         r_k = QLabel("ROOM", current_box)
+        r_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         r_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.room_v = QLabel("T5", current_box)
+        self.room_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.room_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
         room_box.addWidget(r_k)
         room_box.addWidget(self.room_v)
@@ -112,8 +116,10 @@ class TimetableWidget(QFrame):
         ends_box = QVBoxLayout()
         ends_box.setSpacing(4)
         e_k = QLabel("ENDS", current_box)
+        e_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         e_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.ends_v = QLabel("10:00am", current_box)
+        self.ends_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.ends_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
         ends_box.addWidget(e_k)
         ends_box.addWidget(self.ends_v)
@@ -123,8 +129,10 @@ class TimetableWidget(QFrame):
         left_box = QVBoxLayout()
         left_box.setSpacing(4)
         l_k = QLabel("LEFT", current_box)
+        l_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         l_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
         self.left_v = QLabel("68m", current_box)
+        self.left_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
         left_box.addWidget(l_k)
         left_box.addWidget(self.left_v)
@@ -132,41 +140,62 @@ class TimetableWidget(QFrame):
 
         details_row.addStretch(1)
         c_lay.addLayout(details_row)
-
         lay.addWidget(current_box)
 
-        # ── NEXT CLASS BLOCK ─────────────────────────────────────────────
-        next_box = QFrame(self)
-        next_box.setObjectName("NextBlock")
-        next_box.setStyleSheet("""
+        # ── NEXT CLASS BLOCK (Compact Mode) ──────────────────────────────
+        self.next_box = QFrame(self)
+        self.next_box.setObjectName("NextBlock")
+        self.next_box.setStyleSheet("""
             #NextBlock {
                 border-top: 1px solid #1c1c1c;
                 padding-top: 24px;
                 background: transparent;
             }
         """)
-        n_lay = QHBoxLayout(next_box)
+        n_lay = QHBoxLayout(self.next_box)
         n_lay.setContentsMargins(0, 16, 0, 0)
-        n_lay.setSpacing(20)
+        n_lay.setSpacing(28)
 
-        next_eyebrow = QLabel("NEXT", next_box)
+        next_eyebrow = QLabel("NEXT", self.next_box)
         next_eyebrow.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
             "letter-spacing: 2px; color: #8f8f8f; text-transform: uppercase;"
         )
         n_lay.addWidget(next_eyebrow)
 
-        self.next_subj_lbl = QLabel("13DVC (5)", next_box)
+        self.next_subj_lbl = QLabel("13DVC (5)", self.next_box)
         self.next_subj_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 36px; font-weight: 700; color: #ffffff;")
         n_lay.addWidget(self.next_subj_lbl)
 
-        self.next_meta_lbl = QLabel("T1 · 10:00am", next_box)
+        self.next_meta_lbl = QLabel("T1 · 10:00am", self.next_box)
         self.next_meta_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #d0d0d0;")
         n_lay.addWidget(self.next_meta_lbl)
 
         n_lay.addStretch(1)
-        lay.addWidget(next_box)
+        lay.addWidget(self.next_box)
+
+        # ── FULL SCHEDULE BLOCK (Full Mode) ──────────────────────────────
+        self.schedule_box = QWidget(self)
+        self.schedule_box.setStyleSheet("background: transparent;")
+        self.schedule_lay = QVBoxLayout(self.schedule_box)
+        self.schedule_lay.setContentsMargins(0, 8, 0, 0)
+        self.schedule_lay.setSpacing(14)
+        self.schedule_box.hide()
+        lay.addWidget(self.schedule_box)
+
         lay.addStretch(1)
+        self.mode = 'compact'
+
+    def set_mode(self, mode):
+        """Switch between 'compact' (hero + next) and 'full' (hero + all periods)."""
+        self.mode = mode
+        if mode == 'full':
+            self.next_box.hide()
+            self.schedule_box.show()
+        else:
+            self.next_box.show()
+            self.schedule_box.hide()
+        self.update_ui()
 
     def set_user_id(self, user_id):
         if self.user_id != user_id:
@@ -255,7 +284,7 @@ class TimetableWidget(QFrame):
             self.left_v.setText("68m")
             self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
 
-        # Next class
+        # Next class (Compact Mode)
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
         if next_info:
             np = next_info['raw']
@@ -267,5 +296,59 @@ class TimetableWidget(QFrame):
         else:
             self.next_subj_lbl.setText("13DVC (5)")
             self.next_meta_lbl.setText("T1 · 10:00am")
+
+        # Full Schedule (Full Mode)
+        while self.schedule_lay.count():
+            item = self.schedule_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if self.mode == 'full':
+            divider = QWidget()
+            divider.setFixedHeight(1)
+            divider.setStyleSheet("background: #1c1c1c; margin-bottom: 8px;")
+            self.schedule_lay.addWidget(divider)
+
+            sched_periods = processed if processed else [
+                {'raw': {'subject': '13DVC (5)', 'room': 'T1', 'period': 'P2'}, 'start_formatted': '10:00am', 'is_now': False, 'is_done': False},
+                {'raw': {'subject': '13MAT (1)', 'room': 'M2', 'period': 'P3'}, 'start_formatted': '11:30am', 'is_now': False, 'is_done': False},
+                {'raw': {'subject': '13PHY (2)', 'room': 'S4', 'period': 'P4'}, 'start_formatted': '1:30pm', 'is_now': False, 'is_done': False},
+            ]
+
+            for idx, pi in enumerate(sched_periods):
+                raw = pi['raw']
+                p_label = raw.get('period') or (f"P{idx + 1}" if idx > 0 else "NEXT")
+                if pi == next_info:
+                    p_label = "NEXT"
+                subj = raw.get('subject') or raw.get('summary') or f"Subject {idx + 1}"
+                room = raw.get('room') or raw.get('location') or "T1"
+                t_str = pi['start_formatted'] if pi['start_formatted'] != '--' else "10:00am"
+
+                row_widget = QWidget(self.schedule_box)
+                row_widget.setStyleSheet("background: transparent;")
+                r_lay = QHBoxLayout(row_widget)
+                r_lay.setContentsMargins(0, 4, 0, 4)
+                r_lay.setSpacing(24)
+
+                lbl_tag = QLabel(p_label, row_widget)
+                lbl_tag.setFixedWidth(54)
+                tag_color = "#38bdf8" if (p_label == "NEXT" or pi.get('is_now')) else "#8f8f8f"
+                lbl_tag.setStyleSheet(
+                    f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
+                    f"letter-spacing: 2px; color: {tag_color}; text-transform: uppercase;"
+                )
+                r_lay.addWidget(lbl_tag)
+
+                lbl_subj = QLabel(subj, row_widget)
+                subj_color = "#ffffff" if not pi.get('is_done') else "#666666"
+                lbl_subj.setStyleSheet(f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; color: {subj_color};")
+                r_lay.addWidget(lbl_subj)
+
+                lbl_meta = QLabel(f"{room} · {t_str}", row_widget)
+                lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #a0a0a0;")
+                r_lay.addWidget(lbl_meta)
+
+                r_lay.addStretch(1)
+                self.schedule_lay.addWidget(row_widget)
 
 

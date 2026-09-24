@@ -80,8 +80,10 @@ func main() {
 	protected.GET("/dashboard/widgets", getWidgets)
 	protected.PUT("/dashboard/widgets/bulk", updateWidgetsBulk)
 
-	// Daily Notices route
+	// Daily Notices routes
 	e.GET("/api/notices", getNotices)
+	e.GET("/api/notices/config", getNoticesConfig)
+	e.POST("/api/notices/config", saveNoticesConfig)
 	protected.POST("/notices/fetch", fetchNotices)
 
 	// Kings Week route

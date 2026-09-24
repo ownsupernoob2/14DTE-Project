@@ -109,6 +109,36 @@ func fetchNotices(c echo.Context) error {
 	return c.JSON(200, map[string]string{"message": "Notices fetched successfully"})
 }
 
+const configOutFile = "data/notices_config.json"
+
+func getNoticesConfig(c echo.Context) error {
+	data, err := os.ReadFile(configOutFile)
+	if err != nil {
+		return c.JSON(200, map[string]interface{}{})
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return c.JSON(200, map[string]interface{}{})
+	}
+	return c.JSON(200, cfg)
+}
+
+func saveNoticesConfig(c echo.Context) error {
+	var body map[string]interface{}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid JSON"})
+	}
+	os.MkdirAll(dataDir, 0755)
+	data, err := json.MarshalIndent(body, "", "  ")
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to marshal config"})
+	}
+	if err := os.WriteFile(configOutFile, data, 0644); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to write config"})
+	}
+	return c.JSON(200, map[string]interface{}{"status": "ok", "config": body})
+}
+
 func fetchNoticesLogic() error {
 	os.MkdirAll(dataDir, 0755)
 
