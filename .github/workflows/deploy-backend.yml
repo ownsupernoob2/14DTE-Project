@@ -1,4 +1,4 @@
-name: Deploy Backend & Build Docker
+name: Build & Push Docker Image
 
 on:
   push:
@@ -46,26 +46,3 @@ jobs:
             ghcr.io/${{ steps.repo_owner.outputs.owner }}/smart-mirror-api:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy-droplet:
-    name: Optional Deploy to Droplet
-    needs: docker
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to DigitalOcean Droplet
-        env:
-          DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
-          DO_DROPLET_IP: ${{ secrets.DO_DROPLET_IP }}
-        if: env.DO_SSH_KEY != '' && env.DO_DROPLET_IP != ''
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DO_DROPLET_IP }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
-          script: |
-            if [ -d "/root/14DTE-Project/server" ]; then
-              cd /root/14DTE-Project/server
-              git pull origin main
-              /usr/bin/go build -o smart-mirror-api
-              systemctl restart smart-mirror-api
-            fi

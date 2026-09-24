@@ -1,20 +1,28 @@
+# Smart Mirror API
+
+This guide provides instructions for setting up and running the Smart Mirror backend server on a foreign machine using Docker. 
+
+Once running, the machine requires zero maintenance: whenever new code is pushed to the main branch on GitHub, Watchtower automatically downloads the updated image and restarts the container.
+
+---
+
 ## Step 1: Install Docker
 
 If Docker is not already installed on the target machine:
 
-### Ubuntu / Debian (Recommended for cloud servers)
-Run this single command in your terminal:
+### Ubuntu / Debian
+Run this command in the terminal:
 ```bash
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 ```
-*(Log out and log back in, or run `newgrp docker` so you can run Docker without `sudo`)*
+(Log out and log back in, or run `newgrp docker` so Docker can run without sudo)
 
-### Windows & macOS
-- **Windows**: Download and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) (ensure WSL2 is enabled).
-- **macOS**: Download and install [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/).
+### Windows and macOS
+- Windows: Install Docker Desktop for Windows (ensure WSL2 is enabled).
+- macOS: Install Docker Desktop for Mac.
 
-Verify Docker is working by opening a terminal/PowerShell and running:
+Verify Docker is working:
 ```bash
 docker --version
 docker compose version
@@ -24,16 +32,13 @@ docker compose version
 
 ## Step 2: Download the Setup Files
 
-Create a dedicated folder for the server and download the configuration files:
+Create a directory for the server and download the configuration files:
 
-### Linux / macOS (Terminal)
+### Linux / macOS
 ```bash
 mkdir -p ~/smart-mirror && cd ~/smart-mirror
 
-# Download docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/ownsupernoob2/14DTE-Project/main/server/docker-compose.yml -o docker-compose.yml
-
-# Download environment template
 curl -fsSL https://raw.githubusercontent.com/ownsupernoob2/14DTE-Project/main/server/.env.example -o .env
 ```
 
@@ -49,22 +54,17 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ownsupernoob2/14DTE-Pr
 
 ## Step 3: Configure Environment Variables
 
-Open the `.env` file in any text editor (e.g. `nano .env` or Notepad).
+Open `.env` in any text editor if changes are needed. The default configuration includes:
 
-The default values are already configured for the Smart Mirror project:
 ```ini
 AUTH0_DOMAIN=dev-pgz1qjberxzo8hkl.us.auth0.com
 AUTH0_AUDIENCE=https://dev-pgz1qjberxzo8hkl.us.auth0.com/api/v2/
 PORT=8080
 ```
-Save and close the file.
-
-> [!IMPORTANT]
-> **GitHub Package Visibility**: In GitHub, make sure the package `ghcr.io/ownsupernoob2/smart-mirror-api` has its visibility set to **Public** (under GitHub Profile -> Packages -> `smart-mirror-api` -> Package Settings -> Change visibility to Public). This allows the machine to pull the pre-built image without needing private login credentials.
 
 ---
 
-## Step 4: Start the Server (1 Command)
+## Step 4: Start the Server
 
 In the directory containing `docker-compose.yml`, run:
 
@@ -72,40 +72,32 @@ In the directory containing `docker-compose.yml`, run:
 docker compose up -d
 ```
 
-### What happens now:
+### What occurs:
 1. Docker pulls the pre-built image `ghcr.io/ownsupernoob2/smart-mirror-api:latest`.
 2. The server starts on port `8080`.
-3. The `watchtower` container starts in the background.
-4. Local storage folders (`./data`, `./encodings`, `./faces`) are automatically created.
+3. The `watchtower` container starts in the background to handle automated updates.
+4. Persistent storage directories (`./data`, `./encodings`, `./faces`) are mounted to retain user layouts, barcodes, and face encodings.
 
-Check that everything is running:
+Check container status:
 ```bash
 docker compose ps
 ```
 
-Test the health check locally:
+Test the health endpoint locally:
 ```bash
 curl http://localhost:8080/health
-# Output: {"status":"ok"}
+# Response: {"status":"ok"}
 ```
 
 ---
 
-## Step 5: Connecting with `api.smartmirror.me`
+## Step 5: Connecting with api.smartmirror.me
 
-The web dashboard (`smartmirror.me`) and the smart mirror client make requests to `https://api.smartmirror.me`. 
+The frontend web app and physical mirror communicate with `https://api.smartmirror.me`. To route requests to port 8080:
 
-To connect `api.smartmirror.me` to your Docker container on port `8080`:
-
-### Option A: Cloud Server / VPS with a Public IP (DigitalOcean, AWS, Linode, etc.)
-1. **DNS**: In your domain registrar (e.g., Namecheap or Cloudflare), create an **A Record**:
-   - **Type**: `A`
-   - **Name / Host**: `api`
-   - **Value / Target**: `<Your-Server-Public-IP>`
-2. **Automatic SSL Reverse Proxy with Caddy**:
-   Caddy automatically provisions and renews SSL certificates from Let's Encrypt with zero manual configuration.
-   
-   You can add Caddy directly to your `docker-compose.yml`:
+### Option A: Server with a Public IP
+1. In your DNS registrar, add an A record pointing `api.smartmirror.me` to your server's public IP address.
+2. Use Caddy for automated SSL termination. Add this service to your `docker-compose.yml`:
    ```yaml
      caddy:
        image: caddy:alpine
@@ -116,49 +108,42 @@ To connect `api.smartmirror.me` to your Docker container on port `8080`:
          - "443:443"
        command: caddy reverse-proxy --from https://api.smartmirror.me --to smart-mirror-api:8080
    ```
-   Or install Caddy directly on the host:
+   Or run Caddy directly on the host:
    ```bash
    sudo apt install -y caddy
    sudo caddy reverse-proxy --from https://api.smartmirror.me --to localhost:8080
    ```
 
-### Option B: Home / School Machine (Behind Router / NAT / No Public IP)
-If the machine is running in a home or school network without a static public IP or port forwarding, use a **Cloudflare Tunnel** (free, secure, and provides automated HTTPS):
-1. In the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/), go to **Networks** > **Tunnels** > **Create Tunnel**.
-2. Name it `smart-mirror-tunnel`.
-3. In Public Hostnames:
-   - **Subdomain**: `api`
-   - **Domain**: `smartmirror.me`
-   - **Service**: `HTTP` -> `localhost:8080` (or `smart-mirror-api:8080` in Docker)
-4. Cloudflare will give you a simple 1-line Docker command to run the tunnel on the machine.
+### Option B: Machine Behind NAT / Router (No Public IP)
+Use a Cloudflare Tunnel:
+1. In Cloudflare Zero Trust Dashboard, go to Networks > Tunnels > Create Tunnel.
+2. Under Public Hostnames, set:
+   - Subdomain: `api`
+   - Domain: `smartmirror.me`
+   - Service: `HTTP` -> `localhost:8080`
+3. Run the Cloudflare tunnel connector command on the host.
 
 ---
 
-## How Remote Updates Work (Hands-Off)
+## Automated Updates
 
-You do **not** need to touch this foreign machine when pushing code updates!
-
-1. You edit code and push to the `main` branch on GitHub:
-   ```bash
-   git commit -m "Update API feature"
-   git push origin main
-   ```
-2. GitHub Actions detects changes in `server/`, builds the new Docker image, and pushes it to `ghcr.io/ownsupernoob2/smart-mirror-api:latest`.
-3. Within 5 minutes, **Watchtower** on the foreign machine notices the new image, pulls it down, and restarts the container gracefully.
-4. All user data, barcodes, and face encodings remain safe in `./data` and `./encodings`.
+The foreign machine updates itself automatically:
+1. Code changes are pushed to the `main` branch on GitHub.
+2. GitHub Actions builds the new container image and pushes it to GitHub Container Registry.
+3. Watchtower detects the new image within 5 minutes, pulls it down, and restarts the container with existing persistent data preserved.
 
 ---
 
-## Helpful Commands Cheat Sheet
+## Helpful Commands
 
-Run these in the folder containing `docker-compose.yml`:
+Run these inside the directory containing `docker-compose.yml`:
 
 | Action | Command |
 | :--- | :--- |
-| **Check container status** | `docker compose ps` |
-| **View live server logs** | `docker compose logs -f smart-mirror-api` |
-| **View auto-update logs** | `docker compose logs -f watchtower` |
-| **Manually trigger an update** | `docker compose pull && docker compose up -d` |
-| **Restart the server** | `docker compose restart` |
-| **Stop the server** | `docker compose down` |
-| **Check server health** | `curl http://localhost:8080/health` |
+| Check status | `docker compose ps` |
+| View server logs | `docker compose logs -f smart-mirror-api` |
+| View auto-update logs | `docker compose logs -f watchtower` |
+| Manually pull and restart | `docker compose pull && docker compose up -d` |
+| Restart server | `docker compose restart` |
+| Stop server | `docker compose down` |
+| Health check | `curl http://localhost:8080/health` |
