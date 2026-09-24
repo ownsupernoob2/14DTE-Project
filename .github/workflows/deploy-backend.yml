@@ -54,7 +54,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to DigitalOcean Droplet
-        if: "${{ secrets.DO_SSH_KEY != '' && secrets.DO_DROPLET_IP != '' }}"
+        env:
+          DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+          DO_DROPLET_IP: ${{ secrets.DO_DROPLET_IP }}
+        if: env.DO_SSH_KEY != '' && env.DO_DROPLET_IP != ''
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_DROPLET_IP }}
