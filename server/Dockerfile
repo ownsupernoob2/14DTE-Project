@@ -1,7 +1,9 @@
 # ----------------------------------------------------
 # Stage 1: Build the Go Server
 # ----------------------------------------------------
-FROM golang:1.22-bookworm AS builder
+FROM golang:latest AS builder
+
+ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
