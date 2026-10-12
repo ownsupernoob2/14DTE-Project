@@ -566,10 +566,9 @@ class TestFlip(unittest.TestCase):
             os.environ['GESTURE_FLIP'] = value
             self.assertFalse(default_flip(), value)
 
-    def test_the_pi_flips_and_the_desktop_does_not(self):
-        # The Pi's camera is in the mirror facing the student; the dev rig's is a
-        # webcam or phone pointing in from wherever there was room.
-        self.assertEqual(default_flip(), sys.platform.startswith('linux'))
+    def test_default_flip_defaults_to_true(self):
+        # By default, a smart mirror camera facing the user mirrors the frame so left/right match.
+        self.assertTrue(default_flip())
 
     def test_the_flags_override_the_default(self):
         self.assertTrue(gesture_engine.parse_args(['--flip'])[2])
@@ -627,6 +626,56 @@ class TestParentWatch(unittest.TestCase):
             os.close(w)
             sys.stdin.close()
             sys.stdin = orig
+
+
+class TestBackhandAndHandSelection(unittest.TestCase):
+    def test_palm_vs_backhand_detection(self):
+        e = StubEngine()
+        # Normal palm from make_hand
+        palm_hand = make_hand(0.3, 0.5)
+        self.assertFalse(e.is_backhand(palm_hand, 'Right'))
+
+        # Invert index and pinky to simulate dorsal backhand
+        back_hand = [p for p in palm_hand]
+        # Swap landmark 5 and 17 coordinates
+        p5 = palm_hand[5]
+        p17 = palm_hand[17]
+        back_hand[5] = _P(p17.x, p17.y, p17.z)
+        back_hand[17] = _P(p5.x, p5.y, p5.z)
+        self.assertTrue(e.is_backhand(back_hand, 'Right'))
+
+        # When flip is True (mirrored webcam), parity is corrected
+        # A mirrored palm has reflected x coordinates
+        flipped_palm = [p for p in back_hand]
+        self.assertFalse(e.is_backhand(flipped_palm, 'Right', flip=True))
+        # A mirrored backhand has reflected x coordinates
+        flipped_back = [p for p in palm_hand]
+        self.assertTrue(e.is_backhand(flipped_back, 'Right', flip=True))
+
+    def test_select_best_hand_filters_backhand_and_picks_closest(self):
+        class MockCat:
+            def __init__(self, name, score):
+                self.category_name = name
+                self.score = score
+
+        e = StubEngine()
+        e.flip = False
+        # Create small palm hand (further away)
+        hand_far = make_hand(0.3, 0.5, scale=0.10)
+        # Create large palm hand (closer)
+        hand_close = make_hand(0.3, 0.5, scale=0.25)
+        # Create backhand
+        back_hand = [p for p in hand_close]
+        back_hand[5] = _P(hand_close[17].x, hand_close[17].y)
+        back_hand[17] = _P(hand_close[5].x, hand_close[5].y)
+
+        # 1. Backhand is rejected, so only far hand remains
+        best, _ = e.select_best_hand([back_hand, hand_far], [[MockCat('Right', 0.9)], [MockCat('Right', 0.9)]])
+        self.assertIs(best, hand_far)
+
+        # 2. Both are palms: closer/larger hand is chosen
+        best, _ = e.select_best_hand([hand_far, hand_close], [[MockCat('Right', 0.9)], [MockCat('Right', 0.9)]])
+        self.assertIs(best, hand_close)
 
 
 if __name__ == '__main__':

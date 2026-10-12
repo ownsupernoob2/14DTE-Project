@@ -26,11 +26,11 @@ ACCENT = '#4fc3ff'
 def _row(period, state):
     """Build one period row. state is 'done', 'now' or 'upcoming'."""
     if state == 'now':
-        edge, time_col, subj_col, room_col = ACCENT, ACCENT, '#ffffff', '#d0d0d0'
+        edge, time_col, subj_col, room_col = ACCENT, ACCENT, '#ffffff', '#ffffff'
     elif state == 'done':
-        edge, time_col, subj_col, room_col = '#1c1c1c', '#5a5a5a', '#5a5a5a', '#4a4a4a'
+        edge, time_col, subj_col, room_col = '#334155', '#94a3b8', '#94a3b8', '#64748b'
     else:
-        edge, time_col, subj_col, room_col = '#2a2a2a', '#8f8f8f', '#ffffff', '#8f8f8f'
+        edge, time_col, subj_col, room_col = '#38bdf8', '#cbd5e1', '#ffffff', '#cbd5e1'
 
     row = QFrame()
     row.setObjectName('PeekRow')
@@ -38,22 +38,22 @@ def _row(period, state):
         #PeekRow {{
             background: transparent;
             border: none;
-            border-left: 2px solid {edge};
+            border-left: 3px solid {edge};
         }}
     """)
 
     lay = QHBoxLayout(row)
-    lay.setContentsMargins(12, 8, 8, 8)
-    lay.setSpacing(16)
+    lay.setContentsMargins(14, 10, 10, 10)
+    lay.setSpacing(18)
 
     raw_start = period.get('startTime') or period.get('start') or period.get('dtstart')
     raw_end = period.get('endTime') or period.get('end') or period.get('dtend')
     span = f"{_format_time_12h(raw_start)}–{_format_time_12h(raw_end)}"
 
     time_lbl = QLabel(span)
-    time_lbl.setFixedWidth(150)
+    time_lbl.setFixedWidth(160)
     time_lbl.setStyleSheet(
-        f"font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 14px; "
+        f"font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 16px; font-weight: 700; "
         f"color: {time_col}; background: transparent; border: none;"
     )
     lay.addWidget(time_lbl)
@@ -61,7 +61,7 @@ def _row(period, state):
     subj = period.get('subject') or period.get('summary') or '—'
     subj_lbl = QLabel(subj)
     subj_lbl.setStyleSheet(
-        f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; "
+        f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; "
         f"font-weight: 700; color: {subj_col}; background: transparent; border: none;"
     )
     lay.addWidget(subj_lbl, 1)
@@ -70,7 +70,7 @@ def _row(period, state):
     if room:
         room_lbl = QLabel(room)
         room_lbl.setStyleSheet(
-            f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; "
+            f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 700; "
             f"color: {room_col}; background: transparent; border: none;"
         )
         room_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -104,15 +104,15 @@ class SchedulePeekWidget(QFrame):
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(10)
+        root.setSpacing(12)
 
         hdr = QHBoxLayout()
         hdr.setSpacing(12)
 
         eyebrow = QLabel("TODAY'S TIMETABLE")
         eyebrow.setStyleSheet(
-            f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; "
-            f"font-weight: 700; letter-spacing: 2px; color: {ACCENT}; "
+            f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; "
+            f"font-weight: 800; letter-spacing: 2px; color: {ACCENT}; "
             f"background: transparent; border: none;"
         )
         hdr.addWidget(eyebrow)
@@ -120,8 +120,8 @@ class SchedulePeekWidget(QFrame):
 
         self.date_lbl = QLabel('')
         self.date_lbl.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 12px; "
-            "color: #8f8f8f; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 15px; font-weight: 600; "
+            "color: #cbd5e1; background: transparent; border: none;"
         )
         hdr.addWidget(self.date_lbl)
         root.addLayout(hdr)

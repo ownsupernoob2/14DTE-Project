@@ -81,33 +81,34 @@ class TimetableWidget(QFrame):
         self.eyebrow_lbl = QLabel("CURRENT CLASS", current_box)
         self.eyebrow_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.eyebrow_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 700; "
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
             "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
         )
         c_lay.addWidget(self.eyebrow_lbl)
 
         self.subject_lbl = QLabel("13DTE (4)", current_box)
         self.subject_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.subject_lbl.setWordWrap(True)
         self.subject_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 96px; font-weight: 700; "
-            "color: #ffffff; line-height: 0.95; margin: 0; padding: 0;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+            "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
         )
         c_lay.addWidget(self.subject_lbl)
 
         # Details Row (ROOM, ENDS, LEFT)
         details_row = QHBoxLayout()
         details_row.setContentsMargins(0, 12, 0, 0)
-        details_row.setSpacing(44)
+        details_row.setSpacing(24)
 
         # Room
         room_box = QVBoxLayout()
         room_box.setSpacing(4)
         r_k = QLabel("ROOM", current_box)
         r_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        r_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
+        r_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.room_v = QLabel("T5", current_box)
         self.room_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.room_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+        self.room_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 32px; font-weight: 800; color: #ffffff;")
         room_box.addWidget(r_k)
         room_box.addWidget(self.room_v)
         details_row.addLayout(room_box)
@@ -117,10 +118,10 @@ class TimetableWidget(QFrame):
         ends_box.setSpacing(4)
         e_k = QLabel("ENDS", current_box)
         e_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        e_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
+        e_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.ends_v = QLabel("10:00am", current_box)
         self.ends_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.ends_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+        self.ends_v.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 32px; font-weight: 800; color: #ffffff;")
         ends_box.addWidget(e_k)
         ends_box.addWidget(self.ends_v)
         details_row.addLayout(ends_box)
@@ -130,10 +131,10 @@ class TimetableWidget(QFrame):
         left_box.setSpacing(4)
         l_k = QLabel("LEFT", current_box)
         l_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        l_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #8f8f8f; letter-spacing: 1px;")
+        l_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.left_v = QLabel("68m", current_box)
         self.left_v.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
+        self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
         left_box.addWidget(l_k)
         left_box.addWidget(self.left_v)
         details_row.addLayout(left_box)
@@ -158,17 +159,18 @@ class TimetableWidget(QFrame):
 
         next_eyebrow = QLabel("NEXT", self.next_box)
         next_eyebrow.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
-            "letter-spacing: 2px; color: #8f8f8f; text-transform: uppercase;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+            "letter-spacing: 2px; color: #cbd5e1; text-transform: uppercase;"
         )
         n_lay.addWidget(next_eyebrow)
 
         self.next_subj_lbl = QLabel("13DVC (5)", self.next_box)
-        self.next_subj_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 36px; font-weight: 700; color: #ffffff;")
+        self.next_subj_lbl.setWordWrap(True)
+        self.next_subj_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 32px; font-weight: 800; color: #ffffff;")
         n_lay.addWidget(self.next_subj_lbl)
 
         self.next_meta_lbl = QLabel("T1 · 10:00am", self.next_box)
-        self.next_meta_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #d0d0d0;")
+        self.next_meta_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; color: #f1f5f9;")
         n_lay.addWidget(self.next_meta_lbl)
 
         n_lay.addStretch(1)
@@ -331,21 +333,21 @@ class TimetableWidget(QFrame):
                 r_lay.setSpacing(24)
 
                 lbl_tag = QLabel(p_label, row_widget)
-                lbl_tag.setFixedWidth(54)
-                tag_color = "#38bdf8" if (p_label == "NEXT" or pi.get('is_now')) else "#8f8f8f"
+                lbl_tag.setFixedWidth(64)
+                tag_color = "#38bdf8" if (p_label == "NEXT" or pi.get('is_now')) else "#cbd5e1"
                 lbl_tag.setStyleSheet(
-                    f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 700; "
+                    f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 800; "
                     f"letter-spacing: 2px; color: {tag_color}; text-transform: uppercase;"
                 )
                 r_lay.addWidget(lbl_tag)
 
                 lbl_subj = QLabel(subj, row_widget)
-                subj_color = "#ffffff" if not pi.get('is_done') else "#666666"
-                lbl_subj.setStyleSheet(f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; color: {subj_color};")
+                subj_color = "#ffffff" if not pi.get('is_done') else "#94a3b8"
+                lbl_subj.setStyleSheet(f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: {subj_color};")
                 r_lay.addWidget(lbl_subj)
 
                 lbl_meta = QLabel(f"{room} · {t_str}", row_widget)
-                lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #a0a0a0;")
+                lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; color: #e2e8f0;")
                 r_lay.addWidget(lbl_meta)
 
                 r_lay.addStretch(1)

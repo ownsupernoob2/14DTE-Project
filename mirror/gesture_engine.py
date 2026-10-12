@@ -57,20 +57,15 @@ RPI_CAMERA = "/dev/video10"
 def default_flip():
     """Whether to mirror the frame, unless told otherwise.
 
-    Which side of the frame your left hand lands on depends entirely on where the
-    camera physically sits, and no default is right for every rig. A camera
-    mounted in the mirror looking back at the student needs the flip: it sees the
-    student the way another person would, so their left hand arrives on the right
-    of the frame, and mirroring puts it back under the panel on their left.
-
-    The Pi is that case, so it flips. A desktop rig is a phone or webcam on a
-    stand pointing from wherever there was room, which is as often reversed as
-    not — this one was — so it does not, and `GESTURE_FLIP=1` turns it back on.
+    For a smart mirror looking back at the student, mirroring is essential:
+    the user's left hand arrives on the camera's right side, so horizontal mirroring
+    puts it under the left panel where the user is physically pointing.
+    Default is True on all platforms unless explicitly disabled via GESTURE_FLIP=0.
     """
     env = os.environ.get("GESTURE_FLIP")
     if env is not None:
         return env not in ("0", "false", "False", "no", "off", "")
-    return sys.platform.startswith("linux")
+    return True
 
 # ── Region boundaries ────────────────────────────────────────────────────────
 # Left half (x < 0.50) is the notices column; right side (x > 0.62) is the peek.
@@ -166,7 +161,7 @@ class GestureEngine:
             options = mp_vision.GestureRecognizerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
                 running_mode=mp_vision.RunningMode.VIDEO,
-                num_hands=1,
+                num_hands=2,
                 min_hand_detection_confidence=0.5,
                 min_tracking_confidence=0.5,
             )
@@ -183,6 +178,92 @@ class GestureEngine:
 
     def _palm_size(self, lm):
         return self._distance(lm[0], lm[9])
+
+    @staticmethod
+    def is_backhand(lm, handedness='Right', flip=False):
+        """True if the back of the hand faces the camera, rather than the palm.
+
+        Calculates the z-component of the palm normal using wrist (0),
+        middle knuckle (9), index knuckle (5), and pinky knuckle (17).
+        When the palmar surface faces the camera, the cross product is positive;
+        when the dorsal/backhand surface faces the camera, it is negative.
+        When the camera frame is horizontally flipped (mirror mode), the
+        x-coordinates are reflected, so the parity is corrected.
+        """
+        if not lm or len(lm) < 18:
+            return False
+        # Vector u: wrist (0) -> middle MCP (9)
+        ux = lm[9].x - lm[0].x
+        uy = lm[9].y - lm[0].y
+
+        # Vector v across knuckles
+        is_right = (handedness == 'Right')
+        if is_right:
+            # Index (5) -> Pinky (17)
+            vx = lm[17].x - lm[5].x
+            vy = lm[17].y - lm[5].y
+        else:
+            # Pinky (17) -> Index (5)
+            vx = lm[5].x - lm[17].x
+            vy = lm[5].y - lm[17].y
+
+        # 2D cross product: ux * vy - uy * vx
+        # Positive = palm facing camera; Negative = back of hand facing camera
+        nz = ux * vy - uy * vx
+        if flip:
+            nz = -nz
+        return nz < -0.01
+
+    def select_best_hand(self, hand_landmarks_list, handedness_list=None):
+        """Pick the clearest and closest hand facing the camera, ignoring backhands.
+
+        Applies temporal continuity to prevent rapid flip-flopping between hands,
+        and rejects resting hands near the bottom frame border.
+        Returns (landmarks, handedness_name) or (None, None).
+        """
+        if not hand_landmarks_list:
+            return None, None
+
+        candidates = []
+        for idx, lm in enumerate(hand_landmarks_list):
+            h_name = 'Right'
+            h_score = 1.0
+            if handedness_list and idx < len(handedness_list) and handedness_list[idx]:
+                cat = handedness_list[idx][0]
+                h_name = getattr(cat, 'category_name', 'Right')
+                h_score = getattr(cat, 'score', 1.0)
+
+            # Ignore backhands
+            if self.is_backhand(lm, h_name, flip=getattr(self, 'flip', False)):
+                continue
+
+            # Ignore hands at the very bottom edge (e.g. resting on desk or lap)
+            cx, cy = self._palm_center(lm)
+            if cy > 0.88:
+                continue
+
+            # Palm size reflects closeness to camera (larger = closer)
+            size = self._palm_size(lm)
+            if size < MIN_PALM_SIZE:
+                continue
+
+            # Composite metric: closest (size) and clearest (detection confidence)
+            composite_score = size * (h_score ** 0.5)
+
+            # Continuity bonus: if already tracking a hand, prefer candidate near current position
+            if self.present:
+                dist = math.hypot((cx - self.hand_x) * self.frame_aspect, cy - self.hand_y)
+                if dist < 0.28:
+                    composite_score *= 1.4
+
+            candidates.append((composite_score, lm, h_name))
+
+        if not candidates:
+            return None, None
+
+        # Sort descending by composite score: highest closeness & clarity wins
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        return candidates[0][1], candidates[0][2]
 
     def is_pinching(self, lm):
         """True while the thumb and index finger are touching — the 'click'."""
@@ -210,7 +291,11 @@ class GestureEngine:
         """Update state from one hand and return an event name, or None."""
         self.scroll_delta = 0
         x, y = self._palm_center(lm)
-        self.hand_x, self.hand_y = x, y
+        if self.present:
+            self.hand_x = 0.70 * x + 0.30 * self.hand_x
+            self.hand_y = 0.70 * y + 0.30 * self.hand_y
+        else:
+            self.hand_x, self.hand_y = x, y
         self.present = True
         self.last_seen = now
 
@@ -454,8 +539,15 @@ class GestureEngine:
                 event = None
 
                 if results.hand_landmarks:
-                    event = self.process_landmarks(results.hand_landmarks[0], now)
-                    self.write_status(event, self.scroll_delta)
+                    best_lm, _ = self.select_best_hand(
+                        results.hand_landmarks, getattr(results, 'handedness', None)
+                    )
+                    if best_lm is not None:
+                        event = self.process_landmarks(best_lm, now)
+                        self.write_status(event, self.scroll_delta)
+                    else:
+                        became_absent = self.mark_absent(now)
+                        self.write_status(force=became_absent)
                 else:
                     became_absent = self.mark_absent(now)
                     self.write_status(force=became_absent)
