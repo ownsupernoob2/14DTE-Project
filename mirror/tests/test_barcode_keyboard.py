@@ -68,9 +68,9 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self.assertTrue(hasattr(self.mirror, 'guest_barcode_status_lbl'))
         self.assertEqual(self.mirror.guest_barcode_status_lbl.text(), "Barcode Not Detected")
         
-        # Check domain label font size is enlarged (>= 68px)
+        # Check domain label font size is enlarged (48px)
         domain_style = self.mirror.guest_domain_lbl.styleSheet()
-        self.assertIn("72px", domain_style)
+        self.assertIn("48px", domain_style)
         self.assertEqual(self.mirror.guest_domain_lbl.text(), "smartmirror.me")
 
         # Check info label font size is enlarged (>= 24px)

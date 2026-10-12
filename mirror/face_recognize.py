@@ -56,6 +56,7 @@ from barcode_reader import BarcodeReader
 from config import FACE_DATA_FILE, VISION_FILE
 from timing_config import (
     IDLE_TIMEOUT_SEC,
+    GUEST_IDLE_TIMEOUT_SEC,
     GUEST_GRACE_SEC,
     USER_HOLD_SEC,
     API_POLL_INTERVAL,
@@ -84,6 +85,8 @@ api_state = {"busy": False}
 barcode_lock = threading.Lock()
 barcode_state = {"busy": False}
 
+server_online = True
+
 
 
 
@@ -93,24 +96,13 @@ faiss_index = None
 numpy_vectors = None
 user_map = []
 index_loaded = False
+server_online = True
 
 
 def download_and_load_index():
-    global faiss_index, numpy_vectors, user_map, index_loaded
-    print("[FAISS] Downloading vector encodings and user map from server...")
-    try:
-        res = requests.get(f"{API_URL}/api/download-index", timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            with open(ENCODINGS_JSON_PATH, 'w') as f:
-                json.dump(data, f)
-            print("[FAISS] Vector encodings updated from server successfully.")
-        else:
-            print(f"[FAISS] Server returned status code {res.status_code}. Using local cache.")
-    except Exception as e:
-        print(f"[FAISS] Failed to download encodings: {e}. Using local cache.")
+    global faiss_index, numpy_vectors, user_map, index_loaded, server_online
 
-    # Load from local cache if it exists, and build FAISS index locally in RAM
+    # 1. Load from local cache immediately so camera starts without network delay
     if os.path.exists(ENCODINGS_JSON_PATH):
         try:
             with open(ENCODINGS_JSON_PATH, 'r') as f:
@@ -141,6 +133,23 @@ def download_and_load_index():
             index_loaded = True
         except Exception as e:
             print(f"[FAISS] Error compiling local index: {e}")
+
+    # 2. Attempt remote sync in background thread so offline server does not delay startup
+    def _sync():
+        global server_online
+        try:
+            res = requests.get(f"{API_URL}/api/download-index", timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                with open(ENCODINGS_JSON_PATH, 'w') as f:
+                    json.dump(data, f)
+                server_online = True
+            else:
+                server_online = False
+        except Exception:
+            server_online = False
+
+    threading.Thread(target=_sync, daemon=True).start()
 
 
 # The Haar cascade the fallback uses. Built once and shared: loading the XML
@@ -199,16 +208,11 @@ def verify_face_worker(frame, on_result):
     (or NumPy fallback) and local face encodings, then query the Go server using the
     lightweight user_id to fetch the widgets.
     """
-    global faiss_index, numpy_vectors, user_map, index_loaded
+    global faiss_index, numpy_vectors, user_map, index_loaded, server_online
     try:
         # Ensure index is loaded
         if not index_loaded:
             download_and_load_index()
-
-        if (faiss_index is None and numpy_vectors is None) or not user_map:
-            print("[FAISS] No local index/map loaded. Cannot perform matching.")
-            on_result(None, [], None)
-            return
 
         # Detect all face locations in the frame first
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -217,7 +221,13 @@ def verify_face_worker(frame, on_result):
 
         if total_faces == 0:
             print("[FAISS] No face detected in frame.")
-            on_result(None, [], None)
+            on_result(None, [], None, server_online)
+            return
+
+        if (faiss_index is None and numpy_vectors is None) or not user_map:
+            print("[FAISS] No local index/map loaded. Face detected, falling back to guest mode.")
+            # Face is present, but cannot match locally and server index is absent
+            on_result(None, [], False, False)
             return
 
         if detector != "hog":
@@ -243,7 +253,7 @@ def verify_face_worker(frame, on_result):
         encodings = face_recognition.face_encodings(rgb_frame, known_face_locations=[largest_location])
         if not encodings:
             print("[FAISS] Failed to compute encoding for the selected face.")
-            on_result(None, [], None)
+            on_result(None, [], False, server_online)
             return
 
         encoding = np.array(encodings[0], dtype=np.float32).reshape(1, -1)
@@ -270,27 +280,32 @@ def verify_face_worker(frame, on_result):
             print(f"[FAISS] Match success: {matched_user_id}. Fetching widgets...")
 
             # Send lightweight text string (user_id) to fetch the student's widgets
-            res = requests.post(
-                f"{API_URL}/api/verify-face",
-                json={"user_id": matched_user_id},
-                timeout=5,
-            )
-            if res.status_code == 200:
-                data = res.json()
-                user_id = data.get("user_id", "idle")
-                widgets = data.get("widgets", [])
-                rec = bool(user_id and user_id not in ("", "idle"))
-                on_result(user_id, widgets, rec)
-            else:
-                print(f"[API] Failed to fetch widgets: status={res.status_code}")
-                on_result(None, [], False)
+            try:
+                res = requests.post(
+                    f"{API_URL}/api/verify-face",
+                    json={"user_id": matched_user_id},
+                    timeout=4,
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    user_id = data.get("user_id", "idle")
+                    widgets = data.get("widgets", [])
+                    rec = bool(user_id and user_id not in ("", "idle"))
+                    on_result(user_id, widgets, rec, True)
+                else:
+                    print(f"[API] Failed to fetch widgets: status={res.status_code}")
+                    on_result(None, [], False, False)
+            except Exception as e:
+                print(f"[API] Server connection failed while fetching widgets: {e}")
+                # Server is down: face matched locally but server cannot supply widgets
+                on_result(None, [], False, False)
         else:
             print("[FAISS] Face present but unrecognised.")
-            on_result(None, [], False)
+            on_result(None, [], False, server_online)
 
     except Exception as e:
         print(f"[FAISS] Error during local verification: {e}")
-        on_result(None, [], None)
+        on_result(None, [], False, False)
     finally:
         with api_lock:
             api_state["busy"] = False
@@ -306,14 +321,14 @@ def verify_barcode_worker(code, on_result):
         res = requests.post(
             f"{API_URL}/api/verify-barcode",
             json={"barcode": code},
-            timeout=5,
+            timeout=4,
         )
         if res.status_code == 200:
             data = res.json()
             user_id = data.get("user_id", "")
             if user_id and user_id not in ("", "idle"):
                 print(f"[BARCODE] Sign-in accepted for {user_id}")
-                on_result(user_id, data.get("widgets", []), True)
+                on_result(user_id, data.get("widgets", []), True, True)
                 return
             print("[BARCODE] Server returned no usable user_id.")
         elif res.status_code == 404:
@@ -322,10 +337,10 @@ def verify_barcode_worker(code, on_result):
             print("[BARCODE] Rate limited by server — slow down scanning.")
         else:
             print(f"[BARCODE] Verify failed: status={res.status_code}")
-        on_result(None, [], False)
+        on_result(None, [], False, True)
     except Exception as e:
-        print(f"[BARCODE] Verify error: {e}")
-        on_result(None, [], None)
+        print(f"[BARCODE] Verify error (server offline?): {e}")
+        on_result(None, [], False, False)
     finally:
         with barcode_lock:
             barcode_state["busy"] = False
@@ -362,7 +377,8 @@ def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
 
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
-                      session_widgets, in_grace, auth_method=AUTH_FACE):
+                      session_widgets, in_grace, auth_method=AUTH_FACE,
+                      server_online=True):
     """Atomically write the state JSON consumed by smart_mirror_pro.py.
 
     The .tmp file is placed in the same directory as the target so that
@@ -377,26 +393,25 @@ def write_face_status(state, detected, faces_count,
             # Hold active barcode login session for up to 300s
             if cur.get('auth_method') == 'barcode' and (time.time() - cur.get('timestamp', 0) < 300.0):
                 return
-            # Hold guest screen on barcode scan failure for at least 15s
-            if cur.get('barcode_failed') and (time.time() - cur.get('timestamp', 0) < 15.0):
-                return
         except Exception:
             pass
 
     is_recognised = (state == STATE_USER)
     data = {
-        "state":      state,
-        "detected":   detected,
-        "recognized": is_recognised,
-        "confidence": 1.0 if is_recognised else 0.0,
-        "count":      faces_count,
-        "user_id":    session_user_id   or "idle",
-        "user_name":  session_user_name or "idle",
-        "timestamp":  time.time(),
-        "widgets":    session_widgets if is_recognised else [],
-        "in_grace":   in_grace,
+        "state":         state,
+        "detected":      detected,
+        "recognized":    is_recognised,
+        "confidence":    1.0 if is_recognised else 0.0,
+        "count":         faces_count,
+        "user_id":       session_user_id   or "idle",
+        "user_name":     session_user_name or "idle",
+        "timestamp":     time.time(),
+        "widgets":       session_widgets if is_recognised else [],
+        "in_grace":      in_grace,
         # How this session was established, so the mirror can label it.
-        "auth_method": auth_method if is_recognised else "",
+        "auth_method":   auth_method if is_recognised else "",
+        "server_online": bool(server_online),
+        "server_status": "online" if server_online else "offline",
     }
     # Keep .tmp in same directory as the target so os.replace() is atomic
     # on every platform and never triggers a cross-device / access-denied error.
@@ -421,17 +436,39 @@ def write_face_status(state, detected, faces_count,
         print(f"[ERROR] Writing face_status: {e}")
 
 
+def watch_parent():
+    """Stop the daemon when the parent mirror process closes our stdin."""
+    def wait_for_eof():
+        try:
+            sys.stdin.read()
+        except Exception:
+            pass
+        print("[FACE] Parent closed the pipe — exiting.")
+        os._exit(0)
+
+    threading.Thread(target=wait_for_eof, daemon=True).start()
+
+
 def main():
+    global server_online
+    server_online = True
+
     parser = argparse.ArgumentParser(description="Smart Mirror — Face Recognition Daemon")
     parser.add_argument('--rpi',       action='store_true',
                         help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
-    parser.add_argument('--camera-id', default=4, type=int,
-                        help="Webcam index for desktop/dev mode (default: 4)")
+    default_cam = int(os.environ.get('MIRROR_CAMERA_INDEX', '0'))
+    parser.add_argument('--camera-id', default=default_cam, type=int,
+                        help=f"Webcam index for desktop/dev mode (default: {default_cam})")
     parser.add_argument('--enable-camera-barcode', action='store_true',
                         help="Enable legacy camera frame student ID barcode sign-in")
     parser.add_argument('--no-barcode', action='store_true',
                         help="Disable student ID barcode sign-in")
+    parser.add_argument('--exit-with-parent', action='store_true',
+                        help="Exit when parent closes stdin pipe")
     args = parser.parse_args()
+
+    if args.exit_with_parent:
+        watch_parent()
 
     print("=" * 60)
     print("Smart Mirror — Face Recognition Daemon")
@@ -464,23 +501,29 @@ def main():
 
     # ── Shared API result (written by background thread, read by main loop) ──
     result_lock    = threading.Lock()
-    pending_result = {"user_id": None, "widgets": [], "rec": None, "fresh": False}
+    pending_result = {"user_id": None, "widgets": [], "rec": None, "server_online": True, "fresh": False}
 
-    def on_api_result(user_id, widgets, rec):
+    def on_api_result(user_id, widgets, rec, is_server_online=True):
+        global server_online
+        server_online = is_server_online
         with result_lock:
             pending_result["user_id"] = user_id
             pending_result["widgets"] = list(widgets)
             pending_result["rec"]     = rec
+            pending_result["server_online"] = is_server_online
             pending_result["fresh"]   = True
 
     # ── Barcode result (separate slot so it cannot be lost to a face result) ──
-    barcode_result = {"user_id": None, "widgets": [], "ok": False, "fresh": False}
+    barcode_result = {"user_id": None, "widgets": [], "ok": False, "server_online": True, "fresh": False}
 
-    def on_barcode_result(user_id, widgets, ok):
+    def on_barcode_result(user_id, widgets, ok, is_server_online=True):
+        global server_online
+        server_online = is_server_online
         with result_lock:
             barcode_result["user_id"] = user_id
             barcode_result["widgets"] = list(widgets)
             barcode_result["ok"]      = bool(ok)
+            barcode_result["server_online"] = is_server_online
             barcode_result["fresh"]   = True
 
     # ── State ────────────────────────────────────────────────────────────────
@@ -493,6 +536,7 @@ def main():
     last_face_time     = 0.0
     last_api_call      = 0.0
     last_heartbeat     = 0.0
+    last_server_check  = 0.0
     unrecognised_since = None   # when the unrecognised streak started
     barcode_until      = 0.0    # a scan holds the dashboard until this time
 
@@ -530,6 +574,15 @@ def main():
 
             if detected:
                 last_face_time = now
+                # Start grace timer as soon as a face appears in IDLE so guest mode activates
+                # even if the server is offline or fails to recognize the user.
+                if state == STATE_IDLE and unrecognised_since is None and not barcode_active:
+                    unrecognised_since = now
+                    print(f"[STATE] Face detected in IDLE -- grace timer started ({GUEST_GRACE_SEC}s)")
+            else:
+                if state == STATE_IDLE and unrecognised_since is not None:
+                    # Dropped face before grace period elapsed; reset
+                    unrecognised_since = None
 
             # ── Barcode scan ─────────────────────────────────────────────────
             if barcode_reader is not None and frame_counter % BARCODE_SCAN_EVERY_N_FRAMES == 0:
@@ -553,6 +606,8 @@ def main():
                     bc_user_id = barcode_result["user_id"]
                     bc_widgets = barcode_result["widgets"]
                     bc_ok      = barcode_result["ok"]
+                    if "server_online" in barcode_result:
+                        server_online = barcode_result["server_online"]
                     barcode_result["fresh"] = False
 
             if bc_fresh and bc_ok and bc_user_id:
@@ -572,10 +627,12 @@ def main():
             with result_lock:
                 fresh = pending_result["fresh"]
                 if fresh:
-                    p_user_id = pending_result["user_id"]
-                    p_widgets = pending_result["widgets"]
-                    p_rec     = pending_result["rec"]
+                    p_user_id       = pending_result["user_id"]
+                    p_widgets       = pending_result["widgets"]
+                    p_rec           = pending_result["rec"]
+                    p_server_online = pending_result.get("server_online", True)
                     pending_result["fresh"] = False
+                    server_online   = p_server_online
 
             if fresh:
                 if p_rec is True:
@@ -592,15 +649,12 @@ def main():
                     barcode_until     = 0.0
 
                 elif p_rec is False and not barcode_active:
-                    # Face found but not recognised — start/maintain grace timer.
+                    # Face found but not recognised (or server down) — start/maintain grace timer.
                     # Skipped during a barcode session: the student already
                     # identified themselves, so an unrecognised face (theirs, or a
                     # passer-by behind them) must not demote them to GUEST.
                     if unrecognised_since is None:
                         unrecognised_since = now
-                        # Name the timer that will actually fire. A signed-in
-                        # student is held far longer than a stranger, and a log
-                        # line promising 1.5s before a 25s wait reads as a bug.
                         window = USER_HOLD_SEC if state == STATE_USER else GUEST_GRACE_SEC
                         print(f"[STATE] Unrecognised face -- "
                               f"{'holding the signed-in student' if state == STATE_USER else 'grace timer started'} "
@@ -633,16 +687,27 @@ def main():
                                          args=(frame_copy, on_api_result), daemon=True)
                     t.start()
 
-
+            # ── Periodic server health probe every 15s ───────────────────────
+            if now - last_server_check >= 15.0:
+                last_server_check = now
+                def _check_health():
+                    global server_online
+                    try:
+                        h = requests.get(f"{API_URL}/health", timeout=3)
+                        server_online = (h.status_code == 200)
+                    except Exception:
+                        server_online = False
+                threading.Thread(target=_check_health, daemon=True).start()
 
             # ── Timer-driven state transitions ───────────────────────────────
             # A live barcode session outranks the face timers: the student made a
             # deliberate gesture to sign in, so it holds for its full duration
             # even if they look away or their face is never recognised.
 
-            # No face for IDLE_TIMEOUT_SEC → go IDLE
+            # No face for timeout threshold (5s for guest, 30s for user) → go IDLE
             no_face_duration = (now - last_face_time) if last_face_time > 0 else float('inf')
-            if no_face_duration >= IDLE_TIMEOUT_SEC and not barcode_active:
+            idle_thresh = GUEST_IDLE_TIMEOUT_SEC if state == STATE_GUEST else IDLE_TIMEOUT_SEC
+            if no_face_duration >= idle_thresh and not barcode_active:
                 if state != STATE_IDLE:
                     print(f"[STATE] {state.upper()} -> IDLE  "
                           f"(no face for {no_face_duration:.1f}s)")
@@ -698,7 +763,8 @@ def main():
             # ── Write status JSON ────────────────────────────────────────────
             write_face_status(state, detected, faces_count,
                               session_user_id, session_user_name,
-                              session_widgets, in_grace, auth_method)
+                              session_widgets, in_grace, auth_method,
+                              server_online=server_online)
 
             # ── Periodic console log ─────────────────────────────────────────
             if frame_counter % 90 == 0:

@@ -3,6 +3,9 @@
 # Time (in seconds) to keep the user's dashboard active after they walk away (no face detected)
 IDLE_TIMEOUT_SEC = 30.0
 
+# Time (in seconds) to return to IDLE after a guest/visitor walks away
+GUEST_IDLE_TIMEOUT_SEC = 5.0
+
 # Time (in seconds) an unrecognized face must be visible before switching to the GUEST visitor screen
 GUEST_GRACE_SEC = 1.5
 

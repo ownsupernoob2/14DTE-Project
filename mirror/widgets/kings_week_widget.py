@@ -146,12 +146,29 @@ class ArticleCard(QFrame):
         lay.setSpacing(10 if self.feature else 10)
         lay.addStretch(1)   # push the text block to the bottom, over the scrim
 
+        if self.article.get('is_placeholder'):
+            bar1 = QWidget(self)
+            bar1.setFixedSize(80, 10)
+            bar1.setStyleSheet("background-color: #1e293b; border-radius: 3px; border: none;")
+            lay.addWidget(bar1)
+
+            bar2 = QWidget(self)
+            bar2.setFixedHeight(18)
+            bar2.setStyleSheet("background-color: #242c3d; border-radius: 4px; border: none;")
+            lay.addWidget(bar2)
+
+            bar3 = QWidget(self)
+            bar3.setFixedHeight(12)
+            bar3.setStyleSheet("background-color: #1a2230; border-radius: 3px; border: none;")
+            lay.addWidget(bar3)
+            return
+
         meta = ' • '.join(x for x in (self.article.get('author', ''),
                                       self.article.get('date', '')) if x)
         if meta:
             self.meta_lbl = QLabel(meta, self)
             self.meta_lbl.setStyleSheet(
-                f"font-size: {16 if self.feature else 9}px; font-weight: 700; "
+                f"font-size: {18 if self.feature else 13}px; font-weight: 800; "
                 f"letter-spacing: 1px; color: {ACCENT}; background: transparent; border: none;"
             )
             lay.addWidget(self.meta_lbl)
@@ -159,7 +176,7 @@ class ArticleCard(QFrame):
         self.title_lbl = QLabel(self.article.get('title', ''), self)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet(
-            f"font-size: {22 if self.feature else 13}px; font-weight: 700; "
+            f"font-size: {26 if self.feature else 18}px; font-weight: 700; "
             f"color: #ffffff; background: transparent; border: none; line-height: 1.2;"
         )
         lay.addWidget(self.title_lbl)
@@ -173,7 +190,7 @@ class ArticleCard(QFrame):
             self.summary_lbl = QLabel(summary_text, self)
             self.summary_lbl.setWordWrap(True)
             self.summary_lbl.setStyleSheet(
-                "font-size: 12px; color: #c9c9d4; background: transparent; border: none; line-height: 1.4;"
+                "font-size: 16px; font-weight: 500; color: #f1f5f9; background: transparent; border: none; line-height: 1.4;"
             )
             lay.addWidget(self.summary_lbl)
 
@@ -294,8 +311,8 @@ class ArticleModal(QFrame):
         head.addStretch(1)
         hint = QLabel("TAP TO CLOSE", self)
         hint.setStyleSheet(
-            "font-size: 11px; font-weight: 700; letter-spacing: 1px; "
-            "color: #71717a; background: transparent; border: none;"
+            "font-size: 15px; font-weight: 800; letter-spacing: 1.5px; "
+            "color: #cbd5e1; background: transparent; border: none;"
         )
         head.addWidget(hint)
         root.addLayout(head)
@@ -311,7 +328,7 @@ class ArticleModal(QFrame):
         body.setStyleSheet('background: transparent;')
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(0, 0, 0, 0)
-        body_lay.setSpacing(12)
+        body_lay.setSpacing(14)
 
         self.hero = QLabel(body)
         self.hero.setScaledContents(False)
@@ -323,15 +340,15 @@ class ArticleModal(QFrame):
         self.title_lbl = QLabel(body)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet(
-            'font-size: 23px; font-weight: 700; color: #ffffff; '
+            'font-size: 28px; font-weight: 800; color: #ffffff; '
             'background: transparent; border: none; line-height: 1.25;'
         )
         body_lay.addWidget(self.title_lbl)
 
         self.meta_lbl = QLabel(body)
         self.meta_lbl.setStyleSheet(
-            'font-size: 12px; font-weight: 600; letter-spacing: 1px; '
-            'color: #94a3b8; background: transparent; border: none;'
+            'font-size: 16px; font-weight: 600; letter-spacing: 1px; '
+            'color: #cbd5e1; background: transparent; border: none;'
         )
         body_lay.addWidget(self.meta_lbl)
 
@@ -342,7 +359,7 @@ class ArticleModal(QFrame):
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
         self.text_lbl.setStyleSheet(
-            'font-size: 15px; line-height: 160%; color: #e2e2ea; '
+            'font-size: 19px; line-height: 160%; color: #ffffff; '
             'background: transparent; border: none;'
         )
         body_lay.addWidget(self.text_lbl)
@@ -350,7 +367,7 @@ class ArticleModal(QFrame):
         self.link_lbl = QLabel(body)
         self.link_lbl.setWordWrap(True)
         self.link_lbl.setStyleSheet(
-            'font-size: 11px; color: #64748b; background: transparent; border: none;'
+            'font-size: 14px; font-weight: 600; color: #94a3b8; background: transparent; border: none;'
         )
         body_lay.addWidget(self.link_lbl)
         body_lay.addStretch(1)
@@ -478,11 +495,13 @@ class KingsWeekWidget(QFrame):
     # a lambda instead and there is no receiver, so the timer is created on the
     # worker thread, which has no event loop, and it simply never fires.
     fetched = pyqtSignal(dict)
+    fetch_error = pyqtSignal(str)
 
     def __init__(self, parent=None, api_url='https://api.smartmirror.me'):
         super().__init__(parent)
         self.api_url = api_url.rstrip('/') + '/api/kings-week'
         self.fetched.connect(self.apply_data)
+        self.fetch_error.connect(self._on_fetch_error)
 
         self.setObjectName("KingsWeekWidget")
         self._apply_frame_style()
@@ -534,7 +553,7 @@ class KingsWeekWidget(QFrame):
 
         self.edition_lbl = QLabel('', self)
         self.edition_lbl.setStyleSheet(
-            "font-size: 11px; font-weight: 600; color: #8a8a96; "
+            "font-size: 16px; font-weight: 700; color: #cbd5e1; "
             "background: transparent; border: none;"
         )
         head.addWidget(self.edition_lbl)
@@ -558,7 +577,7 @@ class KingsWeekWidget(QFrame):
 
         self.status_lbl = QLabel('Loading King’s Week…', self)
         self.status_lbl.setStyleSheet(
-            "font-size: 11px; color: #55555f; background: transparent; border: none;"
+            "font-size: 18px; font-weight: 700; color: #cbd5e1; background: transparent; border: none;"
         )
         root.addWidget(self.status_lbl)
 
@@ -567,6 +586,33 @@ class KingsWeekWidget(QFrame):
     def refresh(self):
         threading.Thread(target=self._fetch_data, daemon=True).start()
 
+    def _on_fetch_error(self, err_msg):
+        self.status_lbl.setText(err_msg)
+        self.status_lbl.setStyleSheet(
+            "font-size: 18px; font-weight: 700; color: #ef4444; background: transparent; border: none;"
+        )
+        if not self.articles:
+            self.set_placeholder_grid(err_msg)
+
+    def set_placeholder_grid(self, message="Server is experiencing downtime"):
+        """Populate skeleton boxes so King's Week maintains its grid layout and gesture scrolling."""
+        self.edition_lbl.setText("KING'S WEEK")
+        placeholder_articles = [
+            {
+                'title': message,
+                'author': "KING'S WEEK · STATUS",
+                'date': '',
+                'summary': '',
+            },
+            {'title': '', 'is_placeholder': True},
+            {'title': '', 'is_placeholder': True},
+            {'title': '', 'is_placeholder': True},
+            {'title': '', 'is_placeholder': True},
+        ]
+        self.set_articles(placeholder_articles)
+        self._is_placeholder = True
+        self.status_lbl.hide()
+
     def _fetch_data(self):
         try:
             res = requests.get(self.api_url, timeout=10)
@@ -574,8 +620,13 @@ class KingsWeekWidget(QFrame):
                 data = res.json()
                 if isinstance(data, dict):
                     self.fetched.emit(data)
+                else:
+                    self.fetch_error.emit("Server is experiencing downtime")
+            else:
+                self.fetch_error.emit("Server is experiencing downtime")
         except Exception as e:
             print(f"[KingsWeek] fetch error: {e}")
+            self.fetch_error.emit("Server is experiencing downtime")
 
     def apply_data(self, data):
         """Rebuild the grid from an /api/kings-week payload."""
@@ -593,6 +644,7 @@ class KingsWeekWidget(QFrame):
         self.edition_lbl.setText(label)
 
         articles = [a for a in (data.get('articles') or []) if a.get('title')]
+        self._is_placeholder = False
         self.set_articles(articles)
 
     def set_articles(self, articles):
@@ -602,6 +654,9 @@ class KingsWeekWidget(QFrame):
 
         if not articles:
             self.status_lbl.setText('King’s Week is not available right now.')
+            self.status_lbl.setStyleSheet(
+                "font-size: 18px; font-weight: 700; color: #cbd5e1; background: transparent; border: none;"
+            )
             self.status_lbl.show()
             return
         self.status_lbl.hide()
@@ -658,7 +713,7 @@ class KingsWeekWidget(QFrame):
 
     @property
     def has_content(self):
-        return bool(self.cards)
+        return bool(self.cards and not getattr(self, '_is_placeholder', False))
 
     # ── Selection ────────────────────────────────────────────────────────────
 

@@ -123,8 +123,8 @@ def _make_notice_card(notice):
         meta_color = '#ffb020'
         prefix = category.upper()
     else:
-        border_color = '#3a3a3a'
-        meta_color = '#8f8f8f'
+        border_color = '#475569'
+        meta_color = '#cbd5e1'
         prefix = category.upper()
 
     details = extract_details(body_raw)
@@ -148,7 +148,7 @@ def _make_notice_card(notice):
 
     lay = QVBoxLayout(card)
     lay.setContentsMargins(18, 16, 18, 16)
-    lay.setSpacing(6)
+    lay.setSpacing(8)
 
     # ── Meta row: CATEGORY · DATE · SEE NAME · LOCATION ──────────────────
     contact = notice.get('contact', '').strip()
@@ -157,8 +157,8 @@ def _make_notice_card(notice):
     meta_lbl = QLabel(meta_tag)
     meta_lbl.setStyleSheet(
         f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
-        f"font-size: 13px; font-weight: 700; color: {meta_color}; "
-        f"letter-spacing: 0.8px; background: transparent; border: none;"
+        f"font-size: 15px; font-weight: 800; color: {meta_color}; "
+        f"letter-spacing: 1px; background: transparent; border: none;"
     )
     lay.addWidget(meta_lbl)
 
@@ -166,7 +166,7 @@ def _make_notice_card(notice):
     title_lbl = QLabel(title)
     title_lbl.setWordWrap(True)
     title_lbl.setStyleSheet(
-        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
+        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; "
         "color: #ffffff; background: transparent; border: none; line-height: 1.25;"
     )
     lay.addWidget(title_lbl)
@@ -179,10 +179,90 @@ def _make_notice_card(notice):
         body_lbl = QLabel(body_text)
         body_lbl.setWordWrap(True)
         body_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; color: #d0d0d0; "
-            "background: transparent; border: none; line-height: 1.45;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 500; "
+            "color: #f1f5f9; background: transparent; border: none; line-height: 1.45;"
         )
         lay.addWidget(body_lbl)
+
+    return card
+
+
+def _make_downtime_card(message='Server is experiencing downtime'):
+    """Build a prominent, high-contrast downtime alert card matching NoticeCard style."""
+    card = QFrame()
+    card.setObjectName('NoticeCard')
+    card.setStyleSheet("""
+        #NoticeCard {
+            background-color: #0c0c0c;
+            border: 1px solid #2e1010;
+            border-left: 5px solid #ef4444;
+            border-radius: 4px;
+        }
+    """)
+
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(18, 16, 18, 16)
+    lay.setSpacing(10)
+
+    meta_lbl = QLabel("STATUS · SYSTEM ALERT")
+    meta_lbl.setStyleSheet(
+        "font-family: 'Consolas', 'SFMono-Regular', monospace; "
+        "font-size: 16px; font-weight: 800; color: #ef4444; "
+        "letter-spacing: 1.5px; background: transparent; border: none;"
+    )
+    lay.addWidget(meta_lbl)
+
+    title_lbl = QLabel(message)
+    title_lbl.setWordWrap(True)
+    title_lbl.setStyleSheet(
+        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 800; "
+        "color: #ffffff; background: transparent; border: none; line-height: 1.25;"
+    )
+    lay.addWidget(title_lbl)
+
+    body_lbl = QLabel("School notices cannot be fetched right now.")
+    body_lbl.setWordWrap(True)
+    body_lbl.setStyleSheet(
+        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; "
+        "color: #cbd5e1; background: transparent; border: none; line-height: 1.45;"
+    )
+    lay.addWidget(body_lbl)
+
+    return card
+
+
+def _make_placeholder_card():
+    """Build a skeleton notice card box to preserve layout and allow gesture scrolling."""
+    card = QFrame()
+    card.setObjectName('NoticeCard')
+    card.setStyleSheet("""
+        #NoticeCard {
+            background-color: #0c0c0c;
+            border: 1px solid #1a1a1a;
+            border-left: 4px solid #334155;
+            border-radius: 4px;
+            min-height: 120px;
+        }
+    """)
+
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(18, 16, 18, 16)
+    lay.setSpacing(12)
+
+    bar1 = QWidget()
+    bar1.setFixedSize(140, 14)
+    bar1.setStyleSheet("background-color: #1e293b; border-radius: 3px; border: none;")
+    lay.addWidget(bar1)
+
+    bar2 = QWidget()
+    bar2.setFixedHeight(22)
+    bar2.setStyleSheet("background-color: #242c3d; border-radius: 4px; border: none;")
+    lay.addWidget(bar2)
+
+    bar3 = QWidget()
+    bar3.setFixedHeight(16)
+    bar3.setStyleSheet("background-color: #1a2230; border-radius: 3px; border: none;")
+    lay.addWidget(bar3)
 
     return card
 
@@ -239,31 +319,26 @@ class NoticesWidget(QFrame):
         # Left: "Notices" + "Updated ..."
         self.title_label = QLabel('Notices')
         self.title_label.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; "
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 32px; font-weight: 800; "
             "color: #ffffff; letter-spacing: 0.2px; background: transparent; border: none;"
         )
         hdr_lay.addWidget(self.title_label)
 
         self.fetched_at_label = QLabel('')
         self.fetched_at_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 13px; "
-            "color: #8f8f8f; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 15px; font-weight: 600; "
+            "color: #cbd5e1; background: transparent; border: none;"
         )
         self.fetched_at_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
         hdr_lay.addWidget(self.fetched_at_label)
 
         hdr_lay.addStretch(1)
 
-        # No "GESTURE ACTIVE" / "PAUSED" chips here on purpose. Both states are
-        # shown by the panel's border instead — see _apply_frame_style. A label
-        # that appears and disappears in the header is a lot of visual noise for
-        # something the border can say quietly, and it competed with the title.
-
         # Right: "1 today"
         self.count_label = QLabel('')
         self.count_label.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 14px; "
-            "color: #d0d0d0; background: transparent; border: none;"
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 26px; font-weight: 800; "
+            "color: #ffffff; background: transparent; border: none;"
         )
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hdr_lay.addWidget(self.count_label)
@@ -419,7 +494,7 @@ class NoticesWidget(QFrame):
         except Exception as e:
             print(f'[NoticesWidget] fetch error: {e}')
             with self._lock:
-                self.error_msg = 'No notices available'
+                self.error_msg = 'Server is experiencing downtime'
                 self.notices = []
                 self.fetched_at = None
         QTimer.singleShot(0, self.update_ui)
@@ -497,6 +572,11 @@ class NoticesWidget(QFrame):
         self._filtered = filtered
 
         # Update header labels
+        if error_msg:
+            self.title_label.setText('Notices unavailable')
+        else:
+            self.title_label.setText('Notices')
+
         label_text = format_fetched_at(fetched_at)
         if label_text:
             self.fetched_at_label.setText(f"Updated {label_text}")
@@ -508,17 +588,25 @@ class NoticesWidget(QFrame):
         self.count_label.setText(count_text)
 
         if not filtered:
-            msg = error_msg or 'No notices available today.'
-            lbl = QLabel(msg)
-            lbl.setStyleSheet(
-                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; "
-                "color: #8f8f8f; padding: 40px 20px; font-style: italic;"
-                "background: transparent; border: none;"
-            )
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setWordWrap(True)
-            self.cards_lay.addWidget(lbl)
+            if error_msg:
+                # Top downtime notice card in large bold typography
+                self.cards_lay.addWidget(_make_downtime_card(error_msg))
+            else:
+                msg = 'No notices available today.'
+                lbl = QLabel(msg)
+                lbl.setStyleSheet(
+                    "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
+                    "color: #cbd5e1; padding: 24px 12px; background: transparent; border: none;"
+                )
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.cards_lay.addWidget(lbl)
+
+            # Preserve skeleton placeholder cards so layout stays intact and scrollable
+            for _ in range(3):
+                self.cards_lay.addWidget(_make_placeholder_card())
+
             self.cards_lay.addStretch(1)
+            self._auto_scroll_paused_until = time.time() + 4.0
             return
 
         # Add cards

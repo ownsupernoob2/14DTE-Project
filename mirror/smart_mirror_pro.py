@@ -43,15 +43,21 @@ KINGS_IDLE_MS        = 20_000
 class SmartMirrorPro(QMainWindow):
     barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
     banner_fetched_signal = pyqtSignal(str)
+    server_status_signal = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Smart Mirror")
         self.setStyleSheet("background-color: #000000;")
 
+        # ── Server connectivity & offline state ──────────────────────────
+        self.server_is_down = False
+        self._admin_banner_msg = ""
+
         # ── Cross-thread signal connections ──────────────────────────────
         self.barcode_verified_signal.connect(self._on_barcode_verified)
         self.banner_fetched_signal.connect(self._update_banner)
+        self.server_status_signal.connect(self._on_server_status_changed)
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         hk_id = QFontDatabase.addApplicationFont(
@@ -165,24 +171,24 @@ class SmartMirrorPro(QMainWindow):
                 border-bottom: 1px solid #4a1414;
             }
         """)
-        self.banner_frame.setFixedHeight(48)
+        self.banner_frame.setFixedHeight(54)
         self.banner_frame.hide()
 
         lay = QHBoxLayout(self.banner_frame)
         lay.setContentsMargins(24, 6, 24, 6)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
         self.tag_lbl = QLabel("Notice", self.banner_frame)
         self.tag_lbl.setStyleSheet(
-            'font-family: "Segoe UI", sans-serif; font-size: 11px; font-weight: 700; '
-            'color: #1a0000; background-color: #ff4d4d; border-radius: 3px; padding: 2px 8px;'
+            'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; '
+            'color: #ffffff; background-color: #dc2626; border-radius: 4px; padding: 4px 10px;'
         )
         lay.addWidget(self.tag_lbl)
 
         self.banner_label = QLabel(self.banner_frame)
         self.banner_label.setStyleSheet(
-            'font-family: "Segoe UI", sans-serif; color: #ffdcdc; '
-            'font-size: 14px; font-weight: 500;'
+            'font-family: "Segoe UI", sans-serif; color: #ffffff; '
+            'font-size: 18px; font-weight: 600;'
         )
         lay.addWidget(self.banner_label, 1)
 
@@ -252,25 +258,25 @@ class SmartMirrorPro(QMainWindow):
             self.toast_frame.setStyleSheet("""
                 #ToastFrame {
                     background: rgba(6, 78, 59, 0.95);
-                    border: 1px solid #10b981;
-                    border-radius: 22px;
+                    border: 2px solid #10b981;
+                    border-radius: 24px;
                 }
             """)
-            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #ecfdf5; background: transparent; border: none;")
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 700; color: #ffffff; background: transparent; border: none;")
         else:
             self.toast_frame.setStyleSheet("""
                 #ToastFrame {
                     background: rgba(127, 29, 29, 0.95);
-                    border: 1px solid #ef4444;
-                    border-radius: 22px;
+                    border: 2px solid #ef4444;
+                    border-radius: 24px;
                 }
             """)
-            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef2f2; background: transparent; border: none;")
+            self.toast_lbl.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 700; color: #ffffff; background: transparent; border: none;")
 
         self.toast_lbl.setText(message)
         self.toast_lbl.adjustSize()
-        tw = max(320, self.toast_lbl.sizeHint().width() + 64)
-        th = 44
+        tw = max(380, self.toast_lbl.sizeHint().width() + 72)
+        th = 48
         self.toast_frame.setGeometry((self.width() - tw) // 2, 24, tw, th)
         self.toast_frame.show()
         self.toast_frame.raise_()
@@ -342,6 +348,7 @@ class SmartMirrorPro(QMainWindow):
         # For backwards compatibility in tests that access peek_panel / kings_panel
         self.peek_panel = self.timetable_widget
         self.kings_panel = self.kings_widget
+        self.kings_widget.clear_selection()
 
         self.user_container.hide()
 
@@ -408,6 +415,7 @@ class SmartMirrorPro(QMainWindow):
             parent=self.guest_stack_container,
             api_url=API_URL
         )
+        self.guest_kings_widget.clear_selection()
 
         # Right main: Centered smartmirror.me registration prompt (On top, slides away)
         self.guest_register_card = QWidget(self.guest_stack_container)
@@ -422,18 +430,29 @@ class SmartMirrorPro(QMainWindow):
         # Barcode status banner / headline in large bold typography
         self.guest_barcode_status_lbl = QLabel("Barcode Not Detected", self.guest_register_card)
         self.guest_barcode_status_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 36px; font-weight: 700; "
-            "color: #f59e0b; background: transparent; border: none; letter-spacing: 0.5px;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 40px; font-weight: 800; "
+            "color: #fbbf24; background: transparent; border: none; letter-spacing: 0.5px;"
         )
         self.guest_barcode_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.guest_barcode_status_lbl.hide()
         card_lay.addWidget(self.guest_barcode_status_lbl)
 
-        # Domain title with increased, bold prominence
+        # Server status alert banner on guest screen
+        self.guest_server_status_lbl = QLabel("Server is experiencing downtime", self.guest_register_card)
+        self.guest_server_status_lbl.setWordWrap(True)
+        self.guest_server_status_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 800; "
+            "color: #ef4444; background: transparent; border: none; letter-spacing: 0.5px; padding: 0 4px;"
+        )
+        self.guest_server_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.guest_server_status_lbl.hide()
+        card_lay.addWidget(self.guest_server_status_lbl)
+
+        # Domain title with clean prominence (fits column without cutoff)
         domain_lbl = QLabel("smartmirror.me", self.guest_register_card)
         domain_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 72px; font-weight: 900; "
-            "color: #ffffff; background: transparent; border: none; letter-spacing: 2px;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 48px; font-weight: 900; "
+            "color: #ffffff; background: transparent; border: none; letter-spacing: 1px;"
         )
         domain_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_lay.addWidget(domain_lbl)
@@ -446,8 +465,8 @@ class SmartMirrorPro(QMainWindow):
         )
         info_lbl.setWordWrap(True)
         info_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; font-weight: 500; "
-            "color: #cbd5e1; background: transparent; border: none; line-height: 1.5;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; font-weight: 600; "
+            "color: #f1f5f9; background: transparent; border: none; line-height: 1.5;"
         )
         info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_lay.addWidget(info_lbl)
@@ -514,7 +533,7 @@ class SmartMirrorPro(QMainWindow):
             self._layout_peek_stage(animate=False)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Banner polling
+    # Banner polling & server status
     # ─────────────────────────────────────────────────────────────────────
     def _poll_banner(self):
         def worker():
@@ -523,15 +542,66 @@ class SmartMirrorPro(QMainWindow):
                 if res.status_code == 200:
                     msg = res.json().get("message", "")
                     self.banner_fetched_signal.emit(msg)
+                    self.server_status_signal.emit(True)
+                else:
+                    self.server_status_signal.emit(False)
             except Exception:
-                pass
+                self.server_status_signal.emit(False)
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_server_status_changed(self, is_online):
+        was_down = self.server_is_down
+        self.server_is_down = not is_online
+        if self.server_is_down:
+            if not was_down:
+                print("[MIRROR] Server detected as OFFLINE")
+                if self._last_state in ('guest', 'user'):
+                    self.show_toast("Server is experiencing downtime", is_success=False)
+            self._update_offline_banner(True)
+            if hasattr(self, 'guest_server_status_lbl'):
+                self.guest_server_status_lbl.show()
+        else:
+            if was_down:
+                print("[MIRROR] Server back ONLINE")
+                self.show_toast("Server Connected", is_success=True)
+            self._update_offline_banner(False)
+            if hasattr(self, 'guest_server_status_lbl'):
+                self.guest_server_status_lbl.hide()
+
+    def _update_offline_banner(self, is_down):
+        if is_down:
+            if self._admin_banner_msg:
+                self._update_banner(self._admin_banner_msg)
+            else:
+                self.banner_frame.hide()
+        else:
+            if self._admin_banner_msg:
+                self._update_banner(self._admin_banner_msg)
+            else:
+                self.banner_frame.hide()
+        # Re-apply layout in case banner height changed
+        if hasattr(self, 'user_container') and not self.user_container.isHidden():
+            self._apply_user_layout(self.width(), self.height())
+        elif hasattr(self, 'guest_container') and not self.guest_container.isHidden():
+            self._apply_guest_layout(self.width(), self.height())
+
     def _update_banner(self, message):
+        self._admin_banner_msg = message or ""
         if message:
+            self.tag_lbl.setText("Notice")
+            self.tag_lbl.setStyleSheet(
+                'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; '
+                'color: #ffffff; background-color: #dc2626; border-radius: 4px; padding: 4px 10px;'
+            )
             self.banner_label.setText(message)
+            self.banner_label.setStyleSheet(
+                'font-family: "Segoe UI", sans-serif; color: #ffffff; '
+                'font-size: 18px; font-weight: 600;'
+            )
             self.banner_frame.show()
             self.banner_frame.raise_()
+        elif self.server_is_down:
+            self._update_offline_banner(True)
         else:
             self.banner_frame.hide()
         # Re-apply layout in case banner height changed
@@ -739,7 +809,7 @@ class SmartMirrorPro(QMainWindow):
             if animate:
                 anim_gc = QPropertyAnimation(self.guest_register_card, b"geometry", self)
                 anim_gc.setDuration(TIMETABLE_ANIM_MS)
-                anim_gc.setStartValue(QRect(0, -ch, cw, ch))
+                anim_gc.setStartValue(self.guest_register_card.geometry())
                 anim_gc.setEndValue(QRect(0, 0, cw, ch))
                 anim_gc.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -816,11 +886,14 @@ class SmartMirrorPro(QMainWindow):
                 self.edge_arrow_label.hide()
                 return
             self.edge_arrow_label.setText("▲")
-        else:
+        elif self._last_state == 'guest':
             if not self._guest_card_slid_away:
                 self.edge_arrow_label.hide()
                 return
             self.edge_arrow_label.setText("▲")
+        else:
+            self.edge_arrow_label.hide()
+            return
 
         w = self.width()
         left_w = int(w * 0.50)
@@ -917,6 +990,8 @@ class SmartMirrorPro(QMainWindow):
             else:
                 self.indicator_bar.hide()
                 self._update_arrow_indicator()
+        else:
+            self.indicator_bar.hide()
 
         # ── Handle Events (Right-side / Top-Right Dwell Toggle) ───────────
         dwell_filled = (right_dwell >= 0.98)
@@ -925,7 +1000,7 @@ class SmartMirrorPro(QMainWindow):
         if right_dwell < 0.2:
             self._dwell_already_triggered = False
 
-        if dwell_trigger:
+        if dwell_trigger and self._last_state in ('user', 'guest'):
             self._dwell_already_triggered = True
             self.indicator_bar.hide()
             if self._last_state == 'user':
@@ -953,8 +1028,9 @@ class SmartMirrorPro(QMainWindow):
             active_kings = None
             if self._last_state == 'user' and self._timetable_slid_away:
                 active_kings = self.kings_widget
-            elif self._last_state == 'guest' and self._guest_card_slid_away:
-                active_kings = self.guest_kings_widget
+            elif self._last_state == 'guest':
+                if self._guest_card_slid_away or (hasattr(self, 'guest_kings_widget') and self.guest_kings_widget.y() < self.height()):
+                    active_kings = self.guest_kings_widget
 
             if active_kings is not None:
                 if event == "scroll" and delta != 0:
@@ -973,21 +1049,32 @@ class SmartMirrorPro(QMainWindow):
                 elif event not in ("scroll", "fling"):
                     self._focus_kings_target(active_kings, data)
 
-        # Affordances
-        if notices is not None:
-            notices.set_gesture_active(region == GESTURE_REGION_LEFT)
-        if self.kings_widget is not None:
-            self.kings_widget.set_gesture_active(
-                region == GESTURE_REGION_RIGHT
-                and self._last_state == 'user'
-                and self._timetable_slid_away
-            )
-        if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
-            self.guest_kings_widget.set_gesture_active(
-                region == GESTURE_REGION_RIGHT
-                and self._last_state == 'guest'
-                and self._guest_card_slid_away
-            )
+        # Affordances: strictly mutually exclusive to prevent double highlighting
+        if region == GESTURE_REGION_LEFT:
+            if notices is not None:
+                notices.set_gesture_active(True)
+            if self.kings_widget is not None:
+                self.kings_widget.set_gesture_active(False)
+            if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+                self.guest_kings_widget.set_gesture_active(False)
+        elif region == GESTURE_REGION_RIGHT:
+            if notices is not None:
+                notices.set_gesture_active(False)
+            if self.kings_widget is not None:
+                self.kings_widget.set_gesture_active(
+                    self._last_state == 'user' and self._timetable_slid_away
+                )
+            if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+                self.guest_kings_widget.set_gesture_active(
+                    self._last_state == 'guest' and self._guest_card_slid_away
+                )
+        else:
+            if notices is not None:
+                notices.set_gesture_active(False)
+            if self.kings_widget is not None:
+                self.kings_widget.set_gesture_active(False)
+            if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+                self.guest_kings_widget.set_gesture_active(False)
 
     def _focus_kings(self, data):
         self._focus_kings_target(self.kings_widget, data)
@@ -1093,10 +1180,23 @@ class SmartMirrorPro(QMainWindow):
                 self._trigger_transition('guest', None, {'state': 'guest'})
                 return
 
+        now = time.time()
+        file_valid = False
+        fdata = {}
         if os.path.exists(FACE_DATA_FILE):
             try:
                 with open(FACE_DATA_FILE) as f:
                     fdata = json.load(f)
+                stamp = fdata.get('timestamp', 0.0)
+                # Stale daemon check: if file is newer than 4.0 seconds, consider face status live
+                if now - stamp <= 4.0:
+                    file_valid = True
+            except Exception:
+                pass
+
+            if file_valid:
+                if "server_online" in fdata:
+                    self.server_status_signal.emit(bool(fdata["server_online"]))
 
                 self.face_detected   = fdata.get('detected', False)
                 self.face_recognized = fdata.get('recognized', False)
@@ -1105,56 +1205,64 @@ class SmartMirrorPro(QMainWindow):
 
                 new_state   = fdata.get('state', 'idle')
                 new_user_id = fdata.get('user_id', 'idle')
+            else:
+                self.face_detected   = False
+                self.face_recognized = False
+                self.face_confidence = 0.0
+                self.in_grace        = False
+                new_state   = 'idle'
+                new_user_id = 'idle'
 
-                # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
-                if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
-                    if new_state in ('idle', 'guest'):
-                        new_state = 'user'
-                        new_user_id = self.current_user_id
+            # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
+            if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
+                if new_state in ('idle', 'guest'):
+                    new_state = 'user'
+                    new_user_id = self.current_user_id
 
-                # Hold guest screen for at least 15s after a barcode scan attempt
-                if self._last_state == 'guest' and getattr(self, '_last_barcode_scan_time', 0) > 0:
-                    if time.time() - self._last_barcode_scan_time < 15.0:
-                        if new_state == 'idle':
-                            new_state = 'guest'
-                            new_user_id = 'guest'
+            # Hold guest screen for at least 15s after a barcode scan attempt
+            if self._last_state == 'guest' and getattr(self, '_last_barcode_scan_time', 0) > 0:
+                if now - self._last_barcode_scan_time < 15.0:
+                    if new_state == 'idle':
+                        new_state = 'guest'
+                        new_user_id = 'guest'
 
-                state_changed = (new_state != self._last_state)
-                user_switched = (
-                    new_state == 'user'
-                    and new_user_id != self._last_user_id
-                    and new_user_id not in ('', 'idle')
-                )
+            state_changed = (new_state != self._last_state)
+            user_switched = (
+                new_state == 'user'
+                and new_user_id != self._last_user_id
+                and new_user_id not in ('', 'idle')
+            )
 
-                # ── Guard: Don't interrupt active interactions ─────────────
-                is_interacting = (
-                    (time.time() - self._last_interaction_time < 6.0)
+            # ── Guard: Don't interrupt active interactions IF face is actually detected ─────
+            # Gestures alone without a face must never hold the mirror from fading to idle.
+            is_interacting = (
+                self.face_detected and (
+                    (now - self._last_interaction_time < 6.0)
                     or (self.kings_widget and self.kings_widget.modal_open)
+                    or (hasattr(self, 'guest_kings_widget') and self.guest_kings_widget and self.guest_kings_widget.modal_open)
                     or (self.indicator_bar and not self.indicator_bar.isHidden())
                 )
-                if is_interacting and not user_switched:
-                    # If state is trying to demote from user -> guest/idle or guest -> idle while interacting
-                    if (self._last_state == 'user' and new_state in ('guest', 'idle')) or (self._last_state == 'guest' and new_state == 'idle'):
-                        pass  # Defer transition while user is actively interacting
-                    elif (state_changed or user_switched) and not self._transitioning:
-                        self._transitioning = True
-                        self._last_state    = new_state
-                        self._last_user_id  = new_user_id
-                        self.current_user_id   = new_user_id
-                        self.current_user_name = fdata.get('user_name', '')
-                        self._last_activity_time = time.time()
-                        self._trigger_transition(new_state, new_user_id, fdata)
+            )
+            if is_interacting and not user_switched:
+                # If state is trying to demote from user -> guest/idle or guest -> idle while interacting
+                if (self._last_state == 'user' and new_state in ('guest', 'idle')) or (self._last_state == 'guest' and new_state == 'idle'):
+                    pass  # Defer transition while user is actively interacting
                 elif (state_changed or user_switched) and not self._transitioning:
                     self._transitioning = True
                     self._last_state    = new_state
                     self._last_user_id  = new_user_id
                     self.current_user_id   = new_user_id
                     self.current_user_name = fdata.get('user_name', '')
-                    self._last_activity_time = time.time()
+                    self._last_activity_time = now
                     self._trigger_transition(new_state, new_user_id, fdata)
-
-            except Exception:
-                pass
+            elif (state_changed or user_switched) and not self._transitioning:
+                self._transitioning = True
+                self._last_state    = new_state
+                self._last_user_id  = new_user_id
+                self.current_user_id   = new_user_id
+                self.current_user_name = fdata.get('user_name', '')
+                self._last_activity_time = now
+                self._trigger_transition(new_state, new_user_id, fdata)
 
         # ── 20-second Inactivity Darkened Overlay ─────────────────────────
         if self._last_state in ('guest', 'user') and not self._transitioning:
@@ -1165,6 +1273,9 @@ class SmartMirrorPro(QMainWindow):
         # Status dot
         if self.face_recognized:
             self.status_dot.setStyleSheet("background: #00c850; border-radius: 5px;")
+            self.status_dot.show()
+        elif self.server_is_down and self._last_state in ('guest', 'user'):
+            self.status_dot.setStyleSheet("background: #ef4444; border-radius: 5px;")
             self.status_dot.show()
         elif self.in_grace:
             self.status_dot.setStyleSheet("background: #ff9600; border-radius: 5px;")
@@ -1190,8 +1301,12 @@ class SmartMirrorPro(QMainWindow):
         self._hide_timetable_peek(animate=False)
         self.notices_widget.reset_gesture_state()
         self.guest_notices.reset_gesture_state()
-        if self.kings_panel is not None:
-            self.kings_panel.reset_gesture_state()
+        if self.kings_widget is not None:
+            self.kings_widget.reset_gesture_state()
+            self.kings_widget.clear_selection()
+        if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+            self.guest_kings_widget.reset_gesture_state()
+            self.guest_kings_widget.clear_selection()
 
         if incoming is not None and incoming is visible:
             self._prepare(incoming, new_state, new_user_id, fdata)
@@ -1226,6 +1341,11 @@ class SmartMirrorPro(QMainWindow):
             if not fdata.get('barcode_failed', False):
                 if hasattr(self, 'guest_barcode_status_lbl'):
                     self.guest_barcode_status_lbl.hide()
+            if hasattr(self, 'guest_server_status_lbl'):
+                if self.server_is_down:
+                    self.guest_server_status_lbl.show()
+                else:
+                    self.guest_server_status_lbl.hide()
             self._show_guest_card(animate=False, is_initial_split=True)
         self._update_arrow_indicator()
 
@@ -1234,6 +1354,10 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container.hide()
         self.user_container.setGraphicsEffect(None)
         self.guest_container.setGraphicsEffect(None)
+        if self.kings_widget is not None:
+            self.kings_widget.clear_selection()
+        if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
+            self.guest_kings_widget.clear_selection()
         self._transitioning = False
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1396,7 +1520,7 @@ class SmartMirrorPro(QMainWindow):
             self._show_timetable(animate=True, is_initial_split=True)
         else:
             print(f"[BARCODE] Barcode {code} not recognized / not linked. Showing guest screen.")
-            self.show_toast(f"❌ ID Not Recognized: {code or 'Unknown'}", is_success=False)
+            self.show_toast(f"ID Not Recognized: {code or 'Unknown'}", is_success=False)
             if hasattr(self, 'guest_barcode_status_lbl'):
                 self.guest_barcode_status_lbl.setText("ID Not Recognized")
                 self.guest_barcode_status_lbl.show()
@@ -1420,6 +1544,57 @@ class SmartMirrorPro(QMainWindow):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def _get_cli_camera():
+    for i, arg in enumerate(sys.argv):
+        if arg == '--camera-id' and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+def _is_rpi_cli():
+    return '--rpi' in sys.argv or sys.platform.startswith('linux')
+
+
+def start_face_daemon():
+    """Launch face_recognize.py alongside the UI, and return the process.
+
+    Set MIRROR_FACE_DAEMON=0 to opt out (e.g. if running the face daemon externally).
+    If a face daemon is already running and publishing fresh heartbeats to
+    face_status.json, this gracefully detects it and avoids starting a duplicate.
+    """
+    if os.environ.get('MIRROR_FACE_DAEMON', '1') == '0':
+        print('[MIRROR] MIRROR_FACE_DAEMON=0 — not starting the face daemon.')
+        return None
+
+    if os.path.exists(FACE_DATA_FILE):
+        try:
+            with open(FACE_DATA_FILE) as f:
+                data = json.load(f)
+            if time.time() - data.get('timestamp', 0.0) < 2.5:
+                print('[MIRROR] Face daemon is already running externally.')
+                return None
+        except Exception:
+            pass
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'face_recognize.py')
+    camera = os.environ.get('MIRROR_CAMERA_INDEX') or _get_cli_camera()
+    if camera is None:
+        args = ['--rpi'] if _is_rpi_cli() else ['--camera-id', '0']
+    else:
+        args = ['--camera-id', str(camera)]
+    args.append('--exit-with-parent')
+
+    try:
+        proc = subprocess.Popen([sys.executable, '-u', script] + args,
+                                stdin=subprocess.PIPE)
+        print(f'[MIRROR] Face recognition daemon started (pid {proc.pid}, {" ".join(args)}).')
+        return proc
+    except Exception as e:
+        print(f'[MIRROR] Could not start the face recognition daemon: {e}')
+        return None
+
+
 def start_gesture_daemon():
     """Launch gesture_engine.py alongside the UI, and return the process.
 
@@ -1448,11 +1623,11 @@ def start_gesture_daemon():
 
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'gesture_engine.py')
-    camera = os.environ.get('GESTURE_CAMERA')
+    camera = os.environ.get('GESTURE_CAMERA') or _get_cli_camera()
     if camera is None:
-        args = ['--rpi'] if sys.platform.startswith('linux') else ['--camera-id', '0']
+        args = ['--rpi'] if _is_rpi_cli() else ['--camera-id', '0']
     else:
-        args = ['--camera-id', camera]
+        args = ['--camera-id', str(camera)]
     args.append('--exit-with-parent')
 
     try:
@@ -1469,17 +1644,19 @@ def start_gesture_daemon():
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    face_proc = start_face_daemon()
     gestures = start_gesture_daemon()
     mirror = SmartMirrorPro()
     mirror.show()
     try:
         code = app.exec()
     finally:
-        if gestures is not None and gestures.poll() is None:
-            gestures.terminate()
-            try:
-                gestures.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                gestures.kill()
+        for p in (face_proc, gestures):
+            if p is not None and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
     sys.exit(code)
 

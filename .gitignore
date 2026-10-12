@@ -16,7 +16,11 @@ venv/
 mirror-venv/
 *.pkl
 *.pickle
+.garbage/
+.claude/
+.bin/
 
+.sprints/
 # Node
 node_modules/
 
