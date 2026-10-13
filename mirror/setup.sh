@@ -42,7 +42,7 @@ if [ ! -f "gesture_recognizer.task" ]; then
         https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
 fi
 
-chmod +x start_smart_mirror.sh start_camera.sh 2>/dev/null || true
+chmod +x start_smart_mirror.sh start_camera.sh auto_updater.sh 2>/dev/null || true
 
 echo ">>> Setting up automatic startup on boot..."
 AUTOSTART_DIR="$HOME/.config/autostart"
@@ -61,7 +61,7 @@ echo ">>> Configured autostart desktop entry at: $AUTOSTART_DIR/smart_mirror.des
 echo "=========================================================="
 echo "Setup Complete!"
 echo "- Virtual environment created and requirements (including faiss-cpu) installed."
-echo "- Automatic startup configured to run when the Pi boots."
-echo "- Automatic GitHub updates will be pulled on startup."
+echo "- Automatic startup configured to run start_smart_mirror.sh when the Pi boots."
+echo "- Background automatic GitHub updates enabled."
 echo "Start the mirror now with: ./start_smart_mirror.sh"
 echo "=========================================================="

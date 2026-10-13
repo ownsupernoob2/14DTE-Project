@@ -29,6 +29,7 @@ pkill -f ffmpeg           2>/dev/null || true
 pkill -f face_recognize   2>/dev/null || true
 pkill -f gesture_engine   2>/dev/null || true
 pkill -f smart_mirror_pro 2>/dev/null || true
+pkill -f auto_updater.sh  2>/dev/null || true
 sleep 2
 
 # ── Set up the v4l2loopback virtual camera device (/dev/video10) ────────────
@@ -57,3 +58,8 @@ export DISPLAY=:0
 "$PYTHON" -u smart_mirror_pro.py &
 
 echo "[START] Smart Mirror is running."
+
+# ── Background GitHub update watcher ─────────────────────────────────────────
+chmod +x "$APP_DIR/auto_updater.sh" 2>/dev/null || true
+/bin/bash "$APP_DIR/auto_updater.sh" &
+echo "[START] Background GitHub auto-updater started."
