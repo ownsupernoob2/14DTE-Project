@@ -118,7 +118,7 @@ func main() {
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-const AppVersion = "v1.2.0"
+const AppVersion = "v1.2.1"
 
 func health(c echo.Context) error {
 	return c.JSON(200, map[string]interface{}{
