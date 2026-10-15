@@ -35,7 +35,8 @@ sudo apt update
 sudo apt install -y \
     python3-venv python3-dev \
     ffmpeg v4l2loopback-dkms \
-    python3-opencv python3-numpy python3-pil python3-pygame
+    python3-opencv python3-numpy python3-pil python3-pygame \
+    python3-mediapipe 2>/dev/null || echo ">>> Note: python3-mediapipe apt package not found, will install via pip fallback."
 
 VENV_DIR="$HOME/mirror-venv"
 echo ">>> Using virtual environment at: $VENV_DIR"
@@ -47,6 +48,15 @@ fi
 echo ">>> Installing pip packages..."
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 "$VENV_DIR/bin/python" -m pip install -r requirements.txt
+
+# Verification step for MediaPipe
+echo ">>> Verifying MediaPipe installation..."
+if "$VENV_DIR/bin/python" -c "import mediapipe" 2>/dev/null; then
+    echo ">>> MediaPipe installed successfully!"
+else
+    echo ">>> Standard mediapipe import failed. Attempting ARM-compatible fallback install..."
+    "$VENV_DIR/bin/python" -m pip install mediapipe-rpi4 || "$VENV_DIR/bin/python" -m pip install mediapipe-silicon
+fi
 
 if [ ! -f "gesture_recognizer.task" ]; then
     echo ">>> Downloading gesture recognizer task..."
@@ -72,8 +82,5 @@ echo ">>> Configured autostart desktop entry at: $AUTOSTART_DIR/smart_mirror.des
 
 echo "=========================================================="
 echo "Setup Complete!"
-echo "- Virtual environment created and requirements (including faiss-cpu) installed."
-echo "- Automatic startup configured to run start_smart_mirror.sh when the Pi boots."
-echo "- Background automatic GitHub updates enabled."
 echo "Start the mirror now with: ./start_smart_mirror.sh"
 echo "=========================================================="
