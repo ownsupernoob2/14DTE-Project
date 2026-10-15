@@ -115,9 +115,20 @@ On the physical Raspberry Pi mirror:
   chmod +x setup.sh
   ./setup.sh
   ```
-* Launch the complete pipeline (virtual camera loopback, face recognition daemon, and full-screen pygame/PyQt UI) using:
+* Launch the complete pipeline (virtual camera loopback, face recognition daemon, and full-screen PyQt UI) using:
   ```bash
   ./start_smart_mirror.sh
+  ```
+* Verify gesture prerequisites and live tracking with the diagnostic tool:
+  ```bash
+  python check_gesture_setup.py
+  python check_gesture_setup.py --live
+  ```
+* View daemon logs anytime:
+  ```bash
+  cat gesture_daemon.log
+  cat face_daemon.log
+  cat mirror.log
   ```
 
 ---
@@ -172,6 +183,8 @@ All of it lives in [timing_config.py](file:///e:/Code/offical/14DTE-Project/mirr
 | `IDLE_TIMEOUT_SEC` | How long the dashboard stays up after you walk away entirely |
 | `GUEST_GRACE_SEC` | How long an *unknown* face is given before the visitor screen appears |
 | `USER_HOLD_SEC` | How long a *signed-in* student keeps their dashboard while recognition keeps failing |
+| `GESTURE_TUTORIAL_IDLE_SEC` | Inactivity delay in seconds before the gesture tutorial video appears |
+| `GESTURE_TUTORIAL_DURATION_SEC` | How long the gesture tutorial overlay remains visible (~7.27s matching MP4 length) |
 
 `USER_HOLD_SEC` is deliberately far longer than `GUEST_GRACE_SEC`, and the
 difference is the whole point. They used to be the same number, so one failed

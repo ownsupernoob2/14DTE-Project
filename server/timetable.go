@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -13,6 +14,26 @@ import (
 
 	"github.com/labstack/echo/v4"
 )
+
+// isValidKingsHighICS ensures the calendar URL is strictly from kingshigh.school.kiwi with an .ics file.
+// Example: https://kingshigh.school.kiwi/ics/23239-SOKKEUXX7P0OKX50E27H4H6L.ics
+func isValidKingsHighICS(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	if strings.ToLower(u.Host) != "kingshigh.school.kiwi" {
+		return false
+	}
+	lowerPath := strings.ToLower(u.Path)
+	if !strings.HasPrefix(lowerPath, "/ics/") || !strings.HasSuffix(lowerPath, ".ics") {
+		return false
+	}
+	return true
+}
 
 // TimetableEvent represents a single calendar event from an ICS file.
 type TimetableEvent struct {
@@ -112,6 +133,10 @@ func parseICSTime(propLine string) (time.Time, error) {
 
 // parseTimetable fetches an ICS file from icsURL and returns the current week's events sorted by date and start time.
 func parseTimetable(icsURL string) ([]TimetableEvent, error) {
+	if !isValidKingsHighICS(icsURL) {
+		return nil, fmt.Errorf("invalid calendar URL: only kingshigh.school.kiwi ICS feeds are permitted")
+	}
+
 	resp, err := http.Get(icsURL) //nolint:noctx
 	if err != nil {
 		return nil, fmt.Errorf("fetching ICS: %w", err)
@@ -308,8 +333,10 @@ func setTimetableURL(c echo.Context) error {
 	}
 
 	url := strings.TrimSpace(body.ICSURL)
-	if !strings.HasPrefix(url, "https://") || !strings.HasSuffix(url, ".ics") {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "URL must start with https:// and end with .ics"})
+	if !isValidKingsHighICS(url) {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "URL must be a valid King's High School calendar link (e.g. https://kingshigh.school.kiwi/ics/23239-SOKKEUXX7P0OKX50E27H4H6L.ics)",
+		})
 	}
 
 	path := getICSURLPath(userID)

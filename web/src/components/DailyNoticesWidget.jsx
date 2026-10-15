@@ -184,7 +184,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         if (!cancelled) {
           // Handle both {fetchedAt, notices:[]} wrapper and legacy bare array
           const noticeList = Array.isArray(data) ? data : (data.notices || []);
-          const fetchedAtVal = data.fetchedAt || null;
+          const fetchedAtVal = data.fetchedAtHuman || data.fetchedAt || null;
           if (noticeList.length >= 0) {
             setNotices(noticeList);
             setFetchedAt(fetchedAtVal);
@@ -391,48 +391,68 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   };
 
   // ─── States ──────────────────────────────────────────────────────────────────
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '16px', opacity: 0.7, height: '100%' }}>
-      <div className="notices-spinner" />
-      <span style={{ fontSize: '0.9em' }}>Loading notices...</span>
-    </div>
-  );
+  if (loading || (error && notices.length === 0)) {
+    return (
+      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
+        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
+          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
+          <span className="text-[12px] font-mono text-[#8f8f8f]">
+            {error ? 'Offline' : 'Loading notices...'}
+          </span>
+        </div>
+        <div className="flex flex-col gap-3 overflow-hidden">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-[#0a0a0a] rounded-r p-4 border-l-[4px] border-l-[#222222] flex flex-col gap-2.5 animate-pulse">
+              <div className="h-3 w-20 bg-[#1c1c1c] rounded"></div>
+              <div className="h-5 w-3/4 bg-[#262626] rounded"></div>
+              <div className="h-3.5 w-full bg-[#161616] rounded"></div>
+              <div className="h-3.5 w-4/5 bg-[#161616] rounded"></div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
 
-  if (error) return (
-    <div style={{ padding: '16px', color: '#f87171', fontSize: '0.85em', lineHeight: 1.5 }}>
-      <div style={{ fontWeight: 700, marginBottom: '4px' }}>Could not load notices</div>
-      <div style={{ opacity: 0.7 }}>{error}</div>
-    </div>
-  );
-
-  if (notices.length === 0) return (
-    <div style={{ padding: '16px', opacity: 0.5, fontStyle: 'italic', fontSize: '0.85em', textAlign: 'center', paddingTop: '32px' }}>
-      No notices available today.
-    </div>
-  );
+  if (notices.length === 0) {
+    return (
+      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
+        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
+          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
+          <span className="text-[12px] font-mono text-[#8f8f8f]">0 today</span>
+        </div>
+        <div className="py-12 text-center text-[#8f8f8f] text-sm italic">
+          No notices available today.
+        </div>
+      </section>
+    );
+  }
 
   // ─── Helper: format fetchedAt for display ───────────────────────────────────
-  const formatFetchedAt = (iso) => {
-    if (!iso) return null;
+  const formatFetchedAt = (val) => {
+    if (!val) return null;
+    if (typeof val === 'string' && (val.includes(',') || val.includes('AM') || val.includes('PM'))) {
+      return val;
+    }
     try {
-      return new Date(iso).toLocaleString('en-NZ', {
+      return new Date(val).toLocaleString('en-NZ', {
         weekday: 'short', day: 'numeric', month: 'short',
         hour: '2-digit', minute: '2-digit',
       });
-    } catch { return null; }
+    } catch { return val; }
   };
   const fetchedAtLabel = formatFetchedAt(fetchedAt);
 
   // ─── MIRROR / READONLY MODE ───────────────────────────────────────────────
   if (readonly) {
     return (
-      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0">
+      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
         {/* Header */}
         <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
           <div className="flex items-baseline gap-3">
             <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
             {fetchedAtLabel && (
-              <span className="text-[11px] text-[#8f8f8f] font-mono">Updated {fetchedAtLabel}</span>
+              <span className="text-[11px] text-[#8f8f8f] font-mono">Fetched {fetchedAtLabel}</span>
             )}
           </div>
           <span className="text-[13px] text-[#d0d0d0] font-mono">{sorted.length} today</span>
@@ -461,7 +481,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
-            <span className="text-[#4fc3ff]">✦</span> Notices &amp; Alerts
+            Notices &amp; Alerts
           </h1>
           <p className="text-xs text-[#8f8f8f] font-mono mt-1">
             Configure visual flow, year level targeting, and category filters for the digital signage display.
@@ -469,7 +489,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         </div>
         <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
           <span>{sorted.length} ACTIVE NOTICES</span>
-          {fetchedAtLabel && <span className="text-[#4fc3ff]">· UPDATED {fetchedAtLabel.toUpperCase()}</span>}
+          {fetchedAtLabel && <span className="text-[#4fc3ff]">· FETCHED {fetchedAtLabel.toUpperCase()}</span>}
         </div>
       </div>
 

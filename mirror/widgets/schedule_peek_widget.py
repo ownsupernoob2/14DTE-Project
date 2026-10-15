@@ -246,3 +246,12 @@ class SchedulePeekWidget(QFrame):
             self.scroll_area.ensureWidgetVisible(row, 0, 60)
         except RuntimeError:
             pass
+
+    def scroll_by_pixels(self, delta):
+        """Scroll timetable by delta pixels."""
+        sb = self.scroll_area.verticalScrollBar()
+        sb.setValue(sb.value() + int(delta))
+
+    def clear_selection(self):
+        pass
+

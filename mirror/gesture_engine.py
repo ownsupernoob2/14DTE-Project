@@ -83,10 +83,11 @@ MIN_PALM_SIZE      = 0.02   # below this the hand is too far away to trust
 
 TAP_MAX_SEC        = 0.65   # pinch held up to 0.65s without drag is a tap
 TAP_COOLDOWN_SEC   = 0.35   # ignore repeat taps inside this window
-DRAG_TAP_THRESHOLD = 0.025  # movement threshold during pinch to distinguish tap vs drag
-DRAG_SCROLL_GAIN   = 1100.0 # movement -> scroll pixels
+DRAG_TAP_THRESHOLD = 0.020  # movement threshold during pinch to distinguish tap vs drag
+DRAG_SCROLL_GAIN   = 2200.0 # movement -> scroll pixels
 DRAG_DEADZONE      = 0.003  # ignore minute jitter below this
-FLING_VELOCITY_SCALE = 600.0 # release velocity multiplier for inertia fling
+FLING_VELOCITY_SCALE = 900.0 # release velocity multiplier for inertia fling
+
 
 TOP_RIGHT_X        = 0.62   # top-right quadrant dwell threshold (hand must be clearly in right half)
 TOP_RIGHT_Y        = 0.18   # top-right height limit (palm must be raised high up near top edge <= 0.18)
@@ -357,7 +358,7 @@ class GestureEngine:
                     delta = int(-dy * DRAG_SCROLL_GAIN)
                     if delta != 0:
                         self.had_scroll = True
-                        self.scroll_delta = max(-80, min(80, delta))
+                        self.scroll_delta = max(-200, min(200, delta))
                         if event is None:
                             event = "scroll"
         else:
@@ -383,8 +384,9 @@ class GestureEngine:
                 elif was_drag and abs(released_velocity) > 0.15:
                     if event is None:
                         fling_delta = int(-released_velocity * FLING_VELOCITY_SCALE)
-                        self.scroll_delta = max(-350, min(350, fling_delta))
+                        self.scroll_delta = max(-500, min(500, fling_delta))
                         event = "fling"
+
 
         return event
 

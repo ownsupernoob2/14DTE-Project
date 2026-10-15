@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import DailyNoticesWidget from '../components/DailyNoticesWidget'
 import TimetableWidget from '../components/TimetableWidget'
-import KingsWeekWidget from '../components/KingsWeekWidget'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
-// ─── Live Clock Header Row matching new-style ─────────────────────────────
+// ─── Live Clock Header Row matching mirror style ─────────────────────────────
 function ClockRow() {
   const [now, setNow] = useState(new Date())
   
@@ -29,9 +29,20 @@ function ClockRow() {
 }
 
 // ─── Dashboard Page ────────────────────────────────────────────────────────
-export default function Dashboard() {
+export default function Dashboard({ defaultTab }) {
   const [bannerMsg, setBannerMsg] = useState('')
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // Derive active tab from route path
+  let activeTab = 'dashboard'
+  if (location.pathname === '/timetable') {
+    activeTab = 'timetable'
+  } else if (location.pathname === '/notices') {
+    activeTab = 'notices'
+  } else if (defaultTab) {
+    activeTab = defaultTab
+  }
 
   const noticesRef = useRef(null)
   const mainRef = useRef(null)
@@ -48,12 +59,12 @@ export default function Dashboard() {
       } catch { /* silent */ }
     }
     fetchBanner()
-    const interval = setInterval(fetchBanner, 60000)
+    const interval = setInterval(fetchBanner, 30000)
     return () => clearInterval(interval)
   }, [])
 
   const handleTabClick = (tabId) => {
-    setActiveTab(tabId)
+    navigate(`/${tabId}`)
     if (tabId === 'notices') noticesRef.current?.scrollIntoView({ behavior: 'smooth' })
     if (tabId === 'timetable') timetableRef.current?.scrollIntoView({ behavior: 'smooth' })
     if (tabId === 'dashboard') mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
@@ -68,19 +79,19 @@ export default function Dashboard() {
         ref={mainRef}
         className="flex-1 flex flex-col relative z-10 min-h-0 overflow-hidden"
       >
-        {/* Top Banner Notice (matching new-style.html) */}
+        {/* Top Banner Notice (matching mirror top banner) */}
         <AnimatePresence mode="wait">
           {bannerMsg && (
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="w-full bg-gradient-to-r from-[#3a0d0d] to-[#1a0505] border-b border-[#4a1414] px-6 py-3 flex items-center gap-3 text-[#ffdcdc] text-sm shrink-0"
+              className="w-full bg-[#1a0505] border-b border-[#4a1414] px-6 py-2.5 flex items-center gap-3 text-[#ffdcdc] text-sm shrink-0"
             >
-              <span className="bg-[#ff4d4d] text-[#1a0000] font-bold text-[11px] uppercase tracking-wider px-2 py-0.5 rounded shrink-0">
-                Notice
+              <span className="bg-[#ff4d4d] text-[#1a0000] font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 rounded shrink-0 font-mono">
+                NOTICE
               </span>
-              <span className="truncate">{bannerMsg}</span>
+              <span className="truncate font-medium">{bannerMsg}</span>
             </motion.div>
           )}
         </AnimatePresence>
@@ -110,26 +121,14 @@ export default function Dashboard() {
           </motion.div>
         )}
 
-        {activeTab === 'kings-week' && (
-          <motion.div 
-            key="kings-week-screen"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="flex-1 bg-[#000000] overflow-y-auto min-h-0 flex flex-col"
-          >
-            <KingsWeekWidget />
-          </motion.div>
-        )}
-
-        {(activeTab === 'dashboard' || (activeTab !== 'notices' && activeTab !== 'timetable' && activeTab !== 'kings-week')) && (
+        {activeTab === 'dashboard' && (
           <div className="grid grid-cols-1 md:grid-cols-[48%_52%] flex-1 min-h-0 overflow-hidden">
             {/* LEFT: NOTICES PANEL */}
             <motion.section 
               ref={noticesRef}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.4 }}
+              transition={{ duration: 0.3 }}
               className="flex flex-col h-full min-h-0 bg-[#000000]"
             >
               <DailyNoticesWidget widget={{}} readonly={true} />
@@ -140,12 +139,23 @@ export default function Dashboard() {
               ref={timetableRef}
               initial={{ opacity: 0, x: 10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.4 }}
+              transition={{ duration: 0.3 }}
               className="flex flex-col p-6 md:p-8 h-full min-h-0 bg-[#000000] overflow-y-auto"
             >
               <ClockRow />
               <div className="flex-1 flex flex-col justify-center min-h-0 py-4">
                 <TimetableWidget widget={{ data: { viewMode: 'today' } }} readonly={true} />
+              </div>
+              <div className="pt-3 border-t border-[#1c1c1c] flex items-center justify-between text-[11px] font-mono text-[#666666] shrink-0 select-none">
+                <div className="flex items-center gap-3">
+                  <Link to="/privacy" className="hover:text-[#cbd5e1] transition-colors">
+                    Privacy Policy
+                  </Link>
+                  <span>·</span>
+                  <Link to="/terms" className="hover:text-[#cbd5e1] transition-colors">
+                    Terms &amp; Conditions
+                  </Link>
+                </div>
               </div>
             </motion.section>
           </div>
@@ -154,4 +164,3 @@ export default function Dashboard() {
     </div>
   )
 }
-

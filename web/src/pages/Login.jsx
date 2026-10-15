@@ -32,7 +32,11 @@ export default function Login() {
           <p style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 8px 0' }}>
             By signing up or logging in, you agree to our{' '}
             <Link to="/privacy" style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 500 }}>
-              Privacy Policy &amp; Terms
+              Privacy Policy
+            </Link>{' '}
+            and{' '}
+            <Link to="/terms" style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 500 }}>
+              Terms &amp; Conditions
             </Link>.
           </p>
           <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', fontStyle: 'italic', margin: 0 }}>

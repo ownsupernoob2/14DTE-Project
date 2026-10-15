@@ -93,13 +93,20 @@ func main() {
 	e.POST("/api/admin/banner", setAdminBanner)
 	e.GET("/api/banner", getAdminBanner)
 
+	// Analytics & A/B Testing Telemetry routes
+	e.POST("/api/analytics/events", recordAnalyticsEvent)
+	e.GET("/api/analytics/config", getAnalyticsConfig)
+	e.GET("/api/admin/analytics", getAdminAnalytics, OptionalEnsureValidToken())
+
 	// Timetable routes
 	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT
 	protected.POST("/timetable/ics", setTimetableURL)
 	protected.GET("/timetable/ics", getMyTimetableURL)
 
-	// Health check
+	// Health check and version
 	e.GET("/health", health)
+	e.GET("/api/version", version)
+
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -111,8 +118,20 @@ func main() {
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
+const AppVersion = "v1.2.0"
+
 func health(c echo.Context) error {
-	return c.JSON(200, map[string]string{"status": "ok"})
+	return c.JSON(200, map[string]interface{}{
+		"status":  "ok",
+		"version": AppVersion,
+	})
+}
+
+func version(c echo.Context) error {
+	return c.JSON(200, map[string]string{
+		"version": AppVersion,
+		"service": "smart-mirror-api",
+	})
 }
 
 func getPythonCmd() string {

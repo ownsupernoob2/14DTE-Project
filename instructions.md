@@ -15,77 +15,46 @@ Part 1: Create the Cloudflare Tunnel
 Verify the service is running:
 Get-Service cloudflared
 Until the API is running you will see a Cloudflare 502 error at the URL. That is expected.
-Part 2: The run-and-update script
-Create C:\smart-mirror\run-and-update.ps1 with the contents below. It lives outside the repo folder so git pull never touches it.
-$repo     = "C:\smart-mirror\server"
-$exeName  = "smart-mirror-api"
-$git      = "C:\Program Files\Git\cmd\git.exe"
-$go       = "C:\Program Files\Go\bin\go.exe"
-$log      = "C:\smart-mirror\updater.log"
-$interval = 300   # seconds between update checks
+Part 2: The run-and-update script (with Client Notifications & Safe Rollback)
+The updater script is located in `server/run-and-update.ps1` (or can be placed at `C:\smart-mirror\run-and-update.ps1`). It monitors GitHub for updates on `main` without using Docker, broadcasts an update notice to connected Smart Mirrors and Web Dashboards, safely compiles the Go binary, verifies health, and restarts.
 
-# Go needs writable cache folders when running as SYSTEM
-$env:GOCACHE = "C:\smart-mirror\.gocache"
-$env:GOPATH  = "C:\smart-mirror\.gopath"
-$env:PATH   += ";C:\Program Files\Git\cmd"
+Key features:
+1. **Pre-Update Notification**: Sets a banner (`/api/admin/banner` and `data/admin_banner.json`) and gives mirrors/browsers a 10-second grace window to display `"⚠️ Server is updating..."` before the server restarts.
+2. **Discord/Slack Webhook Support**: If `DISCORD_WEBHOOK_URL` is set in `.env`, posts notifications with commit details directly to Discord.
+3. **Safe Build & Rollback**: Compiles to `smart-mirror-api.new.exe` before touching the running process. If compilation fails, the working version stays online and git state is rolled back.
+4. **Health Check Validation**: Verifies `GET /health` returns `200 OK` before marking the update complete and clearing the banner.
+5. **Watchdog**: If the API crashes at any point, the script automatically restarts it.
 
-function Log($msg) {
-    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $msg" | Out-File -FilePath $log -Append -Encoding utf8
-}
-function Api-Running { [bool](Get-Process -Name $exeName -ErrorAction SilentlyContinue) }
-function Start-Api {
-    Log "Starting $exeName.exe"
-    Start-Process -FilePath "$repo\$exeName.exe" -WorkingDirectory $repo -WindowStyle Hidden
-}
-function Stop-Api {
-    Get-Process -Name $exeName -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 2
-}
-function Update-IfNeeded {
-    Set-Location $repo
-    $before = (& $git rev-parse HEAD).Trim()
-    $out = & $git pull --ff-only 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { Log "git pull failed: $out"; return }
-    $after = (& $git rev-parse HEAD).Trim()
-    if ($before -eq $after) { return }
-
-    Log "New commits found ($before -> $after). Building..."
-    $build = & $go build -o "$exeName.new.exe" . 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Log "Build failed, keeping the current version running: $build"
-        return
-    }
-    Stop-Api
-    Move-Item -Force "$repo\$exeName.new.exe" "$repo\$exeName.exe"
-    Start-Api
-    Log "Update applied and API restarted"
-}
-
-Log "Script started"
-if (-not (Test-Path "$repo\$exeName.exe")) { Set-Location $repo; & $go build -o "$exeName.exe" . }
-if (-not (Api-Running)) { Start-Api }
-
-while ($true) {
-    try { Update-IfNeeded } catch { Log "Error: $_" }
-    if (-not (Api-Running)) { Log "API not running, restarting it"; Start-Api }
-    Start-Sleep -Seconds $interval
-}
-What it does: starts the API at launch, then every 5 minutes pulls from git. If the commit changed, it builds into a temporary file first, and only if the build succeeds does it stop the running exe, swap the new one in and start it. A broken commit therefore never takes the API down. It also restarts the API if it ever crashes. Everything is logged to C:\smart-mirror\updater.log.
+Run it manually:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\server\run-and-update.ps1
+```
+Or simply double-click `server\start-server.bat`.
 One-time git setting. The task runs as the SYSTEM account, and git may refuse to work in a folder owned by another user ("dubious ownership"). Run this once:
 & "C:\Program Files\Git\cmd\git.exe" config --system --add safe.directory '*'
 Things to check in your project:
 • If the main package is not in the root of C:\smart-mirror\server (for example cmd/api), change the . after -o in both build lines to ./cmd/api.
 • Do not commit the .exe. Add *.exe to .gitignore, otherwise git pull can fail on local changes.
 • The API is started with C:\smart-mirror\server as its working directory, so any .env or config files it reads by relative path work the same as when you run it manually.
-Part 3: Run it at boot with Task Scheduler
-This registers a task that runs as SYSTEM at startup whether or not anyone is logged in. The time limit is disabled because Task Scheduler otherwise stops tasks after 72 hours.
-$action    = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\smart-mirror\run-and-update.ps1"'
-$trigger   = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName "SmartMirrorAPI" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
-Start-ScheduledTask -TaskName "SmartMirrorAPI"
-If you don't have administrator rights on the VM, you can't register a SYSTEM task. As a fallback, create the task for your own user with an At log on trigger and enable automatic login on the VM.
+Part 3: Run it on boot before login with Task Scheduler
+To have the server launch automatically as soon as Windows boots (without needing anyone to sign in), run the automated registration script in an Administrator PowerShell prompt:
+
+```powershell
+cd server
+powershell.exe -ExecutionPolicy Bypass -File .\register-startup-task.ps1
+```
+
+### What this configures:
+1. **Trigger (`-AtStartup`)**: Fires as soon as the operating system kernel starts up, well before the Windows login screen appears.
+2. **Account (`NT AUTHORITY\SYSTEM`)**: Runs as a background service account in Session 0 so no user profile or password login is required.
+3. **Execution Time Limit (`[TimeSpan]::Zero`)**: Disables Windows Task Scheduler's default 72-hour execution cap, allowing the supervisor to run continuously 24/7.
+4. **Git Safe Directory**: Automatically executes `git config --system --add safe.directory '*'` so Git permits the SYSTEM user to pull repository updates without ownership conflicts.
+
+### Useful Task Commands:
+- Check Status: `powershell.exe -File .\server\register-startup-task.ps1 -Status`
+- Stop Task: `Stop-ScheduledTask -TaskName "SmartMirrorAPI"`
+- Start Task: `Start-ScheduledTask -TaskName "SmartMirrorAPI"`
+- Uninstall Task: `powershell.exe -File .\server\register-startup-task.ps1 -Uninstall`
 Part 4: Test it
 1. Right now: wait about 10 seconds after the last command, then run Get-Process smart-mirror-api and open https://api.smartmirror.me.
 2. After a reboot: run Restart-Computer, do not log in, and check https://api.smartmirror.me from another device after a minute or two.
