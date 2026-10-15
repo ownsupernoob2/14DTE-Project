@@ -38,7 +38,7 @@ sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam1" exclus
 rpicam-vid -t 0 --nopreview --codec yuv420 \
   --metering spot \
   --ev 2.0 \
-  --shutter 30000 \
+  --shutter 10000 \
   --gain 4.0 \
   -o - --width 640 --height 480 --framerate 30 | \
 ffmpeg -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
