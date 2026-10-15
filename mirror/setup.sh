@@ -6,13 +6,25 @@ echo "=========================================================="
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
-if command -v python3.10 &>/dev/null; then
+# Detect suitable Python version (Python 3.10, 3.11, or default python3 >= 3.10)
+if command -v python3.11 &>/dev/null; then
+    PYTHON=python3.11
+elif command -v python3.10 &>/dev/null; then
     PYTHON=python3.10
-elif command -v pyenv &>/dev/null && pyenv versions --bare | grep -q '^3\.10'; then
-    PYTHON="$(pyenv root)/versions/$(pyenv versions --bare | grep '^3\.10' | head -1)/bin/python"
+elif command -v pyenv &>/dev/null && pyenv versions --bare | grep -q '^3\.\(10\|11\)'; then
+    PYTHON="$(pyenv root)/versions/$(pyenv versions --bare | grep '^3\.\(10\|11\)' | head -1)/bin/python"
+elif command -v python3 &>/dev/null; then
+    PYTHON=python3
 else
-    echo "ERROR: Python 3.10 is required for mediapipe on Raspberry Pi."
-    echo "Install with: sudo apt install python3.10 python3.10-venv"
+    echo "ERROR: python3 is not installed."
+    echo "Install with: sudo apt install python3 python3-venv python3-dev"
+    exit 1
+fi
+
+PY_CHECK=$("$PYTHON" -c "import sys; print(1 if sys.version_info >= (3, 10) else 0)" 2>/dev/null || echo 0)
+if [ "$PY_CHECK" != "1" ]; then
+    echo "ERROR: Python 3.10+ is required (found $($PYTHON --version 2>&1))."
+    echo "Install Python 3.10 or 3.11 before running setup."
     exit 1
 fi
 
@@ -21,9 +33,9 @@ echo ">>> Using Python: $($PYTHON --version)"
 echo ">>> Installing apt packages..."
 sudo apt update
 sudo apt install -y \
-    python3.10-venv python3.10-dev \
+    python3-venv python3-dev \
     ffmpeg v4l2loopback-dkms \
-    python3-opencv python3-numpy python3-pil python3-pygame python3-mediapipe
+    python3-opencv python3-numpy python3-pil python3-pygame
 
 VENV_DIR="$HOME/mirror-venv"
 echo ">>> Using virtual environment at: $VENV_DIR"

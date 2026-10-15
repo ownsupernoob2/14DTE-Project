@@ -1,13 +1,13 @@
 # --- TIMING CONFIGURATION FOR SMART MIRROR ---
 
 # Time (in seconds) to keep the user's dashboard active after they walk away (no face detected)
-IDLE_TIMEOUT_SEC = 30.0
+IDLE_TIMEOUT_SEC = 10.0
 
 # Time (in seconds) to return to IDLE after a guest/visitor walks away
 GUEST_IDLE_TIMEOUT_SEC = 5.0
 
 # Time (in seconds) an unrecognized face must be visible before switching to the GUEST visitor screen
-GUEST_GRACE_SEC = 1.5
+GUEST_GRACE_SEC = 1
 
 # Time (in seconds) a *recognised* student keeps their dashboard while recognition
 # keeps failing. This is deliberately much longer than GUEST_GRACE_SEC, which
@@ -40,3 +40,17 @@ BARCODE_SESSION_SEC = 45.0
 # Decode barcodes on every Nth camera frame. Barcode decoding is cheaper than
 # face recognition but still worth throttling on a Raspberry Pi.
 BARCODE_SCAN_EVERY_N_FRAMES = 4
+
+# --- GESTURE TUTORIAL / DEMO TIMING ---
+
+# Time (in seconds) of gesture inactivity in GUEST or USER state before the
+# gesture demo tutorial overlay appears to prompt the user.
+GESTURE_TUTORIAL_IDLE_SEC = 10.0
+
+# Playback speed multiplier for the gesture demo video tutorial (e.g. 1.30 for 30% speedup).
+GESTURE_TUTORIAL_SPEED_FACTOR = 1.30
+
+# Time (in seconds) to display the gesture tutorial overlay before fading out.
+# By default ~5.6 seconds matching gesture_demo.mp4 at 1.30x speed (~7.27s / 1.30).
+GESTURE_TUTORIAL_DURATION_SEC = 5.6
+

@@ -38,8 +38,9 @@ type NoticeItem struct {
 
 // NoticesFile is the wrapper stored in daily_notices.json
 type NoticesFile struct {
-	FetchedAt string       `json:"fetchedAt"`
-	Notices   []NoticeItem `json:"notices"`
+	FetchedAt      string       `json:"fetchedAt"`
+	FetchedAtHuman string       `json:"fetchedAtHuman"`
+	Notices        []NoticeItem `json:"notices"`
 }
 
 func StartNoticeFetcher() {
@@ -87,6 +88,15 @@ func getNotices(c echo.Context) error {
 	// Try to parse as the new wrapper format first
 	var wrapper NoticesFile
 	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Notices != nil {
+		if wrapper.FetchedAtHuman == "" && wrapper.FetchedAt != "" {
+			if t, err := time.Parse(time.RFC3339, wrapper.FetchedAt); err == nil {
+				loc, _ := time.LoadLocation("Pacific/Auckland")
+				if loc != nil {
+					t = t.In(loc)
+				}
+				wrapper.FetchedAtHuman = t.Format("Mon, 2 Jan 3:04 PM")
+			}
+		}
 		return c.JSON(200, wrapper)
 	}
 
@@ -96,8 +106,9 @@ func getNotices(c echo.Context) error {
 		return c.JSON(500, map[string]string{"error": "Failed to parse notices"})
 	}
 	return c.JSON(200, NoticesFile{
-		FetchedAt: "",
-		Notices:   notices,
+		FetchedAt:      "",
+		FetchedAtHuman: "",
+		Notices:        notices,
 	})
 }
 
@@ -202,10 +213,17 @@ func fetchNoticesLogic() error {
 		notices[i] = normalizeNoticeItem(notices[i])
 	}
 
-	// Wrap with fetchedAt timestamp
+	loc, _ := time.LoadLocation("Pacific/Auckland")
+	if loc == nil {
+		loc = time.Local
+	}
+	fetchTime := time.Now().In(loc)
+
+	// Wrap with fetchedAt timestamp (specifically when notices were fetched from the school)
 	wrapper := NoticesFile{
-		FetchedAt: time.Now().Format(time.RFC3339),
-		Notices:   notices,
+		FetchedAt:      fetchTime.Format(time.RFC3339),
+		FetchedAtHuman: fetchTime.Format("Mon, 2 Jan 3:04 PM"),
+		Notices:        notices,
 	}
 
 	fileData, err := json.MarshalIndent(wrapper, "", "  ")

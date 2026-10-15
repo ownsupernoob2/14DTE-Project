@@ -4,7 +4,6 @@ import './App.css'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
-import Simulator from './pages/Simulator'
 import Privacy from './pages/Privacy'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -14,33 +13,22 @@ function ServerDownNotice() {
   return (
     <AnimatePresence>
       {!isServerUp && (
-        <motion.div
-          initial={{ opacity: 0, y: 50, x: -20 }}
-          animate={{ opacity: 1, y: 0, x: 0 }}
-          exit={{ opacity: 0, y: 50, x: -20 }}
-          style={{
-            position: 'fixed',
-            bottom: '20px',
-            left: '20px',
-            background: '#ef4444',
-            color: 'white',
-            padding: '12px 20px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-            zIndex: 9999,
-            fontWeight: 'bold',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
+        <motion.aside
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.25 }}
+          className="w-full bg-[#140a0a] border-b border-[#3b1212] px-6 py-2.5 flex items-center justify-between text-xs text-[#fca5a5] shrink-0 z-50 sticky top-0"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-            <line x1="12" y1="9" x2="12" y2="13"></line>
-            <line x1="12" y1="17" x2="12.01" y2="17"></line>
-          </svg>
-          The Smart Mirror server is offline
-        </motion.div>
+          <div className="flex items-center gap-3">
+            <span className="bg-[#ef4444] text-black font-mono font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm">
+              OFFLINE
+            </span>
+            <span className="font-sans font-medium text-[13px] text-white">
+              The Smart Mirror server is offline. Real-time updates and timetable sync are temporarily paused.
+            </span>
+          </div>
+        </motion.aside>
       )}
     </AnimatePresence>
   )
@@ -64,6 +52,7 @@ function App() {
         <Routes>
           <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
           <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Privacy />} />
 
           <Route
             path="/"
@@ -71,17 +60,27 @@ function App() {
           />
           <Route
             path="/dashboard"
-            element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />}
+            element={isAuthenticated ? <Dashboard defaultTab="dashboard" /> : <Navigate to="/login" />}
+          />
+          <Route
+            path="/timetable"
+            element={isAuthenticated ? <Dashboard defaultTab="timetable" /> : <Navigate to="/login" />}
+          />
+          <Route
+            path="/notices"
+            element={isAuthenticated ? <Dashboard defaultTab="notices" /> : <Navigate to="/login" />}
           />
           <Route
             path="/settings"
             element={isAuthenticated ? <Settings /> : <Navigate to="/login" />}
           />
 
-          <Route path="/simulator" element={<Simulator />} />
-
-          <Route path="*" element={<Navigate to="/" />} />
+          <Route path="*" element={<Navigate to="/dashboard" />} />
         </Routes>
+        {/* Subtle version code displayed in corner */}
+        <div className="fixed bottom-2 right-3 text-[#444444] text-[11px] font-mono tracking-wider select-none pointer-events-none z-40">
+          v1.2.0
+        </div>
       </Router>
     </ServerStatusProvider>
   )

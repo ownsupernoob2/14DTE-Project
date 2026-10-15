@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
@@ -269,6 +270,60 @@ export default function Settings() {
                 LOGOUT
               </button>
             </div>
+          </section>
+
+          <section className="pref-section pref-section-block">
+            <h2 className="text-overline">Legal &amp; Policies</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <Link
+                to="/privacy"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  background: S.infoBoxBg,
+                  border: `1px solid ${S.infoBoxBorder}`,
+                  borderRadius: '10px',
+                  color: 'var(--text-primary)',
+                  textDecoration: 'none',
+                  fontSize: '0.88rem',
+                  fontWeight: 500,
+                  transition: 'background 0.2s',
+                }}
+              >
+                <span>Privacy Policy</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>
+                  arrow_forward
+                </span>
+              </Link>
+
+              <Link
+                to="/terms"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  background: S.infoBoxBg,
+                  border: `1px solid ${S.infoBoxBorder}`,
+                  borderRadius: '10px',
+                  color: 'var(--text-primary)',
+                  textDecoration: 'none',
+                  fontSize: '0.88rem',
+                  fontWeight: 500,
+                  transition: 'background 0.2s',
+                }}
+              >
+                <span>Terms &amp; Conditions</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>
+                  arrow_forward
+                </span>
+              </Link>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: S.subText, marginTop: '8px', lineHeight: 1.5 }}>
+              Review student biometric privacy safeguards, parent/caregiver review notices, and terms of use.
+            </p>
           </section>
         </motion.div>
       </div>

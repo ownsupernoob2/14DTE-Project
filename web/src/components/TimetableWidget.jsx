@@ -21,6 +21,22 @@ function formatTime12h(dateObj, fallbackStr) {
   return fallbackStr;
 }
 
+/** Validate King's High School ICS URL */
+function isValidKingsHighUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url.trim());
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname.toLowerCase() === 'kingshigh.school.kiwi' &&
+      parsed.pathname.toLowerCase().startsWith('/ics/') &&
+      parsed.pathname.toLowerCase().endsWith('.ics')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Compute real-time details for a period */
 function getPeriodDetails(p, now = new Date()) {
   if (!p) return { formattedStart: '--', formattedEnd: '--', remainingMins: 0, isNow: false, isDone: false };
@@ -90,23 +106,6 @@ function getPeriodDetails(p, now = new Date()) {
   };
 }
 
-/** Format a time string "HH:MM" or ISO datetime to "HH:MM" */
-function fmtTime(t) {
-  if (!t) return '';
-  const m = String(t).match(/T?(\d{2}:\d{2})/);
-  if (m) return m[1];
-  return t;
-}
-
-/** Build a display time range string */
-function timeRange(start, end) {
-  const s = fmtTime(start);
-  const e = fmtTime(end);
-  if (s && e) return `${s} – ${e}`;
-  if (s) return s;
-  return '';
-}
-
 export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
   const { getAccessTokenSilently } = useAuth0();
 
@@ -130,14 +129,8 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
   );
 
-  // ── Layout mode (Minimal vs Odometer) ──────────────────────────────────────
-  const [layoutMode, setLayoutMode] = useState(
-    () => widget.data?.layoutMode || localStorage.getItem('timetable_layout_mode') || 'minimal'
-  );
-
   // ── Subject filter ────────────────────────────────────────────────────────
   const [subjectFilter, setSubjectFilter] = useState(() => widget.data?.subjectFilter || '');
-  const [showTimetableSettings, setShowTimetableSettings] = useState(false);
 
   // Keep viewMode synced if changed from parent props
   useEffect(() => {
@@ -166,9 +159,7 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             setShowSetup(false);
           }
         }
-      } catch (err) {
-        console.error("Failed to fetch saved ICS URL:", err);
-      }
+      } catch { /* silent */ }
     };
     fetchSavedUrl();
   }, [icsUrl, getAccessTokenSilently]);
@@ -184,13 +175,6 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     localStorage.setItem('timetable_view_mode', newMode);
     if (onUpdateData) {
       onUpdateData({ ...widget.data, viewMode: newMode });
-    }
-  };
-
-  const handleSubjectFilterChange = (val) => {
-    setSubjectFilter(val);
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, subjectFilter: val });
     }
   };
 
@@ -223,10 +207,10 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
       });
       if (!res.ok) throw new Error(`Failed to load timetable (${res.status})`);
       const data = await res.json();
-      
+
       const list = Array.isArray(data) ? data : (data.periods || data.events || []);
       setPeriods(list);
-      
+
       if (data.viewMode && data.viewMode !== viewMode) {
         setViewMode(data.viewMode);
       }
@@ -238,16 +222,23 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     } finally {
       setLoading(false);
     }
-  }, [icsUrl, getAccessTokenSilently]);
+  }, [icsUrl, getAccessTokenSilently, viewMode]);
 
   useEffect(() => {
     fetchTimetable();
   }, [fetchTimetable]);
 
   // ── Save ICS URL ───────────────────────────────────────────────────────────
-  const handleSaveUrl = async () => {
-    const trimmed = urlInput.trim();
+  const handleSaveUrl = async (overrideUrl) => {
+    const candidate = typeof overrideUrl === 'string' ? overrideUrl : urlInput;
+    const trimmed = candidate.trim();
     if (!trimmed) return;
+
+    if (!isValidKingsHighUrl(trimmed)) {
+      setSaveError("URL must be a valid King's High School calendar link (e.g. https://kingshigh.school.kiwi/ics/23239-SOKKEUXX7P0OKX50E27H4H6L.ics)");
+      return;
+    }
+
     setSaving(true);
     setSaveError(null);
     try {
@@ -260,14 +251,17 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
         },
         body: JSON.stringify({ ics_url: trimmed }),
       });
-      if (!res.ok) throw new Error(`Server error (${res.status})`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error (${res.status})`);
+      }
       localStorage.setItem('timetable_ics_url', trimmed);
-      // Bust the cache so we fetch fresh data
       localStorage.removeItem('timetable_cache_date');
       localStorage.removeItem('timetable_cache_data');
       setIcsUrl(trimmed);
       setShowSetup(false);
       setUrlInput('');
+      fetchTimetable();
     } catch (err) {
       setSaveError(err.message);
     } finally {
@@ -275,32 +269,8 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     }
   };
 
-  // ── Clear / reset URL ──────────────────────────────────────────────────────
-  const handleClearUrl = () => {
-    localStorage.removeItem('timetable_ics_url');
-    localStorage.removeItem('timetable_cache_date');
-    localStorage.removeItem('timetable_cache_data');
-    setIcsUrl('');
-    setPeriods([]);
-    setError(null);
-    setUrlInput('');
-    setShowSetup(true);
-  };
-
-  // ── Filter visible periods by subject keyword ──────────────────────────────
-  const filterPeriods = (list) => {
-    if (!subjectFilter || !subjectFilter.trim()) return list;
-    const kw = subjectFilter.trim().toLowerCase();
-    return list.filter(p => {
-      const subject = (p.summary || p.SUMMARY || p.title || p.subject || '').toLowerCase();
-      const location = (p.location || p.LOCATION || '').toLowerCase();
-      return subject.includes(kw) || location.includes(kw);
-    });
-  };
-
-  // ── Filter periods by view mode ────────────────────────────────────────────
+  // ── Filter visible periods ─────────────────────────────────────────────────
   const visiblePeriods = (() => {
-    // NZ Time date YYYY-MM-DD
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
 
     let list;
@@ -315,8 +285,8 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
         const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
         list = periods.filter(p => p.date === tomorrowStr);
       } else if (viewMode === 'next') {
-        const now = todayPeriods.find(p => p.isNow);
-        if (now) list = [now];
+        const nowP = todayPeriods.find(p => p.isNow);
+        if (nowP) list = [nowP];
         else {
           const next = todayPeriods.find(p => !p.isDone);
           list = next ? [next] : [];
@@ -327,521 +297,311 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
         list = todayPeriods;
       }
     }
-    return filterPeriods(list);
+    return list;
   })();
 
-  // Auto-scrolling effect for timetable periods in readonly mode
-  useEffect(() => {
-    if (!readonly || loading || error || visiblePeriods.length === 0) return;
-
-    const startScrollTimer = setTimeout(() => {
-      const container = document.querySelector('.timetable-scroll-area');
-      if (!container) return;
-
-      const scrollSpeed = 0.4; // pixels per step
-      const intervalTime = 30; // ms
-      const holdTime = 3000; // time to hold at top/bottom (ms)
-      let holdTimer = null;
-      let scrollInterval = null;
-
-      const scroll = () => {
-        if (!container) return;
-        const maxScroll = container.scrollHeight - container.clientHeight;
-        if (maxScroll <= 0) return;
-
-        if (container.scrollTop >= maxScroll - 1) {
-          clearInterval(scrollInterval);
-          holdTimer = setTimeout(() => {
-            container.scrollTo({ top: 0, behavior: 'smooth' });
-            holdTimer = setTimeout(() => {
-              scrollInterval = setInterval(scroll, intervalTime);
-            }, holdTime);
-          }, holdTime);
-        } else {
-          container.scrollTop += scrollSpeed;
-        }
-      };
-
-      holdTimer = setTimeout(() => {
-        scrollInterval = setInterval(scroll, intervalTime);
-      }, holdTime);
-
-      return () => {
-        if (scrollInterval) clearInterval(scrollInterval);
-        if (holdTimer) clearTimeout(holdTimer);
-      };
-    }, 100);
-
-    return () => clearTimeout(startScrollTimer);
-  }, [readonly, loading, error, visiblePeriods.length]);
-
-  // ── Setup / Tutorial form ──────────────────────────────────────────────────
+  // ─── SETUP CARD (When no URL or modifying) ───────────────────────────────────
   if (showSetup) {
     if (readonly) {
       return (
-        <div className="widget-timetable" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', padding: '16px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.4rem' }}>📅</span>
-          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: '0.82em' }}>No timetable configured</span>
-          <span style={{ opacity: 0.4, fontSize: '0.72em' }}>Add your ICS URL in the web dashboard</span>
-        </div>
-      );
-    }
-    return (
-      <div className="widget-timetable" style={{ overflowY: 'auto', height: '100%' }}>
-        {/* Tutorial header */}
-        <div style={{
-          background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1))',
-          borderBottom: '1px solid rgba(99,102,241,0.2)',
-          padding: '14px 16px 12px',
-          display: 'flex', alignItems: 'center', gap: '10px',
-        }}>
-          <span style={{ fontSize: '1.3rem' }}>📅</span>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '0.92em', color: '#e2e8f0' }}>Connect Your Timetable</div>
-            <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.7)', marginTop: '1px' }}>Follow 3 steps to set up your school schedule</div>
+        <section className="h-full flex flex-col items-center justify-center p-8 select-none text-center">
+          <div className="w-14 h-14 rounded-full bg-[#111111] border border-[#222222] flex items-center justify-center mb-4 text-[#38bdf8]">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="16" y1="2" x2="16" y2="6"></line>
+              <line x1="8" y1="2" x2="8" y2="6"></line>
+              <line x1="3" y1="10" x2="21" y2="10"></line>
+            </svg>
           </div>
-        </div>
-
-        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Steps */}
-          {[
-            {
-              n: '1', title: 'Open your school portal',
-              desc: "Log in to Kamar, NSIS, or your school's student management system.",
-              icon: '🏫',
-            },
-            {
-              n: '2', title: 'Find your iCal / ICS link',
-              desc: 'Look for "Subscribe", "Export Calendar", or "iCal" under My Timetable. Copy the URL — it ends in .ics',
-              icon: '🔗',
-            },
-            {
-              n: '3', title: 'Paste it below',
-              desc: 'Your timetable will sync automatically every day.',
-              icon: '✅',
-            },
-          ].map(({ n, title, desc, icon }) => (
-            <div key={n} style={{
-              display: 'flex', gap: '10px', alignItems: 'flex-start',
-              background: 'rgba(99,102,241,0.06)',
-              border: '1px solid rgba(99,102,241,0.14)',
-              borderRadius: '10px', padding: '10px 12px',
-            }}>
-              <div style={{
-                minWidth: 28, height: 28, borderRadius: '50%',
-                background: 'rgba(99,102,241,0.2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.72em', fontWeight: 700, color: '#818cf8',
-              }}>{n}</div>
-              <div>
-                <div style={{ fontSize: '0.82em', fontWeight: 600, color: '#e2e8f0', marginBottom: '2px' }}>
-                  {icon} {title}
-                </div>
-                <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.75)', lineHeight: 1.5 }}>{desc}</div>
-              </div>
-            </div>
-          ))}
-
-          {/* URL input */}
-          <div style={{ marginTop: '4px' }}>
-            <div style={{ fontSize: '0.72em', color: 'rgba(148,163,184,0.6)', marginBottom: '6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Your ICS / iCal URL
-            </div>
-            <input
-              type="url"
-              placeholder="https://…/timetable.ics"
-              value={urlInput}
-              onChange={e => setUrlInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSaveUrl()}
-              autoFocus
-              style={{ width: '100%', boxSizing: 'border-box', marginBottom: '8px' }}
-            />
-            {saveError && (
-              <div style={{ color: '#f87171', fontSize: '0.75em', marginBottom: '6px' }}>⚠ {saveError}</div>
-            )}
-            <button
-              className="timetable-save-btn"
-              onClick={handleSaveUrl}
-              disabled={saving || !urlInput.trim()}
-              style={{ opacity: saving ? 0.6 : 1, width: '100%' }}
-            >
-              {saving ? 'Connecting…' : '🔗 Connect Timetable'}
-            </button>
-          </div>
-
-          <div style={{ fontSize: '0.68em', color: 'rgba(148,163,184,0.4)', textAlign: 'center', lineHeight: 1.5 }}>
-            Your URL is stored securely and never shared. You can change it anytime in Settings → Timetable.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-
-  // ── Loading state ──────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="widget-timetable">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.7, padding: '8px' }}>
-          <div className="notices-spinner" />
-          <span>Loading timetable…</span>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Error state ────────────────────────────────────────────────────────────
-  if (error) {
-    return (
-      <div className="widget-timetable">
-        <div style={{ color: '#f87171', padding: '8px', fontSize: '0.8em' }}>
-          [Error] {error}
-        </div>
-        <button
-          className="timetable-save-btn"
-          style={{ fontSize: '0.78em', padding: '6px 12px', width: 'fit-content' }}
-          onClick={fetchTimetable}
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  // ── Persist layout mode ──────────────────────────────────────────────────
-  const handleLayoutModeChange = (mode) => {
-    setLayoutMode(mode);
-    localStorage.setItem('timetable_layout_mode', mode);
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, layoutMode: mode });
-    }
-  };
-
-  // ── Main view (Readonly / Dashboard Focus layout) ─────────────────────────
-  if (readonly) {
-    const processedPeriods = visiblePeriods.map(p => ({
-      ...p,
-      details: getPeriodDetails(p, now)
-    }));
-
-    const currentP = processedPeriods.find(p => p.details.isNow) || 
-                     processedPeriods.find(p => !p.details.isDone) || 
-                     processedPeriods[0];
-
-    const currentSubject = currentP?.subject || currentP?.summary || '13DTE';
-    const currentRoom = currentP?.room || currentP?.location || 'T5';
-    const currentDetails = currentP ? currentP.details : { formattedEnd: '1:00pm', remainingMins: 19 };
-
-    if (layoutMode === 'odometer') {
-      const pastPeriods = processedPeriods.filter(p => p !== currentP && p.details.isDone);
-      const futurePeriods = processedPeriods.filter(p => p !== currentP && !p.details.isDone);
-
-      return (
-        <section className="h-full flex flex-col justify-center gap-6 p-6 select-none overflow-hidden">
-          {/* ROOM CHANGE / TARGETED NOTICE ALERT (Replaces Past Classes) */}
-          <motion.div 
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-[#1a0a0a] border border-[#ff4d4d]/40 rounded-none p-3.5 flex flex-col gap-1.5 shadow-lg"
+          <h3 className="text-xl font-bold text-white mb-2 tracking-tight">No Timetable Configured</h3>
+          <p className="text-sm text-[#8f8f8f] max-w-sm mb-6 leading-relaxed">
+            Link your King's High School ICS calendar feed to display your current class, room, and countdown.
+          </p>
+          <button
+            onClick={() => setShowSetup(true)}
+            className="px-5 py-2.5 bg-[#141414] hover:bg-[#1f1f1f] border border-[#2e2e2e] text-white font-mono text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer"
           >
-            <div className="flex items-center justify-between font-mono text-[11px] font-bold tracking-wider">
-              <span className="text-[#ff4d4d] uppercase flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#ff4d4d] animate-pulse"></span>
-                ROOM CHANGE ALERT · YEAR 12
-              </span>
-              <span className="text-[#8f8f8f]">TODAY</span>
-            </div>
-            <div className="text-[14px] font-bold text-white leading-snug">
-              13DTE Period 3 moved from <span className="line-through text-[#8f8f8f]">Lab 2</span> → <span className="text-[#4fc3ff] underline font-mono">T5</span>
-            </div>
-            <div className="text-[11px] text-[#8f8f8f] font-mono">
-              Notice for Year 12 & 13 Students · See Mr Smith
-            </div>
-          </motion.div>
-
-          {/* CURRENT CLASS (BIGGEST IN MIDDLE) */}
-          <div className="flex flex-col gap-2 py-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[13px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
-                Current Class
-              </span>
-            </div>
-
-            <h1 className="text-[72px] md:text-[96px] font-bold text-white leading-[0.95] tracking-tight my-1">
-              {currentSubject}
-            </h1>
-
-            <div className="flex gap-8 md:gap-12 mt-2">
-              <div className="flex flex-col">
-                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Room</span>
-                <span className="text-[28px] font-bold text-white">{currentRoom}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Ends</span>
-                <span className="text-[28px] font-bold text-white">{currentDetails.formattedEnd}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[12px] uppercase tracking-wider text-[#a0a0a0]">Left</span>
-                <span className={`text-[28px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                  {currentDetails.remainingMins}m
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* NEXT / FUTURE CLASSES (Not greyed out, clean at bottom) */}
-          <div className="border-t border-[#1c1c1c] pt-4 flex flex-col gap-2">
-            <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#8f8f8f]">
-              Next / Upcoming
-            </div>
-            {futurePeriods.length === 0 ? (
-              <div className="text-[13px] text-[#8f8f8f] italic">No upcoming classes today</div>
-            ) : (
-              futurePeriods.slice(0, 2).map((p, idx) => (
-                <div key={p.uid || p.id || idx} className="flex justify-between items-center text-white">
-                  <span className="text-[22px] md:text-[26px] font-bold text-white">
-                    {p.summary || p.subject}
-                  </span>
-                  <span className="text-[14px] text-[#d0d0d0]">
-                    {p.location || p.room || ''} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}` : ''}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
+            Configure Calendar Link
+          </button>
         </section>
       );
     }
 
-    // MINIMAL LAYOUT (Default)
-    const nextP = processedPeriods.find(p => p !== currentP && !p.details.isDone);
-    const nextSubject = nextP?.subject || nextP?.summary || '13PHY';
-    const nextRoom = nextP?.room || nextP?.location || 'Lab 4';
-    const nextTime = nextP ? nextP.details.formattedStart : '1:00pm';
+    return (
+      <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
+        <div className="max-w-2xl mx-auto w-full flex flex-col gap-6 pt-4">
+          <div className="border-b border-[#1c1c1c] pb-4">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#38bdf8] uppercase">
+              CALENDAR CONFIGURATION
+            </span>
+            <h1 className="text-2xl font-bold text-white mt-1">Connect Your Timetable</h1>
+            <p className="text-xs text-[#8f8f8f] mt-1 font-mono">
+              Provide your  calendar feed link to sync daily classes.
+            </p>
+          </div>
 
+          <div className="flex flex-col gap-3">
+            {[
+              {
+                step: '1',
+                title: 'Open King\'s High School KAMAR',
+                desc: 'Sign in to the student portal at kingshigh.school.kiwi.'
+              },
+              {
+                step: '2',
+                title: 'Copy Your iCal Link',
+                desc: 'Navigate to your timetable and copy the iCal / ICS feed link ending in .ics.'
+              },
+              {
+                step: '3',
+                title: 'Paste Below',
+                desc: 'tada, it should then work!'
+              }
+            ].map(({ step, title, desc }) => (
+              <div key={step} className="bg-[#0a0a0a] border border-[#1c1c1c] p-4 flex gap-4 items-start">
+                <span className="w-6 h-6 rounded-full bg-[#1c1c1c] text-[#38bdf8] font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                  {step}
+                </span>
+                <div>
+                  <h4 className="text-sm font-bold text-white mb-0.5">{title}</h4>
+                  <p className="text-xs text-[#8f8f8f] font-mono">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
+            <label className="text-[11px] font-mono font-bold tracking-wider text-[#cbd5e1] uppercase">
+              ICS LINK
+            </label>
+            <input
+              type="url"
+              placeholder="https://kingshigh.school.kiwi/ics/12345-QWERTYUIOPASDFGHJKLZXC.ics"
+              value={urlInput}
+              onChange={(e) => {
+                setUrlInput(e.target.value);
+                setSaveError(null);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveUrl()}
+              className="w-full bg-[#000000] border border-[#2a2a2a] focus:border-[#38bdf8] text-white px-3.5 py-2.5 text-xs font-mono rounded outline-none transition-colors"
+            />
+            {saveError && (
+              <div className="text-xs text-[#f87171] font-mono">{saveError}</div>
+            )}
+            <div className="flex justify-end gap-3 mt-2">
+              {icsUrl && (
+                <button
+                  type="button"
+                  onClick={() => setShowSetup(false)}
+                  className="px-4 py-2 border border-[#222] text-[#8f8f8f] hover:text-white font-mono text-xs uppercase rounded transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSaveUrl()}
+                disabled={saving || !urlInput.trim()}
+                className="px-5 py-2 bg-[#38bdf8] text-black font-mono text-xs font-bold uppercase rounded hover:bg-[#7dd3fc] transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? 'Connecting...' : 'Save & Sync Timetable'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Loading state ──────────────────────────────────────────────────────────
+  if (loading && periods.length === 0) {
+    return (
+      <section className="h-full flex flex-col justify-center gap-6 p-6 select-none animate-pulse">
+        <div className="h-4 w-28 bg-[#1c1c1c] rounded"></div>
+        <div className="h-20 w-3/4 bg-[#222222] rounded"></div>
+        <div className="flex gap-8 mt-4">
+          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
+          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
+          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
+        </div>
+      </section>
+    );
+  }
+
+  // ── READONLY / DASHBOARD CLASS HERO (Matches mirror design) ────────────────
+  const processedPeriods = visiblePeriods.map(p => ({
+    ...p,
+    details: getPeriodDetails(p, now)
+  }));
+
+  const currentP = processedPeriods.find(p => p.details.isNow) ||
+    processedPeriods.find(p => !p.details.isDone) ||
+    processedPeriods[0];
+
+  const currentSubject = currentP?.subject || currentP?.summary || 'No Active Class';
+  const currentRoom = currentP?.room || currentP?.location || '--';
+  const currentDetails = currentP ? currentP.details : { formattedEnd: '--', remainingMins: 0 };
+
+  const nextP = processedPeriods.find(p => p !== currentP && !p.details.isDone);
+  const nextSubject = nextP?.subject || nextP?.summary || null;
+  const nextRoom = nextP?.room || nextP?.location || '--';
+  const nextTime = nextP ? nextP.details.formattedStart : '--';
+
+  if (readonly) {
     return (
       <section className="h-full flex flex-col justify-center gap-8 p-6 select-none">
-        {/* CURRENT CLASS BLOCK */}
+        {/* CURRENT CLASS BLOCK (Matches mirror hero) */}
         <div className="flex flex-col gap-2">
-          <div className="text-[14px] uppercase tracking-[0.14em] font-bold text-[#4fc3ff]">
-            Current Class
-          </div>
-          <h1 className="text-[90px] md:text-[112px] font-bold text-white leading-[0.95] tracking-tight my-1">
+          <span className="text-[14px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
+            CURRENT CLASS
+          </span>
+          <h1 className="text-[64px] md:text-[80px] font-extrabold text-white leading-none tracking-tight my-1">
             {currentSubject}
           </h1>
 
-          <div className="flex gap-10 mt-4">
+          <div className="flex gap-8 md:gap-12 mt-3">
             <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Room</span>
-              <span className="text-[30px] font-bold text-white">{currentRoom}</span>
+              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
+              <span className="text-[32px] font-bold text-white">{currentRoom}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Ends</span>
-              <span className="text-[30px] font-bold text-white">{currentDetails.formattedEnd}</span>
+              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
+              <span className="text-[32px] font-bold text-white">{currentDetails.formattedEnd}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider text-[#d0d0d0]">Left</span>
-              <span className={`text-[30px] font-bold font-mono ${currentDetails.remainingMins <= 5 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                {currentDetails.remainingMins}m
+              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
+              <span className={`text-[32px] font-bold font-mono ${currentDetails.remainingMins <= 5 && currentDetails.remainingMins > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                {currentDetails.remainingMins > 0 ? `${currentDetails.remainingMins}m` : '--'}
               </span>
             </div>
           </div>
         </div>
 
         {/* NEXT CLASS BLOCK */}
-        <div className="border-t border-[#1c1c1c] pt-6 flex items-baseline gap-6">
-          <span className="text-[14px] uppercase tracking-[0.14em] font-bold text-[#8f8f8f] w-20 shrink-0">
-            Next
-          </span>
-          <div className="flex items-baseline gap-3">
-            <span className="text-[36px] md:text-[40px] font-bold text-white">
-              {nextSubject}
+        {nextSubject && (
+          <div className="border-t border-[#1c1c1c] pt-5 mt-2 flex items-baseline gap-6">
+            <span className="text-[13px] uppercase tracking-[2px] font-bold text-[#8f8f8f] w-16 shrink-0">
+              NEXT
             </span>
-            <span className="text-[16px] text-[#d0d0d0]">
-              {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
-            </span>
+            <div className="flex items-baseline gap-3">
+              <span className="text-[28px] md:text-[32px] font-bold text-white">
+                {nextSubject}
+              </span>
+              <span className="text-[16px] text-[#cbd5e1] font-mono">
+                {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </section>
     );
   }
 
-  // ── EDIT MODE ────────────────────────────────────────────────────────────────
-
+  // ── EDIT / FULL CONFIGURATION VIEW ─────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
-            <span className="text-[#4fc3ff]">✦</span> Timetable Configuration
+            Timetable Feed
           </h1>
           <p className="text-xs text-[#8f8f8f] font-mono mt-1">
-            Configure calendar feed source URL, layout display modes, and schedule filtering.
+            King's High School calendar feed status and schedule preview.
           </p>
         </div>
         <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
           <span>{visiblePeriods.length} PERIODS LOADED</span>
-          <span className="text-[#4fc3ff]">· LIVE ICS SYNC</span>
+          <span className="text-[#38bdf8]">· KINGS HIGH FEED ACTIVE</span>
         </div>
       </div>
 
-      {/* Grid Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-        {/* Left Column: Calendar Source & Settings (5 cols) */}
+        {/* Left Column: Calendar Details & Feed Settings */}
         <div className="lg:col-span-5 flex flex-col gap-6">
-          {/* Calendar Source Section */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
             <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              CALENDAR SOURCE (.ICS)
+              ACTIVE CALENDAR FEED
             </span>
-            <div className="flex items-center gap-0">
-              <input
-                type="text"
-                value={urlInput || icsUrl}
-                onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="https://calendar-feed-url.ics"
-                className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2 text-xs text-white font-mono placeholder-[#555] focus:outline-none focus:border-[#4fc3ff]"
-              />
-              <button
-                onClick={handleSaveUrl}
-                disabled={saving}
-                className="bg-[#4fc3ff] text-black font-mono font-bold px-4 py-2 text-xs uppercase rounded-none hover:bg-[#7dd3fc] transition-colors shrink-0"
-              >
-                {saving ? 'SAVING...' : 'LOAD'}
-              </button>
+            <div className="p-3 bg-[#000000] border border-[#1c1c1c] text-xs font-mono text-[#cbd5e1] break-all">
+              {icsUrl || 'None configured'}
             </div>
-            <p className="text-[11px] font-mono text-[#666]">
-              Paste direct iCal/ICS link from Google, Outlook, or Apple Calendar.
-            </p>
+            <button
+              onClick={() => setShowSetup(true)}
+              className="mt-2 py-2 px-4 bg-[#141414] hover:bg-[#1e1e1e] border border-[#2a2a2a] text-xs font-mono font-bold text-white uppercase rounded transition-colors"
+            >
+              Update Feed Link
+            </button>
           </div>
 
-          {/* Display Mode Selector Section */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
             <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              DISPLAY LAYOUT MODE
+              VIEW SCHEDULE RANGE
             </span>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleLayoutModeChange('minimal')}
-                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
-                  layoutMode === 'minimal'
-                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
-                }`}
-              >
-                <span>MINIMAL</span>
-                <span className="text-[10px] opacity-80 font-normal">CLEAN LIST</span>
-              </button>
-
-              <button
-                onClick={() => handleLayoutModeChange('odometer')}
-                className={`p-3 border font-mono text-xs font-bold rounded-none uppercase flex flex-col items-center justify-center gap-1 transition-colors ${
-                  layoutMode === 'odometer'
-                    ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
-                }`}
-              >
-                <span>ODOMETER</span>
-                <span className="text-[10px] opacity-80 font-normal">FOCUS TIMER</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Timetable Preview & List (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 min-h-[350px]">
-          <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2 mb-3">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-              TIMETABLE SCHEDULE LIST
-            </span>
-            <div className="flex gap-1">
+            <div className="grid grid-cols-3 gap-2">
               {['today', 'tomorrow', 'week'].map((m) => (
                 <button
                   key={m}
                   onClick={() => handleViewModeChange(m)}
-                  className={`px-3 py-1 font-mono text-[10px] font-bold uppercase rounded-none border transition-colors ${
-                    viewMode === m
-                      ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
-                  }`}
+                  className={`py-2 px-3 border font-mono text-xs font-bold uppercase transition-colors ${viewMode === m
+                    ? 'bg-[#38bdf8] text-black border-[#38bdf8]'
+                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
+                    }`}
                 >
                   {m}
                 </button>
               ))}
             </div>
           </div>
+        </div>
 
-          <div className="flex-1 bg-[#000000] border border-[#1c1c1c] rounded-none p-3 overflow-y-auto custom-scrollbar flex flex-col gap-2 min-h-[220px]">
-            {visiblePeriods.length === 0 ? (
-              <div className="m-auto text-center font-mono text-xs text-[#666] uppercase italic py-8">
-                No scheduled classes found in current feed.
-              </div>
-            ) : (
-              visiblePeriods.map((period, idx) => (
-                <div
-                  key={period.uid || period.id || idx}
-                  className={`p-3 border font-mono flex items-center justify-between text-xs rounded-none transition-colors ${
-                    period.isNow
-                      ? 'bg-[#0a0a0a] border-l-4 border-l-[#4fc3ff] border-[#1c1c1c] text-white'
-                      : 'bg-[#0a0a0a] border-[#1c1c1c] text-[#d0d0d0]'
-                  }`}
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-bold text-white text-sm">
-                      {period.summary || period.subject || 'Period'}
-                    </span>
-                    <span className="text-[11px] text-[#8f8f8f]">
-                      {timeRange(period.start || period.dtstart, period.end || period.dtend)}
-                    </span>
-                  </div>
-                  {period.location && (
-                    <span className="bg-[#1c1c1c] border border-[#333] px-2.5 py-1 text-[11px] font-mono text-[#4fc3ff]">
-                      {period.location}
-                    </span>
-                  )}
-                </div>
-              ))
-            )}
+        {/* Right Column: Mirror Hero Card Live Preview */}
+        <div className="lg:col-span-7 flex flex-col bg-[#0a0a0a] border border-[#1c1c1c] p-6">
+          <div className="border-b border-[#1c1c1c] pb-3 mb-4 flex items-center justify-between">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+              MIRROR DISPLAY PREVIEW
+            </span>
+            <span className="text-[11px] font-mono text-[#38bdf8]">MATCHING MIRROR LAYOUT</span>
           </div>
 
-          {/* Force Refresh Button */}
-          <button
-            onClick={() => window.location.reload()}
-            className="w-full mt-3 bg-[#000000] hover:bg-[#141414] text-[#d0d0d0] border border-[#1c1c1c] font-mono font-bold py-2.5 px-4 text-xs uppercase tracking-wider rounded-none flex items-center justify-center gap-2 transition-colors"
-          >
-            ↻ FORCE REFRESH FEED
-          </button>
+          <div className="flex-1 bg-[#000000] border border-[#1c1c1c] p-6 rounded flex flex-col justify-center">
+            <div className="flex flex-col gap-2">
+              <span className="text-[13px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
+                CURRENT CLASS
+              </span>
+              <h2 className="text-[54px] font-extrabold text-white leading-none tracking-tight my-1">
+                {currentSubject}
+              </h2>
+
+              <div className="flex gap-8 mt-3">
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
+                  <span className="text-2xl font-bold text-white">{currentRoom}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
+                  <span className="text-2xl font-bold text-white">{currentDetails.formattedEnd}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
+                  <span className="text-2xl font-bold font-mono text-white">
+                    {currentDetails.remainingMins > 0 ? `${currentDetails.remainingMins}m` : '--'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {nextSubject && (
+              <div className="border-t border-[#1c1c1c] pt-4 mt-6 flex items-baseline gap-4">
+                <span className="text-xs uppercase tracking-[2px] font-bold text-[#8f8f8f]">
+                  NEXT
+                </span>
+                <span className="text-xl font-bold text-white">{nextSubject}</span>
+                <span className="text-xs text-[#cbd5e1] font-mono">{nextRoom} · {nextTime}</span>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function PeriodCard({ period }) {
-  const classes = [
-    'timetable-period-card',
-    period.isNow  ? 'is-now'  : '',
-    period.isDone ? 'is-done' : '',
-  ].filter(Boolean).join(' ');
-
-  const range = timeRange(period.start || period.dtstart, period.end || period.dtend);
-  const subject = period.summary || period.SUMMARY || period.title || 'Period';
-  const location = period.location || period.LOCATION || '';
-
-  return (
-    <div className={classes}>
-      {/* Time */}
-      {range && <div className="timetable-time">{range}</div>}
-
-      {/* Subject */}
-      <div className="timetable-subject">{subject}</div>
-
-      {/* Badges area: location */}
-      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
-        {location && (
-          <span className="timetable-location">{location}</span>
-        )}
       </div>
     </div>
   );

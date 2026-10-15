@@ -46,16 +46,16 @@ echo "[START] Camera pipeline started. Waiting 5s for device to settle..."
 sleep 5
 
 # ── Face recognition daemon (RPi mode: reads from /dev/video10) ─────────────
-"$PYTHON" -u face_recognize.py --rpi &
+"$PYTHON" -u face_recognize.py --rpi > "$APP_DIR/face_daemon.log" 2>&1 &
 
-echo "[START] face_recognize.py --rpi started. Waiting 2s..."
+echo "[START] face_recognize.py --rpi started (logging to face_daemon.log). Waiting 2s..."
 sleep 2
 
-# ── Pygame mirror UI ─────────────────────────────────────────────────────────
+# ── Smart Mirror UI ──────────────────────────────────────────────────────────
 # This also spawns gesture_engine.py, which reads the same loopback device, so
 # there is no separate launch line for it here.
 export DISPLAY=:0
-"$PYTHON" -u smart_mirror_pro.py &
+"$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
 
 echo "[START] Smart Mirror is running."
 

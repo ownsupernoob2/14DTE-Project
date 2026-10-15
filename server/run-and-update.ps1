@@ -183,7 +183,7 @@ function Check-And-Apply-Updates {
     Write-Log "New commits found on origin/$Branch ($localSha -> $remoteSha): $commitSummary"
 
     # Step A: Notify connected mirrors and web clients BEFORE taking anything down
-    $updateNotice = "⚠️ Server is updating to latest build: $commitSummary. Brief restart in progress..."
+    $updateNotice = "[UPDATE] Server is updating to latest build ($commitSummary). Restart in progress..."
     Notify-Clients $updateNotice
 
     # Allow a 10-second grace window so connected clients (polling /api/banner) receive the warning
@@ -194,7 +194,7 @@ function Check-And-Apply-Updates {
     $pullOut = & $git pull --ff-only origin $Branch 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Write-Log "git pull failed: $pullOut"
-        Notify-Clients "❌ Server update failed during git pull. Continuing with previous version."
+        Notify-Clients "[ERROR] Server update failed during git pull. Continuing with previous version."
         Start-Sleep -Seconds 10
         Clear-ClientsNotification
         return
@@ -205,7 +205,7 @@ function Check-And-Apply-Updates {
     $buildOut = & $go build -o "$exeName.new.exe" . 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Build failed! Output: $buildOut"
-        Notify-Clients "❌ Go build failed on latest commit. Rolling back changes."
+        Notify-Clients "[ERROR] Go build failed on latest commit. Rolling back changes."
 
         # Revert git pull so code remains in working state
         & $git reset --hard $localSha 2>&1 | Out-Null
@@ -225,13 +225,13 @@ function Check-And-Apply-Updates {
 
     if ($isHealthy) {
         Write-Log "Update successfully applied! Server is healthy on port $port."
-        Notify-Clients "✅ Server update complete ($commitSummary)! All services operational."
+        Notify-Clients "[OK] Server update complete ($commitSummary). All services operational."
         # Keep success notice visible for 20s, then clear
         Start-Sleep -Seconds 20
         Clear-ClientsNotification
     } else {
         Write-Log "WARNING: API did not respond to /health after restart!"
-        Notify-Clients "⚠️ Server updated, but health check is pending. Please verify server status."
+        Notify-Clients "[WARNING] Server updated, but health check is pending. Please verify server status."
     }
 }
 

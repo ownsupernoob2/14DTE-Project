@@ -15,6 +15,13 @@ from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QP
 from PyQt6.QtGui import QFont, QFontDatabase, QPixmap, QMovie, QKeySequence
 
 from config import *
+try:
+    from timing_config import GESTURE_TUTORIAL_IDLE_SEC, GESTURE_TUTORIAL_DURATION_SEC, GESTURE_TUTORIAL_SPEED_FACTOR
+except ImportError:
+    GESTURE_TUTORIAL_IDLE_SEC = 10.0
+    GESTURE_TUTORIAL_DURATION_SEC = 5.6
+    GESTURE_TUTORIAL_SPEED_FACTOR = 1.30
+
 from widgets.notices_widget import NoticesWidget
 from widgets.timetable_widget import TimetableWidget
 from widgets.schedule_peek_widget import SchedulePeekWidget
@@ -24,6 +31,7 @@ from widgets.kings_week_widget import KingsWeekWidget
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
+MIRROR_VERSION = "v1.2.0"
 
 # Gesture regions, mirroring gesture_engine.py.
 GESTURE_REGION_LEFT  = 'left'
@@ -35,6 +43,120 @@ INDICATOR_BAR_WIDTH  = 4
 INDICATOR_BAR_HEIGHT = 100
 
 KINGS_IDLE_MS        = 20_000
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Video player for gesture demo MP4 (QMediaPlayer with OpenCV fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+class GestureVideoPlayer:
+    """Video player for gesture_demo.mp4 rendering to QLabel so it fades smoothly with QGraphicsOpacityEffect."""
+
+    def __init__(self, mp4_path, parent_widget, layout, target_size=(480, 480), speed_factor=None):
+        self.mp4_path = mp4_path
+        self.parent_widget = parent_widget
+        self.layout = layout
+        self.target_size = target_size
+        self.player_type = 'cv'
+        self.speed_factor = float(speed_factor) if speed_factor is not None else float(GESTURE_TUTORIAL_SPEED_FACTOR)
+
+        # Render onto a transparent QLabel so QGraphicsOpacityEffect fades both background & video
+        self.label = QLabel(parent_widget)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("background: transparent; border: none;")
+        self.label.setFixedSize(target_size[0], target_size[1])
+        layout.addWidget(self.label, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.widget = self.label
+
+        self.cap = None
+        self.cv_timer = QTimer(parent_widget)
+        self.cv_timer.timeout.connect(self._cv_tick)
+        self.fps = 30.0
+        self.total_frames = 218
+        self._detect_video_info()
+        self._render_first_frame()
+
+    def _detect_video_info(self):
+        try:
+            import cv2
+            cap = cv2.VideoCapture(self.mp4_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            cap.release()
+            if fps > 0:
+                self.fps = fps
+            if count > 0:
+                self.total_frames = count
+        except Exception:
+            pass
+
+    def get_duration_ms(self):
+        """Return video duration in milliseconds accounting for playback speed."""
+        eff_fps = max(1.0, self.fps * getattr(self, 'speed_factor', 1.0))
+        if eff_fps > 0 and self.total_frames > 0:
+            return int((self.total_frames / eff_fps) * 1000)
+        return int(GESTURE_TUTORIAL_DURATION_SEC * 1000)
+
+    def _render_first_frame(self):
+        try:
+            import cv2
+            from PyQt6.QtGui import QImage, QPixmap
+            cap = cv2.VideoCapture(self.mp4_path)
+            ret, frame = cap.read()
+            cap.release()
+            if ret and hasattr(self, 'label') and self.label is not None:
+                # Fast SIMD downscale directly in OpenCV before allocating Qt image
+                resized = cv2.resize(frame, (self.target_size[0], self.target_size[1]), interpolation=cv2.INTER_AREA)
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb.shape
+                qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
+                self.label.setPixmap(QPixmap.fromImage(qimg))
+        except Exception:
+            pass
+
+    def start(self):
+        try:
+            import cv2
+            if self.cap is None or not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.mp4_path)
+            else:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            eff_fps = max(1.0, self.fps * getattr(self, 'speed_factor', 1.0))
+            interval_ms = max(10, int(1000.0 / eff_fps))
+            if self.cv_timer is not None:
+                self.cv_timer.start(interval_ms)
+        except Exception:
+            pass
+
+    def stop(self):
+        if self.cv_timer is not None:
+            self.cv_timer.stop()
+        if self.cap is not None:
+            try:
+                import cv2
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            except Exception:
+                pass
+
+    def _cv_tick(self):
+        if self.cap is None or not self.cap.isOpened():
+            return
+        try:
+            import cv2
+            from PyQt6.QtGui import QImage, QPixmap
+            ret, frame = self.cap.read()
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+            if ret and hasattr(self, 'label') and self.label is not None:
+                # Fast SIMD downscale directly in OpenCV avoiding expensive Qt SmoothTransformation
+                resized = cv2.resize(frame, (self.target_size[0], self.target_size[1]), interpolation=cv2.INTER_AREA)
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb.shape
+                qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
+                self.label.setPixmap(QPixmap.fromImage(qimg))
+        except Exception:
+            pass
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +219,14 @@ class SmartMirrorPro(QMainWindow):
         self.status_dot.setStyleSheet("background: transparent; border-radius: 5px;")
         self.status_dot.hide()
 
+        # ── Subtle version code in corner ────────────────────────────────
+        self.version_lbl = QLabel(MIRROR_VERSION, self.central_widget)
+        self.version_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11px; font-weight: 600; "
+            "color: #444444; background: transparent; letter-spacing: 0.5px;"
+        )
+        self.version_lbl.adjustSize()
+
         # ── State tracking ────────────────────────────────────────────────
         self.current_user_id   = None
         self.current_user_name = ""
@@ -107,6 +237,7 @@ class SmartMirrorPro(QMainWindow):
         self._last_state       = None
         self._last_user_id     = None
         self.last_gesture_timestamp = 0.0
+        self.gesture_proc      = None
         self._transitioning    = False   # guard: ignore polls during fade
         self._anim_in          = None    # keep refs alive to prevent GC
         self._anim_out         = None
@@ -135,7 +266,11 @@ class SmartMirrorPro(QMainWindow):
         # ── Activity & Inactivity Timing ──────────────────────────────────
         self._last_activity_time = time.time()
         self._last_interaction_time = 0.0
+        self._gesture_tutorial_idle_sec = GESTURE_TUTORIAL_IDLE_SEC
+        self._gesture_tutorial_duration_sec = GESTURE_TUTORIAL_DURATION_SEC
         self._demo_anim = None
+        self._scrim_timer = None
+        self._scrim_fading_out = False
 
         # ── Timers ────────────────────────────────────────────────────────
         self.poll_timer = QTimer(self)
@@ -282,6 +417,7 @@ class SmartMirrorPro(QMainWindow):
         self.toast_frame.raise_()
         QTimer.singleShot(duration_ms, self.toast_frame.hide)
 
+
     # ─────────────────────────────────────────────────────────────────────
     # Build: gesture demo / inactivity darkened background scrim
     # ─────────────────────────────────────────────────────────────────────
@@ -291,28 +427,30 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_demo_overlay.setStyleSheet("background: rgba(0, 0, 0, 0.72);")
 
         lay = QVBoxLayout(self.gesture_demo_overlay)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.demo_img_label = QLabel(self.gesture_demo_overlay)
-        self.demo_img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.demo_img_label.setStyleSheet("background: transparent; border: none;")
-        
-        gif_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.gif')
+        mp4_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.mp4')
         png_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.png')
-        self.demo_movie = None
 
-        if os.path.exists(gif_path):
-            self.demo_movie = QMovie(gif_path)
-            self.demo_movie.setFormat(b"gif")
-            self.demo_movie.setScaledSize(QSize(360, 240))
-            self.demo_img_label.setMovie(self.demo_movie)
+        self.demo_movie = None
+        self.demo_img_label = None
+
+        if os.path.exists(mp4_path):
+            self.demo_movie = GestureVideoPlayer(mp4_path, self.gesture_demo_overlay, lay, target_size=(480, 480))
+            self.demo_img_label = self.demo_movie.widget
         elif os.path.exists(png_path):
+            self.demo_img_label = QLabel(self.gesture_demo_overlay)
+            self.demo_img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.demo_img_label.setStyleSheet("background: transparent; border: none;")
             pix = QPixmap(png_path)
             if not pix.isNull():
                 self.demo_img_label.setPixmap(
-                    pix.scaled(360, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    pix.scaled(480, 480, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 )
-        lay.addWidget(self.demo_img_label)
+            lay.addWidget(self.demo_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
         self.gesture_demo_overlay.hide()
 
     # ─────────────────────────────────────────────────────────────────────
@@ -527,6 +665,13 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'status_dot'):
             self.status_dot.move(w - 20, h - 20)
 
+        if hasattr(self, 'version_lbl'):
+            self.version_lbl.move(16, h - 22)
+            self.version_lbl.raise_()
+
+        if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
+            self.gesture_demo_overlay.setGeometry(0, 0, w, h)
+
         # getattr: resizeEvent can fire while __init__ is still building.
         if getattr(self, '_peek_visible', False) and self.peek_container is not None:
             self.peek_container.setGeometry(self._peek_geometry())
@@ -618,6 +763,12 @@ class SmartMirrorPro(QMainWindow):
     # hand is generally over: left = notices, right = timetable peek.
     # ─────────────────────────────────────────────────────────────────────
     def _poll_gestures(self):
+        if getattr(self, 'gesture_proc', None) is not None:
+            if self.gesture_proc.poll() is not None:
+                ret = self.gesture_proc.returncode
+                print(f"[MIRROR] Warning: Gesture daemon has exited (exit code {ret}). Check gesture_daemon.log for details.")
+                self.gesture_proc = None
+
         gesture_file = os.path.join(
             os.environ.get("TEMP", os.environ.get("TMP", "/tmp")),
             "gesture_status.json"
@@ -642,13 +793,6 @@ class SmartMirrorPro(QMainWindow):
             return self.guest_notices
         return None
 
-    def _active_notices(self):
-        """The notices panel currently on screen, or None."""
-        if self._last_state == 'user':
-            return self.notices_widget
-        if self._last_state == 'guest':
-            return self.guest_notices
-        return None
 
     # ─────────────────────────────────────────────────────────────────────
     # Momentum Scrolling Engine
@@ -910,9 +1054,13 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.raise_()
 
     def _show_gesture_scrim(self):
-        """Darken the screen background slightly for ~3.5 seconds and play demo GIF."""
+        """Darken the screen background slightly for the duration of the tutorial video and play demo MP4."""
         if self.gesture_demo_overlay is None:
             return
+        if self.gesture_demo_overlay.isVisible() and not getattr(self, '_scrim_fading_out', False):
+            return
+
+        self._scrim_fading_out = False
         self.gesture_demo_overlay.setGeometry(0, 0, self.width(), self.height())
         effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
         self.gesture_demo_overlay.setGraphicsEffect(effect)
@@ -924,28 +1072,57 @@ class SmartMirrorPro(QMainWindow):
             self.demo_movie.start()
 
         anim_in = QPropertyAnimation(effect, b"opacity", self)
-        anim_in.setDuration(500)
+        anim_in.setDuration(450)
         anim_in.setStartValue(0.0)
         anim_in.setEndValue(1.0)
         anim_in.start()
         self._demo_anim = anim_in
 
-        def fade_out():
-            anim_out = QPropertyAnimation(effect, b"opacity", self)
-            anim_out.setDuration(500)
-            anim_out.setStartValue(1.0)
-            anim_out.setEndValue(0.0)
+        # Show for the length of the video (approx 7.27 seconds) or configured timing
+        duration_ms = int(getattr(self, '_gesture_tutorial_duration_sec', GESTURE_TUTORIAL_DURATION_SEC) * 1000)
+        if hasattr(self, 'demo_movie') and self.demo_movie is not None:
+            d = self.demo_movie.get_duration_ms()
+            if d > 0:
+                duration_ms = d
 
-            def on_done():
-                self.gesture_demo_overlay.hide()
-                if hasattr(self, 'demo_movie') and self.demo_movie is not None:
-                    self.demo_movie.stop()
+        if hasattr(self, '_scrim_timer') and self._scrim_timer is not None:
+            self._scrim_timer.stop()
+        self._scrim_timer = QTimer(self)
+        self._scrim_timer.setSingleShot(True)
+        self._scrim_timer.timeout.connect(self._fade_out_gesture_scrim)
+        self._scrim_timer.start(duration_ms)
 
-            anim_out.finished.connect(on_done)
-            anim_out.start()
-            self._demo_anim = anim_out
+    def _fade_out_gesture_scrim(self):
+        """Smoothly fade out the tutorial overlay (background + video) to 0.0 opacity."""
+        if not hasattr(self, 'gesture_demo_overlay') or self.gesture_demo_overlay is None:
+            return
+        if not self.gesture_demo_overlay.isVisible() or getattr(self, '_scrim_fading_out', False):
+            return
+        self._scrim_fading_out = True
 
-        QTimer.singleShot(3500, fade_out)
+        if hasattr(self, '_scrim_timer') and self._scrim_timer is not None:
+            self._scrim_timer.stop()
+
+        effect = self.gesture_demo_overlay.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
+            self.gesture_demo_overlay.setGraphicsEffect(effect)
+
+        current_opacity = effect.opacity()
+        anim_out = QPropertyAnimation(effect, b"opacity", self)
+        anim_out.setDuration(int(450 * max(0.1, current_opacity)))
+        anim_out.setStartValue(current_opacity)
+        anim_out.setEndValue(0.0)
+
+        def on_done():
+            self.gesture_demo_overlay.hide()
+            self._scrim_fading_out = False
+            if hasattr(self, 'demo_movie') and self.demo_movie is not None:
+                self.demo_movie.stop()
+
+        anim_out.finished.connect(on_done)
+        anim_out.start()
+        self._demo_anim = anim_out
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture Dispatch
@@ -964,8 +1141,19 @@ class SmartMirrorPro(QMainWindow):
         notices     = self._active_notices()
 
         if present:
-            self._last_activity_time = time.time()
             self._last_interaction_time = time.time()
+
+        # Action gestures: clicking (tap/click), scrolling (scroll/fling with delta != 0)
+        is_click_or_scroll = (
+            event in ("tap", "click") or
+            (event in ("scroll", "fling") and delta != 0)
+        )
+
+        if is_click_or_scroll:
+            # Gesture tutorial idle time only counts and resets on active clicks or scrolls
+            self._last_activity_time = time.time()
+            # If user starts clicking/scrolling in the middle of demo, fade out smoothly
+            self._fade_out_gesture_scrim()
 
         # ── Horizontal Top Indicator Bar on Edge Dwell (Top-Right Arm) ───
         if self._last_state in ('user', 'guest'):
@@ -1000,7 +1188,18 @@ class SmartMirrorPro(QMainWindow):
         if right_dwell < 0.2:
             self._dwell_already_triggered = False
 
+        # Resolve effective region cleanly so gestures near the center gutter are never dropped
+        effective_region = region
+        if effective_region not in (GESTURE_REGION_LEFT, GESTURE_REGION_RIGHT):
+            hx = data.get("hand_x")
+            if hx is not None:
+                effective_region = GESTURE_REGION_LEFT if hx < 0.50 else GESTURE_REGION_RIGHT
+            else:
+                effective_region = region
+
         if dwell_trigger and self._last_state in ('user', 'guest'):
+            self._last_activity_time = time.time()
+            self._fade_out_gesture_scrim()
             self._dwell_already_triggered = True
             self.indicator_bar.hide()
             if self._last_state == 'user':
@@ -1014,7 +1213,7 @@ class SmartMirrorPro(QMainWindow):
                 else:
                     self._slide_guest_card_out(animate=True)
 
-        elif region == GESTURE_REGION_LEFT and notices is not None:
+        elif effective_region == GESTURE_REGION_LEFT and notices is not None:
             if event == "scroll" and delta != 0:
                 self._stop_momentum()
                 notices.scroll_by_pixels(delta)
@@ -1024,49 +1223,63 @@ class SmartMirrorPro(QMainWindow):
                 self._stop_momentum()
                 notices.toggle_scroll_pause()
 
-        elif region == GESTURE_REGION_RIGHT:
-            active_kings = None
-            if self._last_state == 'user' and self._timetable_slid_away:
-                active_kings = self.kings_widget
+        elif effective_region == GESTURE_REGION_RIGHT:
+            active_target = None
+            if self._last_state == 'user':
+                if getattr(self, '_timetable_full_mode', False):
+                    active_target = self.timetable_widget
+                elif self._timetable_slid_away:
+                    active_target = self.kings_widget
+                else:
+                    # Split view: if hand is in top half (y < 0.46), target timetable; else King's Week
+                    hy = data.get("hand_y", 0.5)
+                    if hy < 0.46 and hasattr(self, 'timetable_widget'):
+                        active_target = self.timetable_widget
+                    else:
+                        active_target = self.kings_widget
             elif self._last_state == 'guest':
                 if self._guest_card_slid_away or (hasattr(self, 'guest_kings_widget') and self.guest_kings_widget.y() < self.height()):
-                    active_kings = self.guest_kings_widget
+                    active_target = self.guest_kings_widget
 
-            if active_kings is not None:
+            if active_target is not None:
                 if event == "scroll" and delta != 0:
                     self._stop_momentum()
-                    active_kings.clear_selection()
-                    active_kings.scroll_by_pixels(delta)
+                    if hasattr(active_target, 'clear_selection'):
+                        active_target.clear_selection()
+                    if hasattr(active_target, 'scroll_by_pixels'):
+                        active_target.scroll_by_pixels(delta)
                 elif event == "fling" and delta != 0:
-                    active_kings.clear_selection()
-                    self._start_momentum(active_kings, delta)
+                    if hasattr(active_target, 'clear_selection'):
+                        active_target.clear_selection()
+                    self._start_momentum(active_target, delta)
                 elif event == "tap":
                     self._stop_momentum()
-                    if active_kings.modal_open:
-                        active_kings.close_modal()
-                    else:
-                        active_kings.activate_selected()
+                    if hasattr(active_target, 'modal_open') and active_target.modal_open:
+                        active_target.close_modal()
+                    elif hasattr(active_target, 'activate_selected'):
+                        active_target.activate_selected()
                 elif event not in ("scroll", "fling"):
-                    self._focus_kings_target(active_kings, data)
+                    if hasattr(active_target, 'focus_at'):
+                        self._focus_kings_target(active_target, data)
 
         # Affordances: strictly mutually exclusive to prevent double highlighting
-        if region == GESTURE_REGION_LEFT:
+        if effective_region == GESTURE_REGION_LEFT:
             if notices is not None:
                 notices.set_gesture_active(True)
             if self.kings_widget is not None:
                 self.kings_widget.set_gesture_active(False)
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
                 self.guest_kings_widget.set_gesture_active(False)
-        elif region == GESTURE_REGION_RIGHT:
+        elif effective_region == GESTURE_REGION_RIGHT:
             if notices is not None:
                 notices.set_gesture_active(False)
             if self.kings_widget is not None:
                 self.kings_widget.set_gesture_active(
-                    self._last_state == 'user' and self._timetable_slid_away
+                    self._last_state == 'user' and (self._timetable_slid_away or getattr(self.kings_widget, 'isVisible', lambda: True)())
                 )
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
                 self.guest_kings_widget.set_gesture_active(
-                    self._last_state == 'guest' and self._guest_card_slid_away
+                    self._last_state == 'guest' and (self._guest_card_slid_away or self.guest_kings_widget.y() < self.height())
                 )
         else:
             if notices is not None:
@@ -1075,6 +1288,7 @@ class SmartMirrorPro(QMainWindow):
                 self.kings_widget.set_gesture_active(False)
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
                 self.guest_kings_widget.set_gesture_active(False)
+
 
     def _focus_kings(self, data):
         self._focus_kings_target(self.kings_widget, data)
@@ -1264,11 +1478,13 @@ class SmartMirrorPro(QMainWindow):
                 self._last_activity_time = now
                 self._trigger_transition(new_state, new_user_id, fdata)
 
-        # ── 20-second Inactivity Darkened Overlay ─────────────────────────
+        # ── Gesture Inactivity Tutorial Overlay ───────────────────────────
         if self._last_state in ('guest', 'user') and not self._transitioning:
-            if time.time() - self._last_activity_time >= 20.0:
-                self._last_activity_time = time.time()
-                self._show_gesture_scrim()
+            idle_threshold = getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
+            if time.time() - self._last_activity_time >= idle_threshold:
+                if not getattr(self, '_scrim_fading_out', False) and (self.gesture_demo_overlay is None or not self.gesture_demo_overlay.isVisible()):
+                    self._last_activity_time = time.time()
+                    self._show_gesture_scrim()
 
         # Status dot
         if self.face_recognized:
@@ -1308,6 +1524,8 @@ class SmartMirrorPro(QMainWindow):
             self.guest_kings_widget.reset_gesture_state()
             self.guest_kings_widget.clear_selection()
 
+        is_from_idle = (visible is None)
+
         if incoming is not None and incoming is visible:
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._update_arrow_indicator()
@@ -1321,6 +1539,8 @@ class SmartMirrorPro(QMainWindow):
         if incoming is not None:
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
+            if is_from_idle and new_state == 'guest':
+                self._show_gesture_scrim()
 
         elif visible is not None:
             self._fade_out(visible, on_done=self._on_fade_to_idle_done)
@@ -1354,6 +1574,10 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container.hide()
         self.user_container.setGraphicsEffect(None)
         self.guest_container.setGraphicsEffect(None)
+        if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
+            self.gesture_demo_overlay.hide()
+            if hasattr(self, 'demo_movie') and self.demo_movie is not None:
+                self.demo_movie.stop()
         if self.kings_widget is not None:
             self.kings_widget.clear_selection()
         if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
@@ -1405,6 +1629,18 @@ class SmartMirrorPro(QMainWindow):
                 self._barcode_buffer = ""
             self._barcode_buffer += text
             self._barcode_buffer_time = now
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self._last_activity_time = time.time()
+        self._last_interaction_time = time.time()
+        self._fade_out_gesture_scrim()
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        self._last_activity_time = time.time()
+        self._last_interaction_time = time.time()
+        self._fade_out_gesture_scrim()
 
     def _on_barcode_scanned(self, raw_code):
         """Process scanned/pasted student ID barcode."""
@@ -1631,9 +1867,13 @@ def start_gesture_daemon():
     args.append('--exit-with-parent')
 
     try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gesture_daemon.log')
+        log_f = open(log_path, 'a', encoding='utf-8')
         proc = subprocess.Popen([sys.executable, '-u', script] + args,
-                                stdin=subprocess.PIPE)
-        print(f'[MIRROR] Gesture daemon started (pid {proc.pid}, {" ".join(args)}).')
+                                stdin=subprocess.PIPE,
+                                stdout=log_f,
+                                stderr=subprocess.STDOUT)
+        print(f'[MIRROR] Gesture daemon started (pid {proc.pid}, {" ".join(args)}). Logs: {log_path}')
         return proc
     except Exception as e:
         # A mirror with no gestures is still a working mirror, so this is never
@@ -1647,6 +1887,7 @@ if __name__ == '__main__':
     face_proc = start_face_daemon()
     gestures = start_gesture_daemon()
     mirror = SmartMirrorPro()
+    mirror.gesture_proc = gestures
     mirror.show()
     try:
         code = app.exec()
