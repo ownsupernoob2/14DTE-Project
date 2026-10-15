@@ -7,7 +7,7 @@ Instead the screen is split into the same columns the UI uses, and whichever
 region your hand is generally in is the region you are interacting with:
 
     left   (x < 0.50)  → the notices column, drawn on the left of the screen
-    center               nothing (a neutral resting area)
+    center             nothing (a neutral resting area)
     right  (x > 0.62)  → the timetable peek, drawn on the right
 
 Which physical side of you that corresponds to depends on where the camera is
@@ -44,31 +44,22 @@ GESTURE_STATUS_FILE = os.path.join(
 )
 
 # The hand tracker's weights. Resolved next to this file rather than against the
-# working directory, because the mirror spawns this daemon and the shell it was
-# launched from could be anywhere. setup_venv.bat / setup.sh download it.
+# working directory.
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "gesture_recognizer.task")
 
-# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds, so the
-# face daemon and this one can share the single camera module.
+# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds.
 RPI_CAMERA = "/dev/video10"
 
 
 def default_flip():
-    """Whether to mirror the frame, unless told otherwise.
-
-    For a smart mirror looking back at the student, mirroring is essential:
-    the user's left hand arrives on the camera's right side, so horizontal mirroring
-    puts it under the left panel where the user is physically pointing.
-    Default is True on all platforms unless explicitly disabled via GESTURE_FLIP=0.
-    """
+    """Whether to mirror the frame, unless told otherwise."""
     env = os.environ.get("GESTURE_FLIP")
     if env is not None:
         return env not in ("0", "false", "False", "no", "off", "")
     return True
 
 # ── Region boundaries ────────────────────────────────────────────────────────
-# Left half (x < 0.50) is the notices column; right side (x > 0.62) is the peek.
 REGION_LEFT_EDGE  = 0.50
 REGION_RIGHT_EDGE = 0.62
 
@@ -77,26 +68,24 @@ REGION_CENTER = "center"
 REGION_RIGHT  = "right"
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
-PINCH_ENTER_RATIO  = 0.55   # thumb-index gap / palm size to start a pinch
-PINCH_EXIT_RATIO   = 0.75   # and to release it again
-MIN_PALM_SIZE      = 0.02   # below this the hand is too far away to trust
+PINCH_ENTER_RATIO    = 0.55   # thumb-index gap / palm size to start a pinch
+PINCH_EXIT_RATIO     = 0.75   # and to release it again
+MIN_PALM_SIZE        = 0.02   # below this the hand is too far away to trust
 
-TAP_MAX_SEC        = 0.65   # pinch held up to 0.65s without drag is a tap
-TAP_COOLDOWN_SEC   = 0.35   # ignore repeat taps inside this window
+TAP_MAX_SEC         = 0.65   # pinch held up to 0.65s without drag is a tap
+TAP_COOLDOWN_SEC    = 0.35   # ignore repeat taps inside this window
 DRAG_TAP_THRESHOLD = 0.020  # movement threshold during pinch to distinguish tap vs drag
-DRAG_SCROLL_GAIN   = 2200.0 # movement -> scroll pixels
-DRAG_DEADZONE      = 0.003  # ignore minute jitter below this
+DRAG_SCROLL_GAIN    = 2200.0 # movement -> scroll pixels
+DRAG_DEADZONE       = 0.003  # ignore minute jitter below this
 FLING_VELOCITY_SCALE = 900.0 # release velocity multiplier for inertia fling
 
+TOP_RIGHT_X         = 0.62   # top-right quadrant dwell threshold
+TOP_RIGHT_Y         = 0.18   # top-right height limit
+RIGHT_DWELL_SEC     = 1.6    # hold hand in top-right region for 1.6s
+HEARTBEAT_SEC       = 0.5    # republish presence at least this often
+HAND_LOST_SEC       = 0.4    # no landmarks for this long → hand is gone
 
-TOP_RIGHT_X        = 0.62   # top-right quadrant dwell threshold (hand must be clearly in right half)
-TOP_RIGHT_Y        = 0.18   # top-right height limit (palm must be raised high up near top edge <= 0.18)
-RIGHT_FAR_EDGE     = 0.62   # right region dwell threshold (top-right only)
-RIGHT_DWELL_SEC    = 1.6    # hold hand in top-right region for 1.6s to toggle timetable / kings week
-HEARTBEAT_SEC      = 0.5    # republish presence at least this often
-HAND_LOST_SEC      = 0.4    # no landmarks for this long → hand is gone
-
-POSITION_QUANTUM   = 1.0 / 24
+POSITION_QUANTUM    = 1.0 / 24
 
 
 def classify_region(x):
@@ -115,9 +104,6 @@ class GestureEngine:
         self.tracker = None
         self._init_tracker()
 
-        # Landmark x is a fraction of the frame width and y of its height, so
-        # measuring a diagonal needs the aspect ratio. Set from the first real
-        # frame; 1.0 until then, which is also what synthetic test hands assume.
         self.frame_aspect = 1.0
 
         # ── Tracking state ───────────────────────────────────────────────────
@@ -128,7 +114,7 @@ class GestureEngine:
         self.last_seen = 0.0
 
         self.pinched = False
-        self.pinch_start = None       # when the current pinch began
+        self.pinch_start = None
         self.drag_start_y = None
         self.last_drag_y = None
         self.drag_dist = 0.0
@@ -136,10 +122,10 @@ class GestureEngine:
         self.last_frame_time = 0.0
         self.scroll_delta = 0
 
-        self.last_tap_time = None     # None = no tap yet, so no cooldown to serve
+        self.last_tap_time = None
 
-        self.right_since = None       # when the palm entered the far-right region
-        self.right_armed = True       # re-arms once the hand leaves the far-right
+        self.right_since = None
+        self.right_armed = True
         self.right_dwell_progress = 0.0
 
         self.seq = 0
@@ -149,13 +135,12 @@ class GestureEngine:
         self._tmp_file = f"{GESTURE_STATUS_FILE}.{os.getpid()}.{id(self):x}.tmp"
 
     def _init_tracker(self):
-        """Build the MediaPipe hand tracker. Overridden in tests."""
+        """Build the MediaPipe hand tracker."""
         if mp is None:
             print("[GESTURE] mediapipe not installed — gesture control disabled.")
             return
         if not os.path.exists(MODEL_PATH):
-            print(f"[GESTURE] Missing {os.path.basename(MODEL_PATH)} — run "
-                  f"setup_venv.bat (Windows) or setup.sh (Pi) to download it. "
+            print(f"[GESTURE] Missing {os.path.basename(MODEL_PATH)} — download gesture_recognizer.task. "
                   f"Gesture control disabled.")
             return
         try:
@@ -182,46 +167,25 @@ class GestureEngine:
 
     @staticmethod
     def is_backhand(lm, handedness='Right', flip=False):
-        """True if the back of the hand faces the camera, rather than the palm.
-
-        Calculates the z-component of the palm normal using wrist (0),
-        middle knuckle (9), index knuckle (5), and pinky knuckle (17).
-        When the palmar surface faces the camera, the cross product is positive;
-        when the dorsal/backhand surface faces the camera, it is negative.
-        When the camera frame is horizontally flipped (mirror mode), the
-        x-coordinates are reflected, so the parity is corrected.
-        """
         if not lm or len(lm) < 18:
             return False
-        # Vector u: wrist (0) -> middle MCP (9)
         ux = lm[9].x - lm[0].x
         uy = lm[9].y - lm[0].y
 
-        # Vector v across knuckles
         is_right = (handedness == 'Right')
         if is_right:
-            # Index (5) -> Pinky (17)
             vx = lm[17].x - lm[5].x
             vy = lm[17].y - lm[5].y
         else:
-            # Pinky (17) -> Index (5)
             vx = lm[5].x - lm[17].x
             vy = lm[5].y - lm[17].y
 
-        # 2D cross product: ux * vy - uy * vx
-        # Positive = palm facing camera; Negative = back of hand facing camera
         nz = ux * vy - uy * vx
         if flip:
             nz = -nz
         return nz < -0.01
 
     def select_best_hand(self, hand_landmarks_list, handedness_list=None):
-        """Pick the clearest and closest hand facing the camera, ignoring backhands.
-
-        Applies temporal continuity to prevent rapid flip-flopping between hands,
-        and rejects resting hands near the bottom frame border.
-        Returns (landmarks, handedness_name) or (None, None).
-        """
         if not hand_landmarks_list:
             return None, None
 
@@ -234,24 +198,19 @@ class GestureEngine:
                 h_name = getattr(cat, 'category_name', 'Right')
                 h_score = getattr(cat, 'score', 1.0)
 
-            # Ignore backhands
             if self.is_backhand(lm, h_name, flip=getattr(self, 'flip', False)):
                 continue
 
-            # Ignore hands at the very bottom edge (e.g. resting on desk or lap)
             cx, cy = self._palm_center(lm)
             if cy > 0.88:
                 continue
 
-            # Palm size reflects closeness to camera (larger = closer)
             size = self._palm_size(lm)
             if size < MIN_PALM_SIZE:
                 continue
 
-            # Composite metric: closest (size) and clearest (detection confidence)
             composite_score = size * (h_score ** 0.5)
 
-            # Continuity bonus: if already tracking a hand, prefer candidate near current position
             if self.present:
                 dist = math.hypot((cx - self.hand_x) * self.frame_aspect, cy - self.hand_y)
                 if dist < 0.28:
@@ -262,12 +221,10 @@ class GestureEngine:
         if not candidates:
             return None, None
 
-        # Sort descending by composite score: highest closeness & clarity wins
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1], candidates[0][2]
 
     def is_pinching(self, lm):
-        """True while the thumb and index finger are touching — the 'click'."""
         palm = self._palm_size(lm)
         if palm < MIN_PALM_SIZE:
             return False
@@ -281,15 +238,9 @@ class GestureEngine:
         return (sum(p.x for p in pts) / len(pts),
                 sum(p.y for p in pts) / len(pts))
 
-    @staticmethod
-    def _extended_fingers(lm):
-        pairs = ((8, 5), (12, 9), (16, 13), (20, 17))
-        return sum(1 for tip, mcp in pairs if lm[tip].y < lm[mcp].y)
-
     # ── Per-frame analysis ───────────────────────────────────────────────────
 
     def process_landmarks(self, lm, now):
-        """Update state from one hand and return an event name, or None."""
         self.scroll_delta = 0
         x, y = self._palm_center(lm)
         if self.present:
@@ -307,7 +258,7 @@ class GestureEngine:
         self.pinched = pinched
         event = None
 
-        # ── Edge Dwell Progress (Top-Right Arm / Palm Quadrant ONLY) ─────
+        # ── Edge Dwell Progress ─────
         in_top_right = (x >= TOP_RIGHT_X and y <= TOP_RIGHT_Y)
 
         if in_top_right:
@@ -323,7 +274,6 @@ class GestureEngine:
                     self._last_dwell_trigger = now
                     event = "enter_right"
                 elif not self.right_armed and (now - getattr(self, '_last_dwell_trigger', 0)) > 1.8:
-                    # Allow continuous re-arming if user keeps hand in zone
                     self.right_armed = True
                     self.right_since = now
         else:
@@ -335,7 +285,6 @@ class GestureEngine:
         # ── Pinch-and-drag scrolling & click/tap ─────────────────────────────
         if pinched:
             if self.pinch_start is None:
-                # Start dragging / pinch
                 self.pinch_start = now
                 self.drag_start_y = y
                 self.last_drag_y = y
@@ -353,7 +302,6 @@ class GestureEngine:
                 self.drag_dist += abs(dy)
                 self.last_drag_y = y
 
-                # Only engage scrolling if movement has exceeded the intentional drag threshold
                 if self.drag_dist > DRAG_TAP_THRESHOLD and abs(dy) > DRAG_DEADZONE:
                     delta = int(-dy * DRAG_SCROLL_GAIN)
                     if delta != 0:
@@ -387,11 +335,9 @@ class GestureEngine:
                         self.scroll_delta = max(-500, min(500, fling_delta))
                         event = "fling"
 
-
         return event
 
     def mark_absent(self, now):
-        """Clear per-hand state once the hand has been gone long enough."""
         if not self.present:
             return False
         if now - self.last_seen < HAND_LOST_SEC:
@@ -412,14 +358,12 @@ class GestureEngine:
     # ── Publishing ───────────────────────────────────────────────────────────
 
     def _quantised_position(self):
-        """The palm position rounded to a grid cell, or None with no hand."""
         if not self.present:
             return None
         return (int(self.hand_x / POSITION_QUANTUM),
                 int(self.hand_y / POSITION_QUANTUM))
 
     def write_status(self, event=None, scroll_delta=0, force=False):
-        """Publish state, skipping writes that would tell the mirror nothing new."""
         now = time.time()
         payload = (self.present, self.region, event, self._quantised_position(), self.pinched, round(self.right_dwell_progress, 2))
         if (not force and event is None
@@ -447,10 +391,6 @@ class GestureEngine:
         try:
             with open(self._tmp_file, "w") as f:
                 json.dump(data, f)
-            # The mirror briefly holds a read handle on the target, and on
-            # Windows os.replace() onto an open file raises PermissionError, so
-            # a frame is occasionally dropped rather than published. Retry
-            # briefly; the next frame is only 30ms away, so never block long.
             for attempt in range(3):
                 try:
                     os.replace(self._tmp_file, GESTURE_STATUS_FILE)
@@ -465,15 +405,6 @@ class GestureEngine:
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def watch_parent(self):
-        """Stop the loop when the parent closes our stdin.
-
-        The mirror hands us a pipe and dies with it. A pipe is better than
-        anything pid-based here: the OS closes the write end however the mirror
-        goes away — clean exit, Ctrl-C, taskkill, closed terminal — so we always
-        find out, and there is no pid to reuse and mistakenly kill. Without this,
-        every non-graceful mirror exit left a daemon running; they piled up and
-        fought over the status file.
-        """
         def wait_for_eof():
             try:
                 sys.stdin.read()
@@ -494,25 +425,25 @@ class GestureEngine:
             print("[GESTURE] No hand tracker — exiting.")
             return
 
-        cap = cv2.VideoCapture(self.camera_id)
+        # Explicitly use V4L2 backend when accessing loopback device on Linux
+        if isinstance(self.camera_id, str) and self.camera_id.startswith("/dev/video"):
+            cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
+        else:
+            cap = cv2.VideoCapture(self.camera_id)
+
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened():
-            print(f"[GESTURE] Could not open camera {self.camera_id!r}. "
-                  f"Another process may already have it — exiting.")
+            print(f"[GESTURE] Could not open camera {self.camera_id!r}. Exiting.")
             cap.release()
             return
 
         print(f"[GESTURE] Running on camera {self.camera_id}. "
               f"Regions: left<{REGION_LEFT_EDGE} right>{REGION_RIGHT_EDGE}.")
-        # Spelt out because it is the one setting nothing can work out for itself,
-        # and the symptom — the panel on your left answering to your other hand —
-        # looks like a bug in the gesture code rather than a camera placement.
-        print(f"[GESTURE] Horizontal flip: {'on' if self.flip else 'off'}. "
-              f"The notices panel is drawn on the left of the screen; if it only "
-              f"answers to your other hand, set GESTURE_FLIP="
-              f"{'0' if self.flip else '1'} and restart.")
+        print(f"[GESTURE] Horizontal flip: {'on' if self.flip else 'off'}.")
+
         start = time.time()
         last_stamp_ms = -1
         try:
@@ -529,10 +460,7 @@ class GestureEngine:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-                # VIDEO mode rejects a timestamp that does not advance, and two
-                # frames can easily land inside the same millisecond.
-                stamp_ms = max(int((time.time() - start) * 1000),
-                               last_stamp_ms + 1)
+                stamp_ms = max(int((time.time() - start) * 1000), last_stamp_ms + 1)
                 last_stamp_ms = stamp_ms
                 results = self.tracker.recognize_for_video(image, stamp_ms)
 
@@ -555,17 +483,16 @@ class GestureEngine:
                     self.write_status(force=became_absent)
 
                 if event:
-                    print(f"[GESTURE] {event} region={self.region} "
-                          f"delta={self.scroll_delta}")
+                    print(f"[GESTURE] {event} region={self.region} delta={self.scroll_delta}")
         except KeyboardInterrupt:
             pass
         finally:
             cap.release()
-            self.tracker.close()
+            if hasattr(self.tracker, 'close'):
+                self.tracker.close()
 
 
 def parse_args(argv=None):
-    """Camera selection, matching face_recognize.py's flags."""
     parser = argparse.ArgumentParser(
         description="Smart Mirror — Region-based Hand Gesture Daemon")
     parser.add_argument('--rpi', action='store_true',
@@ -573,18 +500,12 @@ def parse_args(argv=None):
     parser.add_argument('--camera-id', default=0, type=int,
                         help="Desktop webcam index (default 0)")
     parser.add_argument('--exit-with-parent', action='store_true',
-                        help="Exit when stdin closes. The mirror passes this so "
-                             "the daemon cannot outlive it; leave it off when "
-                             "running by hand from a terminal.")
+                        help="Exit when stdin closes.")
     flip = parser.add_mutually_exclusive_group()
     flip.add_argument('--flip', dest='flip', action='store_true', default=None,
-                      help="Mirror the frame horizontally: for a camera mounted "
-                           "in the mirror facing the student, so the panel on "
-                           "your left answers to the hand on your left.")
+                      help="Mirror the frame horizontally.")
     flip.add_argument('--no-flip', dest='flip', action='store_false',
-                      help="Do not mirror. Use when the camera is not facing the "
-                           "student from behind the screen — a phone on a stand, "
-                           "say — and the sides come out crossed.")
+                      help="Do not mirror.")
     args = parser.parse_args(argv)
     camera = RPI_CAMERA if args.rpi else args.camera_id
     flip_frame = default_flip() if args.flip is None else args.flip
