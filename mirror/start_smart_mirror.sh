@@ -9,7 +9,6 @@ cd "$APP_DIR"
 echo "[START] Checking for updates from GitHub..."
 git pull || echo "[WARN] Failed to pull updates from GitHub. Running with current code."
 
-
 # ── Python interpreter ──────────────────────────────────────────────────────
 # Prefer the venv created by setup.sh, fall back to system python3.10 / python3
 PYTHON="${MIRROR_PYTHON:-$HOME/mirror-venv/bin/python}"
@@ -38,7 +37,18 @@ sleep 1
 sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam1" exclusive_caps=1
 
 # ── Pipe rpicam-vid → ffmpeg → /dev/video10 ─────────────────────────────────
-rpicam-vid -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 | \
+# EXPOSURE FIX ADJUSTMENTS:
+#  --metering spot       : Measures light in the center of the frame (your face) instead of averaging the bright background.
+#  --ev 2.0              : Boosts exposure target by +2 EV to brighten shadows.
+#  --shutter 30000       : Locks shutter speed to 30,000 µs (30ms).
+#  --gain 4.0            : Disables auto-gain and sets manual digital/analogue gain boost.
+
+rpicam-vid -t 0 --nopreview --codec yuv420 \
+  --metering spot \
+  --ev 2.0 \
+  --shutter 30000 \
+  --gain 4.0 \
+  -o - --width 640 --height 480 --framerate 30 | \
 ffmpeg -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
   -f v4l2 -preset ultrafast -tune zerolatency -fflags nobuffer -flags low_delay /dev/video10 &
 
