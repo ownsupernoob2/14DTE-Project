@@ -3,4 +3,4 @@ requests
 PyQt6
 faiss-cpu
 pytesseract
-mediapipe>=0.10.0
+mediapipe
