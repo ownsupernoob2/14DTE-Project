@@ -93,6 +93,11 @@ func main() {
 	e.POST("/api/admin/banner", setAdminBanner)
 	e.GET("/api/banner", getAdminBanner)
 
+	// Analytics & A/B Testing Telemetry routes
+	e.POST("/api/analytics/events", recordAnalyticsEvent)
+	e.GET("/api/analytics/config", getAnalyticsConfig)
+	e.GET("/api/admin/analytics", getAdminAnalytics, OptionalEnsureValidToken())
+
 	// Timetable routes
 	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT
 	protected.POST("/timetable/ics", setTimetableURL)
@@ -101,6 +106,7 @@ func main() {
 	// Health check and version
 	e.GET("/health", health)
 	e.GET("/api/version", version)
+
 
 	port := os.Getenv("PORT")
 	if port == "" {

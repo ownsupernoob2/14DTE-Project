@@ -41,3 +41,6 @@ server/*.exe
 # Logs
 *.log
 nohup.out
+
+# Scratch scripts
+scratch/

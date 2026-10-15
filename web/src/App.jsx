@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import Privacy from './pages/Privacy'
+import AdminAnalytics from './pages/AdminAnalytics'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -73,6 +74,10 @@ function App() {
           <Route
             path="/settings"
             element={isAuthenticated ? <Settings /> : <Navigate to="/login" />}
+          />
+          <Route
+            path="/admin"
+            element={isAuthenticated ? <AdminAnalytics /> : <Navigate to="/login" />}
           />
 
           <Route path="*" element={<Navigate to="/dashboard" />} />

@@ -27,8 +27,10 @@ from widgets.timetable_widget import TimetableWidget
 from widgets.schedule_peek_widget import SchedulePeekWidget
 from widgets.clock_widget import ClockWidget
 from widgets.kings_week_widget import KingsWeekWidget
+from telemetry import TelemetryTracker
 
 API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
+
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
 MIRROR_VERSION = "v1.2.0"
@@ -272,7 +274,12 @@ class SmartMirrorPro(QMainWindow):
         self._scrim_timer = None
         self._scrim_fading_out = False
 
+        # ── Telemetry & A/B Testing Tracker ───────────────────────────────
+        self.telemetry = TelemetryTracker(api_url=API_URL)
+        self.current_variant = "A"
+
         # ── Timers ────────────────────────────────────────────────────────
+
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._update_inputs)
         self.poll_timer.start(200)
@@ -366,6 +373,25 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.setFixedSize(32, 32)
         self.edge_arrow_label.hide()
 
+        # Variant B proactive dwell hint pill in header
+        self.dwell_hint_pill = QLabel("✋ Hold hand in top-right for Timetable", self.central_widget)
+        self.dwell_hint_pill.setObjectName("DwellHintPill")
+        self.dwell_hint_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dwell_hint_pill.setStyleSheet("""
+            #DwellHintPill {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 13px;
+                font-weight: 700;
+                color: #e2e8f0;
+                background: rgba(15, 23, 42, 0.88);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 12px;
+                padding: 4px 12px;
+            }
+        """)
+        self.dwell_hint_pill.hide()
+
+
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
     # ─────────────────────────────────────────────────────────────────────
@@ -451,7 +477,28 @@ class SmartMirrorPro(QMainWindow):
                 )
             lay.addWidget(self.demo_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Variant B explicit touchless guidance label (tackles the false touchscreen assumption)
+        self.demo_touchless_hint = QLabel(
+            "🖐️ Touchless Controls — Move your hand in the air in front of mirror",
+            self.gesture_demo_overlay
+        )
+        self.demo_touchless_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.demo_touchless_hint.setStyleSheet("""
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            color: #ffffff;
+            background: rgba(15, 23, 42, 0.90);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 20px;
+            padding: 8px 24px;
+            margin-top: 16px;
+        """)
+        lay.addWidget(self.demo_touchless_hint, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.demo_touchless_hint.hide()
+
         self.gesture_demo_overlay.hide()
+
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
@@ -1022,21 +1069,29 @@ class SmartMirrorPro(QMainWindow):
 
         if not is_active or is_dwelling:
             self.edge_arrow_label.hide()
+            if hasattr(self, 'dwell_hint_pill'):
+                self.dwell_hint_pill.hide()
             return
 
         # Arrow is ONLY shown when timetable or guest card is slid away (collapsed), never when visible
         if self._last_state == 'user':
             if not self._timetable_slid_away:
                 self.edge_arrow_label.hide()
+                if hasattr(self, 'dwell_hint_pill'):
+                    self.dwell_hint_pill.hide()
                 return
             self.edge_arrow_label.setText("▲")
         elif self._last_state == 'guest':
             if not self._guest_card_slid_away:
                 self.edge_arrow_label.hide()
+                if hasattr(self, 'dwell_hint_pill'):
+                    self.dwell_hint_pill.hide()
                 return
             self.edge_arrow_label.setText("▲")
         else:
             self.edge_arrow_label.hide()
+            if hasattr(self, 'dwell_hint_pill'):
+                self.dwell_hint_pill.hide()
             return
 
         w = self.width()
@@ -1053,6 +1108,19 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.show()
         self.edge_arrow_label.raise_()
 
+        # Variant B: Show proactive dwell hint pill beneath arrow
+        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
+            pill_w = 290
+            pill_h = 28
+            pill_x = content_x + (content_w - pill_w) // 2
+            pill_y = arrow_y + 36
+            self.dwell_hint_pill.setGeometry(pill_x, pill_y, pill_w, pill_h)
+            self.dwell_hint_pill.setText("✋ Hold hand in top-right for Timetable")
+            self.dwell_hint_pill.show()
+            self.dwell_hint_pill.raise_()
+        elif hasattr(self, 'dwell_hint_pill'):
+            self.dwell_hint_pill.hide()
+
     def _show_gesture_scrim(self):
         """Darken the screen background slightly for the duration of the tutorial video and play demo MP4."""
         if self.gesture_demo_overlay is None:
@@ -1065,6 +1133,13 @@ class SmartMirrorPro(QMainWindow):
         effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
         self.gesture_demo_overlay.setGraphicsEffect(effect)
         effect.setOpacity(0.0)
+
+        # Variant B explicit touchless banner beneath tutorial video
+        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'demo_touchless_hint'):
+            self.demo_touchless_hint.show()
+        elif hasattr(self, 'demo_touchless_hint'):
+            self.demo_touchless_hint.hide()
+
         self.gesture_demo_overlay.show()
         self.gesture_demo_overlay.raise_()
 
@@ -1116,6 +1191,8 @@ class SmartMirrorPro(QMainWindow):
 
         def on_done():
             self.gesture_demo_overlay.hide()
+            if hasattr(self, 'demo_touchless_hint'):
+                self.demo_touchless_hint.hide()
             self._scrim_fading_out = False
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
@@ -1142,6 +1219,13 @@ class SmartMirrorPro(QMainWindow):
 
         if present:
             self._last_interaction_time = time.time()
+
+        # Telemetry: Record gesture events & dwell progress
+        if hasattr(self, 'telemetry') and self.telemetry is not None:
+            if event:
+                self.telemetry.record_gesture(event_type=event, region=region)
+            if right_dwell > 0:
+                self.telemetry.record_dwell_progress(right_dwell)
 
         # Action gestures: clicking (tap/click), scrolling (scroll/fling with delta != 0)
         is_click_or_scroll = (
@@ -1175,11 +1259,25 @@ class SmartMirrorPro(QMainWindow):
                 self.indicator_fill.setGeometry(0, 0, fill_w, 4)
                 self.indicator_bar.show()
                 self.indicator_bar.raise_()
+
+                # In Variant B, display active percentage completion in the dwell pill
+                if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
+                    pct = int(right_dwell * 100)
+                    self.dwell_hint_pill.setText(f"✋ Hold hand in top-right for Timetable ({pct}%)")
+                    pill_w = 290
+                    pill_h = 28
+                    pill_x = content_x + (content_w - pill_w) // 2
+                    pill_y = top + 20 + 36
+                    self.dwell_hint_pill.setGeometry(pill_x, pill_y, pill_w, pill_h)
+                    self.dwell_hint_pill.show()
+                    self.dwell_hint_pill.raise_()
             else:
                 self.indicator_bar.hide()
                 self._update_arrow_indicator()
         else:
             self.indicator_bar.hide()
+            if hasattr(self, 'dwell_hint_pill'):
+                self.dwell_hint_pill.hide()
 
         # ── Handle Events (Right-side / Top-Right Dwell Toggle) ───────────
         dwell_filled = (right_dwell >= 0.98)
@@ -1202,6 +1300,10 @@ class SmartMirrorPro(QMainWindow):
             self._fade_out_gesture_scrim()
             self._dwell_already_triggered = True
             self.indicator_bar.hide()
+            if hasattr(self, 'dwell_hint_pill'):
+                self.dwell_hint_pill.hide()
+            if hasattr(self, 'telemetry') and self.telemetry is not None:
+                self.telemetry.record_timetable_toggle()
             if self._last_state == 'user':
                 if self._timetable_slid_away:
                     self._show_timetable(animate=True, is_initial_split=False)
@@ -1256,8 +1358,12 @@ class SmartMirrorPro(QMainWindow):
                     self._stop_momentum()
                     if hasattr(active_target, 'modal_open') and active_target.modal_open:
                         active_target.close_modal()
+                        if hasattr(self, 'telemetry') and self.telemetry is not None:
+                            self.telemetry.record_modal_close()
                     elif hasattr(active_target, 'activate_selected'):
                         active_target.activate_selected()
+                        if hasattr(self, 'telemetry') and self.telemetry is not None:
+                            self.telemetry.record_modal_open()
                 elif event not in ("scroll", "fling"):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
@@ -1537,6 +1643,13 @@ class SmartMirrorPro(QMainWindow):
             visible.lower()
 
         if incoming is not None:
+            # Telemetry: Begin tracked session and assign A/B experiment variant
+            if incoming is not visible and hasattr(self, 'telemetry') and self.telemetry is not None:
+                auth = getattr(self, '_auth_method', '')
+                if not auth:
+                    auth = 'face' if new_state == 'user' else 'presence'
+                self.current_variant = self.telemetry.start_session(session_type=new_state, auth_method=auth)
+
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
             if is_from_idle and new_state == 'guest':
@@ -1570,10 +1683,15 @@ class SmartMirrorPro(QMainWindow):
         self._update_arrow_indicator()
 
     def _on_fade_to_idle_done(self):
+        if hasattr(self, 'telemetry') and self.telemetry is not None:
+            self.telemetry.end_session()
+        self._auth_method = ""
         self.user_container.hide()
         self.guest_container.hide()
         self.user_container.setGraphicsEffect(None)
         self.guest_container.setGraphicsEffect(None)
+        if hasattr(self, 'dwell_hint_pill'):
+            self.dwell_hint_pill.hide()
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.hide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
@@ -1583,6 +1701,11 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
             self.guest_kings_widget.clear_selection()
         self._transitioning = False
+
+    def closeEvent(self, event):
+        if hasattr(self, 'telemetry') and self.telemetry is not None:
+            self.telemetry.end_session()
+        super().closeEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────
     # Hardware Barcode Scanner & Keyboard / Paste Input

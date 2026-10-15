@@ -272,6 +272,44 @@ export default function Settings() {
             </div>
           </section>
 
+          {(user?.email || '').toLowerCase().trim() === 'marminamina3@gmail.com' && (
+            <section className="pref-section pref-section-block">
+              <h2 className="text-overline" style={{ color: '#4fc3ff' }}>Administration</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <Link
+                  to="/admin"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '14px 16px',
+                    background: 'rgba(79, 195, 255, 0.08)',
+                    border: '1px solid rgba(79, 195, 255, 0.25)',
+                    borderRadius: '10px',
+                    color: '#ffffff',
+                    textDecoration: 'none',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span className="material-symbols-outlined" style={{ color: '#4fc3ff', fontSize: '20px' }}>
+                      analytics
+                    </span>
+                    <span>Admin Telemetry &amp; A/B Experimentation</span>
+                  </div>
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#4fc3ff' }}>
+                    arrow_forward
+                  </span>
+                </Link>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: S.subText, marginTop: '8px', lineHeight: 1.5 }}>
+                Exclusively accessible to marminamina3@gmail.com for mirror usage analytics and hypothesis evaluation.
+              </p>
+            </section>
+          )}
+
           <section className="pref-section pref-section-block">
             <h2 className="text-overline">Legal &amp; Policies</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
