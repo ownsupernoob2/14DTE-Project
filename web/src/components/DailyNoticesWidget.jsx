@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion, Reorder } from 'framer-motion';
+import { motion, Reorder, AnimatePresence } from 'framer-motion';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -63,8 +63,137 @@ function buildPreview(html, maxLen = 120) {
   return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + '…' : text;
 }
 
+/** Interactive Notice Detail Modal with Quick Brief / AI Summary */
+function NoticeDetailModal({ notice, onClose }) {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  if (!notice) return null;
+
+  const isUrgent = notice.importance === 'high';
+  const cat = notice.category || 'General';
+  const dateStr = notice.details?.date || 'Today';
+  const rawBody = (notice.notice || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Structured key details
+  const keyPoints = [];
+  if (notice.details?.time) keyPoints.push({ label: 'Time', value: notice.details.time, icon: 'schedule' });
+  if (notice.details?.location) keyPoints.push({ label: 'Location', value: notice.details.location, icon: 'location_on' });
+  if (notice.contact) keyPoints.push({ label: 'Contact', value: notice.contact, icon: 'person' });
+  if (notice.details?.deadline) keyPoints.push({ label: 'Deadline', value: notice.details.deadline, icon: 'event' });
+  if (notice.targetYears && !notice.targetYears.includes('All')) {
+    keyPoints.push({ label: 'Target Years', value: `Year ${notice.targetYears.join(', ')}`, icon: 'groups' });
+  }
+
+  // Summary sentences from body
+  const sentences = rawBody.split(/(?<=[.?!])\s+/).filter(Boolean);
+  const summarySentences = sentences.slice(0, 3).join(' ');
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md"
+    >
+      <motion.div
+        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ duration: 0.2 }}
+        className="bg-[#0a0a0a] border border-[#1e2f47] rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden font-sans text-white relative"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1c1c1c] bg-[#0c121e]">
+          <div className="flex items-center gap-2">
+            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider ${
+              isUrgent ? 'bg-red-950/80 text-red-400 border border-red-500/30' : 'bg-[#4fc3ff]/15 text-[#4fc3ff] border border-[#4fc3ff]/30'
+            }`}>
+              {isUrgent ? '🚨 URGENT NOTICE' : cat}
+            </span>
+            <span className="text-xs text-[#8f8f8f] font-mono">
+              · {dateStr}
+            </span>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-[#a0a0a0] hover:text-white flex items-center justify-center transition-colors cursor-pointer text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Content Scroll Area */}
+        <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-5">
+          <div>
+            <h2 className="text-2xl font-bold text-white tracking-tight leading-snug">
+              {notice.title}
+            </h2>
+          </div>
+
+          {/* Quick Brief / Summary Box */}
+          <div className="bg-gradient-to-r from-[#0d1624] via-[#0b101b] to-[#0a0a0a] border border-[#1e2f47] rounded-xl p-4 flex flex-col gap-3">
+            <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#4fc3ff] uppercase tracking-wider">
+              <span className="material-symbols-outlined text-base">auto_awesome</span>
+              Quick Brief &amp; Key Details
+            </div>
+
+            {summarySentences && (
+              <p className="text-xs text-[#9bb0c9] leading-relaxed">
+                {summarySentences}
+              </p>
+            )}
+
+            {keyPoints.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[#1e2f47]/60">
+                {keyPoints.map((pt, idx) => (
+                  <div key={idx} className="bg-[#000000]/60 border border-white/5 rounded-lg p-2.5 flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase font-mono text-[#71859e] flex items-center gap-1">
+                      <span className="material-symbols-outlined text-xs text-[#4fc3ff]">{pt.icon}</span>
+                      {pt.label}
+                    </span>
+                    <span className="text-xs font-semibold text-white truncate" title={pt.value}>
+                      {pt.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Full Notice Content */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-[#888888]">
+              Full Notice Text
+            </span>
+            <div
+              className="text-sm text-[#d0d0d0] leading-relaxed bg-[#000000] border border-[#1c1c1c] rounded-xl p-4 whitespace-pre-line"
+              dangerouslySetInnerHTML={{ __html: notice.notice || rawBody }}
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3.5 border-t border-[#1c1c1c] bg-[#0c121e]/40 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2 bg-[#1c1c1c] hover:bg-[#262626] text-white text-xs font-mono uppercase font-bold rounded-xl transition-colors cursor-pointer"
+          >
+            Close (ESC)
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 /** Reusable notice card matching new-style.html */
-function NoticeCard({ n, urgent = false }) {
+function NoticeCard({ n, urgent = false, onClick }) {
   const isUrgent = urgent || n.importance === 'high';
   const cat = n.category || 'General';
   const isMedium = ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings'].includes(cat);
@@ -87,10 +216,14 @@ function NoticeCard({ n, urgent = false }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`bg-[#0a0a0a] rounded-r p-4 border-l-[4px] ${borderClass} flex flex-col gap-1.5 shadow-sm hover:bg-[#141414] transition-colors cursor-pointer group`}
+      onClick={onClick}
+      className={`bg-[#0a0a0a] rounded-r p-4 border-l-[4px] ${borderClass} flex flex-col gap-1.5 shadow-sm hover:bg-[#141414] hover:border-l-[#4fc3ff] transition-all cursor-pointer group relative`}
     >
-      <div className="text-[12px] font-semibold tracking-wider uppercase font-mono flex items-center gap-1.5" style={{ color: metaColor }}>
+      <div className="text-[12px] font-semibold tracking-wider uppercase font-mono flex items-center justify-between" style={{ color: metaColor }}>
         <span>{isUrgent ? `URGENT${dateStr}` : `${cat.toUpperCase()}${dateStr}`}</span>
+        <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-mono text-[#4fc3ff] flex items-center gap-1">
+          Inspect &amp; Summary →
+        </span>
       </div>
       
       <h4 className="text-[19px] font-bold text-white leading-tight group-hover:text-[#4fc3ff] transition-colors">
@@ -115,6 +248,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
+  const [selectedNotice, setSelectedNotice] = useState(null);
   const [isWide, setIsWide] = useState(false);
   const containerRef = useRef(null);
   
@@ -466,10 +600,25 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
             </div>
           ) : (
             sorted.map((n, idx) => (
-              <NoticeCard key={n.id || idx} n={n} urgent={n.importance === 'high'} />
+              <NoticeCard
+                key={n.id || idx}
+                n={n}
+                urgent={n.importance === 'high'}
+                onClick={() => setSelectedNotice(n)}
+              />
             ))
           )}
         </div>
+
+        {/* Interactive Notice Details Modal */}
+        <AnimatePresence>
+          {selectedNotice && (
+            <NoticeDetailModal
+              notice={selectedNotice}
+              onClose={() => setSelectedNotice(null)}
+            />
+          )}
+        </AnimatePresence>
       </section>
     );
   }
@@ -774,6 +923,16 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
           </button>
         </div>
       </div>
+
+      {/* Interactive Notice Details Modal */}
+      <AnimatePresence>
+        {selectedNotice && (
+          <NoticeDetailModal
+            notice={selectedNotice}
+            onClose={() => setSelectedNotice(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

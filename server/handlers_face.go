@@ -148,8 +148,21 @@ func trainFace(c echo.Context) error {
 	cmd.Stderr = &errOut
 
 	if err := cmd.Run(); err != nil {
+		errStr := strings.TrimSpace(errOut.String())
+		if errStr == "" {
+			errStr = strings.TrimSpace(out.String())
+		}
+		if errStr == "" {
+			errStr = err.Error()
+		}
 		log.Printf("train.py error: %v, stderr: %s", err, errOut.String())
-		return c.JSON(500, map[string]string{"error": "Training failed: " + strings.TrimSpace(out.String())})
+
+		if strings.Contains(errStr, "COLLISION") {
+			return c.JSON(409, map[string]string{
+				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
+			})
+		}
+		return c.JSON(500, map[string]string{"error": "Training failed: " + errStr})
 	}
 
 	output := strings.TrimSpace(out.String())
@@ -158,6 +171,11 @@ func trainFace(c echo.Context) error {
 	lastLine := strings.TrimSpace(lines[len(lines)-1])
 
 	if !strings.HasPrefix(lastLine, "OK:") {
+		if strings.Contains(output, "COLLISION") {
+			return c.JSON(409, map[string]string{
+				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
+			})
+		}
 		return c.JSON(500, map[string]string{
 			"error": "Training failed: " + output,
 		})

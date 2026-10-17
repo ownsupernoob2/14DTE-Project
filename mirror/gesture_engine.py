@@ -122,7 +122,11 @@ class GestureEngine:
         self.last_frame_time = 0.0
         self.scroll_delta = 0
 
-        self.last_tap_time = None
+        self.last_open_y = None
+        self.last_open_t = 0.0
+        self.open_swipe_velocity = 0.0
+
+        self.last_tap_time = None     # None = no tap yet, so no cooldown to serve
 
         self.right_since = None
         self.right_armed = True
@@ -335,6 +339,33 @@ class GestureEngine:
                         self.scroll_delta = max(-500, min(500, fling_delta))
                         event = "fling"
 
+            # ── Open-palm vertical swipe / wave detection ───────────────────
+            # High school students naturally swipe their open palm vertically
+            # rather than performing a thumb-index pinch.
+            if not in_top_right:
+                if getattr(self, 'last_open_y', None) is not None:
+                    dy = y - self.last_open_y
+                    dt = max(0.001, now - getattr(self, 'last_open_t', now))
+                    v = dy / dt
+                    self.open_swipe_velocity = 0.65 * getattr(self, 'open_swipe_velocity', 0.0) + 0.35 * v
+
+                    # If vertical motion is clear and intentional
+                    if abs(dy) > 0.012 and abs(self.open_swipe_velocity) > 0.06:
+                        delta = int(-dy * 380.0)
+                        if delta != 0:
+                            self.scroll_delta = max(-200, min(200, delta))
+                            if event is None:
+                                event = "scroll"
+                    elif abs(self.open_swipe_velocity) > 0.50:
+                        fling_delta = int(-self.open_swipe_velocity * 120.0)
+                        self.scroll_delta = max(-450, min(450, fling_delta))
+                        if event is None:
+                            event = "fling"
+                self.last_open_y = y
+                self.last_open_t = now
+            else:
+                self.last_open_y = None
+                self.open_swipe_velocity = 0.0
         return event
 
     def mark_absent(self, now):
@@ -350,6 +381,8 @@ class GestureEngine:
         self.last_drag_y = None
         self.drag_dist = 0.0
         self.drag_velocity = 0.0
+        self.last_open_y = None
+        self.open_swipe_velocity = 0.0
         self.right_since = None
         self.right_armed = True
         self.right_dwell_progress = 0.0

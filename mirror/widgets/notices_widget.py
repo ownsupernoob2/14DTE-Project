@@ -407,9 +407,10 @@ class NoticesWidget(QFrame):
         self._apply_frame_style()
         return self._scroll_paused
 
-    def set_gesture_active(self, active):
+    def set_gesture_active(self, active, variant='A'):
         """Show/hide the 'your hand is controlling this panel' affordance."""
         active = bool(active)
+        self._variant = variant
         if active == self._gesture_active:
             return
         self._gesture_active = active
@@ -418,20 +419,24 @@ class NoticesWidget(QFrame):
     def reset_gesture_state(self):
         """Forget tap-pause and affordance — the mirror changed who it's showing."""
         self._scroll_paused = False
+        self._variant = 'A'
         self.set_gesture_active(False)
         self._apply_frame_style()
 
     def _apply_frame_style(self):
         """The panel's border is the whole gesture affordance.
 
-        Uses constant border width and solid black background so the inner
-        content never shifts and background remains cleanly dark.
-        Outline is clean white (#ffffff) when active or paused.
+        Variant A: Bold, thick high-contrast highlight border (4px solid #38bdf8).
+        Variant B: Crisp minimal border (2px solid rgba(255,255,255,0.8)) since on-screen cursor dot gives primary continuous feedback.
         """
+        variant = getattr(self, '_variant', 'A')
         if self._scroll_paused or self._gesture_active:
-            border = '2px solid #ffffff'
+            if variant == 'A':
+                border = '4px solid #38bdf8'
+            else:
+                border = '2px solid rgba(255, 255, 255, 0.85)'
         else:
-            border = '2px solid transparent'
+            border = '4px solid transparent' if variant == 'A' else '2px solid transparent'
 
         self.setStyleSheet(f"""
             #NoticesWidget {{

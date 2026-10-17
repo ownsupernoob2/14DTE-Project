@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import { motion } from 'framer-motion';
 
@@ -107,6 +108,7 @@ function getPeriodDetails(p, now = new Date()) {
 }
 
 export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
+  const navigate = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
 
   // ── Live ticking timer ─────────────────────────────────────────────────────
@@ -305,75 +307,143 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     if (readonly) {
       return (
         <section className="h-full flex flex-col items-center justify-center p-8 select-none text-center">
-          <div className="w-14 h-14 rounded-full bg-[#111111] border border-[#222222] flex items-center justify-center mb-4 text-[#38bdf8]">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <div className="w-16 h-16 rounded-2xl bg-[#0d1624] border border-[#1e2f47] flex items-center justify-center mb-4 text-[#4fc3ff] shadow-lg shadow-[#4fc3ff]/10">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
               <line x1="16" y1="2" x2="16" y2="6"></line>
               <line x1="8" y1="2" x2="8" y2="6"></line>
               <line x1="3" y1="10" x2="21" y2="10"></line>
             </svg>
           </div>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-[#4fc3ff]/10 text-[#4fc3ff] border border-[#4fc3ff]/20 mb-2">
+            Action Required
+          </span>
           <h3 className="text-xl font-bold text-white mb-2 tracking-tight">No Timetable Configured</h3>
-          <p className="text-sm text-[#8f8f8f] max-w-sm mb-6 leading-relaxed">
-            Link your King's High School ICS calendar feed to display your current class, room, and countdown.
+          <p className="text-xs text-[#8f8f8f] max-w-sm mb-6 leading-relaxed">
+            Link your King's High School KAMAR .ics calendar feed to display your current period, room, and countdown timer.
           </p>
           <button
-            onClick={() => setShowSetup(true)}
-            className="px-5 py-2.5 bg-[#141414] hover:bg-[#1f1f1f] border border-[#2e2e2e] text-white font-mono text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer"
+            onClick={() => navigate('/timetable')}
+            className="px-6 py-2.5 bg-[#4fc3ff] hover:bg-[#38b2ee] text-black font-mono text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-[#4fc3ff]/10 flex items-center gap-2"
           >
-            Configure Calendar Link
+            <span>Configure Calendar Link</span>
+            <span>→</span>
           </button>
         </section>
       );
     }
 
     return (
-      <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
-        <div className="max-w-2xl mx-auto w-full flex flex-col gap-6 pt-4">
+      <div className="flex flex-col h-full bg-[#000000] text-white p-6 sm:p-8 font-sans overflow-y-auto custom-scrollbar select-none">
+        <div className="max-w-3xl mx-auto w-full flex flex-col gap-6 pt-2">
+          {/* Header */}
           <div className="border-b border-[#1c1c1c] pb-4">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#38bdf8] uppercase">
-              CALENDAR CONFIGURATION
-            </span>
-            <h1 className="text-2xl font-bold text-white mt-1">Connect Your Timetable</h1>
-            <p className="text-xs text-[#8f8f8f] mt-1 font-mono">
-              Provide your  calendar feed link to sync daily classes.
+            <div className="flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-[#4fc3ff]/10 text-[#4fc3ff] border border-[#4fc3ff]/20">
+                King's High School · KAMAR Timetable
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              Connect Your KAMAR Timetable
+            </h1>
+            <p className="text-xs sm:text-sm text-[#8f8f8f] mt-1.5 leading-relaxed">
+              Syncing your daily timetable automatically displays your current period, room number, teacher, and an active countdown timer on the smart mirror.
             </p>
           </div>
 
+          {/* KAMAR Step-by-Step Instructions */}
           <div className="flex flex-col gap-3">
-            {[
-              {
-                step: '1',
-                title: 'Open King\'s High School KAMAR',
-                desc: 'Sign in to the student portal at kingshigh.school.kiwi.'
-              },
-              {
-                step: '2',
-                title: 'Copy Your iCal Link',
-                desc: 'Navigate to your timetable and copy the iCal / ICS feed link ending in .ics.'
-              },
-              {
-                step: '3',
-                title: 'Paste Below',
-                desc: 'tada, it should then work!'
-              }
-            ].map(({ step, title, desc }) => (
-              <div key={step} className="bg-[#0a0a0a] border border-[#1c1c1c] p-4 flex gap-4 items-start">
-                <span className="w-6 h-6 rounded-full bg-[#1c1c1c] text-[#38bdf8] font-mono text-xs font-bold flex items-center justify-center shrink-0">
-                  {step}
-                </span>
-                <div>
-                  <h4 className="text-sm font-bold text-white mb-0.5">{title}</h4>
-                  <p className="text-xs text-[#8f8f8f] font-mono">{desc}</p>
+            <h3 className="text-xs font-mono uppercase tracking-widest text-[#888888] font-bold">
+              Step-by-Step KAMAR Instructions
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                {
+                  step: '01',
+                  title: 'Sign In to KAMAR Portal',
+                  desc: 'Visit kingshigh.school.kiwi on any phone or browser and log in with your student credentials.',
+                  icon: 'login',
+                },
+                {
+                  step: '02',
+                  title: 'Go to Timetable',
+                  desc: 'Click "Timetable" from the main navigation sidebar to open your weekly class schedule.',
+                  icon: 'calendar_month',
+                },
+                {
+                  step: '03',
+                  title: 'Locate "Subscribe / iCal"',
+                  desc: 'In the top-right corner of your timetable screen, find and click the "Subscribe / iCal Feed" icon.',
+                  icon: 'rss_feed',
+                },
+                {
+                  step: '04',
+                  title: 'Copy & Paste the .ics Link',
+                  desc: 'Copy the URL ending in .ics (e.g. https://kingshigh.school.kiwi/ics/...) and paste it into the input below.',
+                  icon: 'content_paste',
+                },
+              ].map(({ step, title, desc, icon }) => (
+                <div
+                  key={step}
+                  className="bg-[#0a0a0a] border border-[#1e2f47]/50 rounded-xl p-4 flex gap-3.5 items-start hover:border-[#4fc3ff]/40 transition-colors"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-[#0d1624] border border-[#1e2f47] text-[#4fc3ff] font-mono text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                    {step}
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm text-[#4fc3ff]">{icon}</span>
+                      {title}
+                    </h4>
+                    <p className="text-xs text-[#8f8f8f] leading-relaxed">{desc}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
-            <label className="text-[11px] font-mono font-bold tracking-wider text-[#cbd5e1] uppercase">
-              ICS LINK
-            </label>
+          {/* Visual KAMAR Portal Diagram Mockup */}
+          <div className="bg-gradient-to-r from-[#0d1624] via-[#0b101b] to-[#0a0a0a] border border-[#1e2f47] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#1e2f47]/60">
+              <span className="text-[11px] font-mono font-bold text-[#8f8f8f] uppercase flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                KAMAR Student Portal Preview
+              </span>
+              <span className="text-[10px] font-mono text-[#4fc3ff]">kingshigh.school.kiwi</span>
+            </div>
+            <div className="bg-[#05080f] border border-[#1e2f47]/80 rounded-lg p-3 text-xs font-mono text-[#cbd5e1] flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-white font-bold">Timetable · Week A / Day 3</span>
+                <span className="px-2 py-0.5 rounded bg-[#4fc3ff]/20 text-[#4fc3ff] border border-[#4fc3ff]/40 text-[10px] animate-pulse">
+                  🔗 Subscribe to Calendar (iCal) ⬅️ CLICK THIS
+                </span>
+              </div>
+              <div className="text-[11px] text-[#71859e]">
+                URL Format: <code className="text-[#4fc3ff]">https://kingshigh.school.kiwi/ics/&lt;student_token&gt;.ics</code>
+              </div>
+            </div>
+          </div>
+
+          {/* URL Input Form */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-mono font-bold tracking-wider text-[#cbd5e1] uppercase flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-sm text-[#4fc3ff]">link</span>
+                KAMAR ICS Calendar Feed Link
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrlInput('https://kingshigh.school.kiwi/ics/demo-12345-kingshigh.ics');
+                  setSaveError(null);
+                }}
+                className="text-[10px] font-mono text-[#4fc3ff] hover:text-[#7dd3fc] cursor-pointer"
+              >
+                Use Sample Link
+              </button>
+            </div>
+
             <input
               type="url"
               placeholder="https://kingshigh.school.kiwi/ics/12345-QWERTYUIOPASDFGHJKLZXC.ics"
@@ -383,17 +453,22 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
                 setSaveError(null);
               }}
               onKeyDown={(e) => e.key === 'Enter' && handleSaveUrl()}
-              className="w-full bg-[#000000] border border-[#2a2a2a] focus:border-[#38bdf8] text-white px-3.5 py-2.5 text-xs font-mono rounded outline-none transition-colors"
+              className="w-full bg-[#000000] border border-[#262626] focus:border-[#4fc3ff] text-white px-3.5 py-3 text-xs font-mono rounded-lg outline-none transition-colors"
             />
+
             {saveError && (
-              <div className="text-xs text-[#f87171] font-mono">{saveError}</div>
+              <div className="text-xs text-[#f87171] font-mono flex items-center gap-1.5 bg-red-950/40 border border-red-800/40 px-3 py-2 rounded-lg">
+                <span className="material-symbols-outlined text-sm">error</span>
+                {saveError}
+              </div>
             )}
+
             <div className="flex justify-end gap-3 mt-2">
               {icsUrl && (
                 <button
                   type="button"
                   onClick={() => setShowSetup(false)}
-                  className="px-4 py-2 border border-[#222] text-[#8f8f8f] hover:text-white font-mono text-xs uppercase rounded transition-colors"
+                  className="px-4 py-2 border border-[#222] text-[#8f8f8f] hover:text-white font-mono text-xs uppercase rounded-lg transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -402,9 +477,9 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
                 type="button"
                 onClick={() => handleSaveUrl()}
                 disabled={saving || !urlInput.trim()}
-                className="px-5 py-2 bg-[#38bdf8] text-black font-mono text-xs font-bold uppercase rounded hover:bg-[#7dd3fc] transition-colors disabled:opacity-50 cursor-pointer"
+                className="px-5 py-2.5 bg-[#4fc3ff] hover:bg-[#38b2ee] text-black font-mono text-xs font-bold uppercase rounded-lg transition-colors disabled:opacity-50 cursor-pointer shadow-lg shadow-[#4fc3ff]/10"
               >
-                {saving ? 'Connecting...' : 'Save & Sync Timetable'}
+                {saving ? 'Syncing...' : 'Save & Sync Timetable'}
               </button>
             </div>
           </div>

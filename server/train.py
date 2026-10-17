@@ -83,6 +83,30 @@ def main():
 )
 
 
+    # ── Collision Check against other registered students ─────────────────
+    # If this face closely matches an already registered user (< 0.38 distance),
+    # reject to prevent account impersonation or duplicate registrations.
+    enc_dir = os.path.dirname(os.path.abspath(output_pickle))
+    target_basename = os.path.basename(output_pickle)
+    if os.path.isdir(enc_dir):
+        for fname in os.listdir(enc_dir):
+            if fname.endswith(".pickle") and fname != target_basename:
+                other_path = os.path.join(enc_dir, fname)
+                try:
+                    with open(other_path, "rb") as f:
+                        other_encs = pickle.load(f)
+                    if other_encs:
+                        dists = [float(np.linalg.norm(median_enc - o)) for o in other_encs]
+                        if min(dists) < 0.38:
+                            print(
+                                f"ERROR:COLLISION:This face closely matches an already registered account ({fname}).",
+                                file=sys.stderr
+                            )
+                            print(f"ERROR:COLLISION:Face already registered to another student ({fname})")
+                            sys.exit(1)
+                except Exception:
+                    continue
+
     # Ensure output directory exists
     out_dir = os.path.dirname(output_pickle)
     if out_dir:

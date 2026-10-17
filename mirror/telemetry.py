@@ -63,6 +63,14 @@ class TelemetryTracker:
             }
             return self.current_session["variant"]
 
+    def update_auth_method(self, auth_method):
+        """Update or escalate auth method of the active session (e.g. from 'presence' to 'barcode')."""
+        with self._lock:
+            if self.current_session:
+                self.current_session["auth_method"] = auth_method
+                if auth_method in ("barcode", "face"):
+                    self.current_session["session_type"] = "user"
+
     @property
     def current_variant(self):
         with self._lock:

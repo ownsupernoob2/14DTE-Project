@@ -135,6 +135,29 @@ func version(c echo.Context) error {
 }
 
 func getPythonCmd() string {
+	if envPy := os.Getenv("PYTHON_CMD"); envPy != "" {
+		if _, err := exec.LookPath(envPy); err == nil {
+			return envPy
+		}
+		if _, err := os.Stat(envPy); err == nil {
+			return envPy
+		}
+	}
+
+	venvCandidates := []string{
+		"venv/bin/python",
+		"venv/Scripts/python.exe",
+		"../venv/bin/python",
+		"../venv/Scripts/python.exe",
+		"../mirror/venv/bin/python",
+		"../mirror/venv/Scripts/python.exe",
+	}
+	for _, venv := range venvCandidates {
+		if _, err := os.Stat(venv); err == nil {
+			return venv
+		}
+	}
+
 	if _, err := exec.LookPath("python3"); err == nil {
 		return "python3"
 	}

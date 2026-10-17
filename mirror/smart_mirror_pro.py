@@ -391,6 +391,55 @@ class SmartMirrorPro(QMainWindow):
         """)
         self.dwell_hint_pill.hide()
 
+        # Barcode slot guidance indicator (points down to physical scanner slot)
+        self.barcode_guide_pill = QLabel("💳 STUDENT ID SCANNER ⬇️  (Hold card steady in slot below)", self.central_widget)
+        self.barcode_guide_pill.setObjectName("BarcodeGuidePill")
+        self.barcode_guide_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.barcode_guide_pill.setStyleSheet("""
+            #BarcodeGuidePill {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 13px;
+                font-weight: 700;
+                color: #ffffff;
+                background: rgba(9, 14, 23, 0.94);
+                border: 1.5px solid #38bdf8;
+                border-radius: 14px;
+                padding: 6px 18px;
+            }
+        """)
+        self.barcode_guide_pill.hide()
+
+        # Variant B live floating on-screen hand cursor dot
+        self.hand_cursor_dot = QLabel(self.central_widget)
+        self.hand_cursor_dot.setObjectName("HandCursorDot")
+        self.hand_cursor_dot.setFixedSize(28, 28)
+        self.hand_cursor_dot.setStyleSheet("""
+            #HandCursorDot {
+                background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 rgba(79, 195, 255, 0.95), stop:0.7 rgba(56, 189, 248, 0.8), stop:1 rgba(56, 189, 248, 0));
+                border: 2px solid #ffffff;
+                border-radius: 14px;
+            }
+        """)
+        self.hand_cursor_dot.hide()
+
+    def _update_barcode_guide(self):
+        """Display visual arrow pointing down to physical barcode reader during guest/tutorial."""
+        if not hasattr(self, 'barcode_guide_pill'):
+            return
+        is_guest = (getattr(self, '_last_state', 'idle') == 'guest')
+        is_tutorial = (hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None and self.gesture_demo_overlay.isVisible())
+        
+        if (is_guest or is_tutorial) and getattr(self, '_last_state', 'idle') != 'user':
+            pill_w = 480
+            pill_h = 38
+            x = (self.width() - pill_w) // 2
+            y = self.height() - pill_h - 24
+            self.barcode_guide_pill.setGeometry(x, y, pill_w, pill_h)
+            self.barcode_guide_pill.setText("💳 STUDENT ID SCANNER ⬇️  (Hold card steady in slot below)")
+            self.barcode_guide_pill.show()
+            self.barcode_guide_pill.raise_()
+        else:
+            self.barcode_guide_pill.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -477,22 +526,23 @@ class SmartMirrorPro(QMainWindow):
                 )
             lay.addWidget(self.demo_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Variant B explicit touchless guidance label (tackles the false touchscreen assumption)
+        # Variant B explicit anti-touchscreen warning (tackles the false glass-touching habit)
         self.demo_touchless_hint = QLabel(
-            "🖐️ Touchless Controls — Move your hand in the air in front of mirror",
+            "❌ DO NOT TOUCH GLASS (Inert Screen)   •   ✔️ MOVE HAND IN AIR (30-40cm Away)",
             self.gesture_demo_overlay
         )
         self.demo_touchless_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.demo_touchless_hint.setStyleSheet("""
             font-family: 'Segoe UI', system-ui, sans-serif;
-            font-size: 16px;
-            font-weight: 700;
+            font-size: 15px;
+            font-weight: 800;
             color: #ffffff;
-            background: rgba(15, 23, 42, 0.90);
-            border: 1px solid rgba(255, 255, 255, 0.35);
+            background: rgba(10, 16, 28, 0.95);
+            border: 2px solid #ef4444;
             border-radius: 20px;
             padding: 8px 24px;
             margin-top: 16px;
+            letter-spacing: 0.5px;
         """)
         lay.addWidget(self.demo_touchless_hint, alignment=Qt.AlignmentFlag.AlignCenter)
         self.demo_touchless_hint.hide()
@@ -723,6 +773,8 @@ class SmartMirrorPro(QMainWindow):
         if getattr(self, '_peek_visible', False) and self.peek_container is not None:
             self.peek_container.setGeometry(self._peek_geometry())
             self._layout_peek_stage(animate=False)
+
+        self._update_barcode_guide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Banner polling & server status
@@ -1142,6 +1194,7 @@ class SmartMirrorPro(QMainWindow):
 
         self.gesture_demo_overlay.show()
         self.gesture_demo_overlay.raise_()
+        self._update_barcode_guide()
 
         if hasattr(self, 'demo_movie') and self.demo_movie is not None:
             self.demo_movie.start()
@@ -1194,6 +1247,7 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(self, 'demo_touchless_hint'):
                 self.demo_touchless_hint.hide()
             self._scrim_fading_out = False
+            self._update_barcode_guide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
 
@@ -1219,6 +1273,21 @@ class SmartMirrorPro(QMainWindow):
 
         if present:
             self._last_interaction_time = time.time()
+
+        # Variant B live floating on-screen hand cursor dot
+        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'hand_cursor_dot'):
+            if present:
+                hx = data.get("hand_x", 0.5)
+                hy = data.get("hand_y", 0.5)
+                dot_x = int(hx * self.width()) - 14
+                dot_y = int(hy * self.height()) - 14
+                self.hand_cursor_dot.move(dot_x, dot_y)
+                self.hand_cursor_dot.show()
+                self.hand_cursor_dot.raise_()
+            else:
+                self.hand_cursor_dot.hide()
+        elif hasattr(self, 'hand_cursor_dot'):
+            self.hand_cursor_dot.hide()
 
         # Telemetry: Record gesture events & dwell progress
         if hasattr(self, 'telemetry') and self.telemetry is not None:
@@ -1368,32 +1437,35 @@ class SmartMirrorPro(QMainWindow):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
 
+        variant = getattr(self, 'current_variant', 'A')
         # Affordances: strictly mutually exclusive to prevent double highlighting
         if effective_region == GESTURE_REGION_LEFT:
             if notices is not None:
-                notices.set_gesture_active(True)
+                notices.set_gesture_active(True, variant=variant)
             if self.kings_widget is not None:
-                self.kings_widget.set_gesture_active(False)
+                self.kings_widget.set_gesture_active(False, variant=variant)
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
-                self.guest_kings_widget.set_gesture_active(False)
+                self.guest_kings_widget.set_gesture_active(False, variant=variant)
         elif effective_region == GESTURE_REGION_RIGHT:
             if notices is not None:
-                notices.set_gesture_active(False)
+                notices.set_gesture_active(False, variant=variant)
             if self.kings_widget is not None:
                 self.kings_widget.set_gesture_active(
-                    self._last_state == 'user' and (self._timetable_slid_away or getattr(self.kings_widget, 'isVisible', lambda: True)())
+                    self._last_state == 'user' and (self._timetable_slid_away or getattr(self.kings_widget, 'isVisible', lambda: True)()),
+                    variant=variant
                 )
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
                 self.guest_kings_widget.set_gesture_active(
-                    self._last_state == 'guest' and (self._guest_card_slid_away or self.guest_kings_widget.y() < self.height())
+                    self._last_state == 'guest' and (self._guest_card_slid_away or self.guest_kings_widget.y() < self.height()),
+                    variant=variant
                 )
         else:
             if notices is not None:
-                notices.set_gesture_active(False)
+                notices.set_gesture_active(False, variant=variant)
             if self.kings_widget is not None:
-                self.kings_widget.set_gesture_active(False)
+                self.kings_widget.set_gesture_active(False, variant=variant)
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
-                self.guest_kings_widget.set_gesture_active(False)
+                self.guest_kings_widget.set_gesture_active(False, variant=variant)
 
 
     def _focus_kings(self, data):
@@ -1525,6 +1597,9 @@ class SmartMirrorPro(QMainWindow):
 
                 new_state   = fdata.get('state', 'idle')
                 new_user_id = fdata.get('user_id', 'idle')
+                daemon_auth = fdata.get('auth_method', '')
+                if daemon_auth:
+                    self._auth_method = daemon_auth
             else:
                 self.face_detected   = False
                 self.face_recognized = False
@@ -1644,11 +1719,14 @@ class SmartMirrorPro(QMainWindow):
 
         if incoming is not None:
             # Telemetry: Begin tracked session and assign A/B experiment variant
+            auth = getattr(self, '_auth_method', '') or fdata.get('auth_method', '')
+            if not auth:
+                auth = 'face' if new_state == 'user' else 'presence'
+
             if incoming is not visible and hasattr(self, 'telemetry') and self.telemetry is not None:
-                auth = getattr(self, '_auth_method', '')
-                if not auth:
-                    auth = 'face' if new_state == 'user' else 'presence'
                 self.current_variant = self.telemetry.start_session(session_type=new_state, auth_method=auth)
+            elif hasattr(self, 'telemetry') and self.telemetry is not None and self.telemetry.current_session:
+                self.telemetry.update_auth_method(auth)
 
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
@@ -1681,6 +1759,7 @@ class SmartMirrorPro(QMainWindow):
                     self.guest_server_status_lbl.hide()
             self._show_guest_card(animate=False, is_initial_split=True)
         self._update_arrow_indicator()
+        self._update_barcode_guide()
 
     def _on_fade_to_idle_done(self):
         if hasattr(self, 'telemetry') and self.telemetry is not None:
@@ -1700,6 +1779,7 @@ class SmartMirrorPro(QMainWindow):
             self.kings_widget.clear_selection()
         if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
             self.guest_kings_widget.clear_selection()
+        self._update_barcode_guide()
         self._transitioning = False
 
     def closeEvent(self, event):
@@ -1856,6 +1936,11 @@ class SmartMirrorPro(QMainWindow):
             print(f"[BARCODE] Sign-in accepted for {user_id}")
             self._auth_method = "barcode"
             self._barcode_auth_time = time.time()
+            if hasattr(self, 'telemetry') and self.telemetry is not None:
+                if self.telemetry.current_session:
+                    self.telemetry.update_auth_method("barcode")
+                else:
+                    self.current_variant = self.telemetry.start_session(session_type="user", auth_method="barcode")
 
             fdata = {
                 "state": "user",
@@ -1875,6 +1960,7 @@ class SmartMirrorPro(QMainWindow):
             self.current_user_name = user_id
             self._last_state = 'user'
             self._last_user_id = user_id
+            self._update_barcode_guide()
             self._trigger_transition('user', user_id, fdata)
             self._show_timetable(animate=True, is_initial_split=True)
         else:
@@ -1894,6 +1980,7 @@ class SmartMirrorPro(QMainWindow):
             }
             self._write_face_data(fdata)
             self._auth_method = ""
+            self._update_barcode_guide()
             if self._last_state != 'guest':
                 self._last_state = 'guest'
                 self._last_user_id = 'guest'
