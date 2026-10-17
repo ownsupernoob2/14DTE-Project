@@ -97,6 +97,7 @@ func main() {
 	e.POST("/api/analytics/events", recordAnalyticsEvent)
 	e.GET("/api/analytics/config", getAnalyticsConfig)
 	e.GET("/api/admin/analytics", getAdminAnalytics, OptionalEnsureValidToken())
+	e.GET("/api/admin/face-audit", getFaceAuditLog, OptionalEnsureValidToken())
 
 	// Timetable routes
 	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT

@@ -503,6 +503,70 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     );
   }
 
+  // ── Customization Toggles ──────────────────────────────────────────────────
+  const [showBreaks, setShowBreaks] = useState(() => localStorage.getItem('tt_show_breaks') !== 'false');
+  const [hideCompleted, setHideCompleted] = useState(() => localStorage.getItem('tt_hide_completed') === 'true');
+  const [highlightFree, setHighlightFree] = useState(() => localStorage.getItem('tt_highlight_free') !== 'false');
+
+  const toggleShowBreaks = () => {
+    const next = !showBreaks;
+    setShowBreaks(next);
+    localStorage.setItem('tt_show_breaks', String(next));
+  };
+  const toggleHideCompleted = () => {
+    const next = !hideCompleted;
+    setHideCompleted(next);
+    localStorage.setItem('tt_hide_completed', String(next));
+  };
+  const toggleHighlightFree = () => {
+    const next = !highlightFree;
+    setHighlightFree(next);
+    localStorage.setItem('tt_highlight_free', String(next));
+  };
+
+  // ── Library Book Loans State ───────────────────────────────────────────────
+  const [libraryLoans, setLibraryLoans] = useState(() => {
+    try {
+      const saved = localStorage.getItem('student_library_loans');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      { id: 'b1', title: 'To Kill a Mockingbird', author: 'Harper Lee', barcode: 'LIB-84920', dueDate: '2026-10-15', isOverdue: true },
+      { id: 'b2', title: 'NCEA Level 3 Physics Study Guide', author: 'ESA Publications', barcode: 'LIB-19302', dueDate: '2026-10-28', isOverdue: false }
+    ];
+  });
+  const [newBookTitle, setNewBookTitle] = useState('');
+  const [newBookAuthor, setNewBookAuthor] = useState('');
+  const [newBookDue, setNewBookDue] = useState('');
+  const [showAddBook, setShowAddBook] = useState(false);
+
+  const saveLoans = (loans) => {
+    setLibraryLoans(loans);
+    try { localStorage.setItem('student_library_loans', JSON.stringify(loans)); } catch {}
+  };
+
+  const handleAddBook = (e) => {
+    e.preventDefault();
+    if (!newBookTitle.trim()) return;
+    const newBook = {
+      id: `b-${Date.now()}`,
+      title: newBookTitle.trim(),
+      author: newBookAuthor.trim() || 'King\'s High Library',
+      barcode: `LIB-${Math.floor(10000 + Math.random() * 90000)}`,
+      dueDate: newBookDue || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+      isOverdue: false
+    };
+    saveLoans([...libraryLoans, newBook]);
+    setNewBookTitle('');
+    setNewBookAuthor('');
+    setNewBookDue('');
+    setShowAddBook(false);
+  };
+
+  const handleDeleteBook = (id) => {
+    saveLoans(libraryLoans.filter(b => b.id !== id));
+  };
+
   // ── READONLY / DASHBOARD CLASS HERO (Matches mirror design) ────────────────
   const processedPeriods = visiblePeriods.map(p => ({
     ...p,
@@ -513,14 +577,41 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     processedPeriods.find(p => !p.details.isDone) ||
     processedPeriods[0];
 
-  const currentSubject = currentP?.subject || currentP?.summary || 'No Active Class';
-  const currentRoom = currentP?.room || currentP?.location || '--';
-  const currentDetails = currentP ? currentP.details : { formattedEnd: '--', remainingMins: 0 };
-
   const nextP = processedPeriods.find(p => p !== currentP && !p.details.isDone);
   const nextSubject = nextP?.subject || nextP?.summary || null;
   const nextRoom = nextP?.room || nextP?.location || '--';
   const nextTime = nextP ? nextP.details.formattedStart : '--';
+
+  // ── School Breaks (Interval & Lunch) Detection ─────────────────────────────
+  const nowHour = now.getHours();
+  const nowMin = now.getMinutes();
+  const nowTotalMins = nowHour * 60 + nowMin;
+
+  const isInterval = showBreaks && (nowTotalMins >= (10 * 60 + 30) && nowTotalMins < (10 * 60 + 55));
+  const isLunch = showBreaks && (nowTotalMins >= (12 * 60 + 45) && nowTotalMins < (13 * 60 + 30));
+  const isBreak = isInterval || isLunch;
+
+  let activeEyebrow = 'CURRENT CLASS';
+  let activeSubject = currentP?.subject || currentP?.summary || 'No Active Class';
+  let activeRoom = currentP?.room || currentP?.location || '--';
+  let activeEnd = currentP ? currentP.details.formattedEnd : '--';
+  let activeRemaining = currentP ? currentP.details.remainingMins : 0;
+
+  if (isInterval) {
+    activeEyebrow = '🔔 SCHOOL BREAK';
+    activeSubject = 'INTERVAL (RECESS)';
+    activeRoom = 'Courtyard / Grounds';
+    activeEnd = '10:55am';
+    activeRemaining = Math.max(0, (10 * 60 + 55) - nowTotalMins);
+  } else if (isLunch) {
+    activeEyebrow = '🥪 SCHOOL BREAK';
+    activeSubject = 'LUNCHTIME';
+    activeRoom = 'Courtyard / Grounds';
+    activeEnd = '1:30pm';
+    activeRemaining = Math.max(0, (13 * 60 + 30) - nowTotalMins);
+  }
+
+  const overdueCount = libraryLoans.filter(b => b.isOverdue).length;
 
   if (readonly) {
     return (
@@ -528,25 +619,25 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
         {/* CURRENT CLASS BLOCK (Matches mirror hero) */}
         <div className="flex flex-col gap-2">
           <span className="text-[14px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
-            CURRENT CLASS
+            {activeEyebrow}
           </span>
           <h1 className="text-[64px] md:text-[80px] font-extrabold text-white leading-none tracking-tight my-1">
-            {currentSubject}
+            {activeSubject}
           </h1>
 
           <div className="flex gap-8 md:gap-12 mt-3">
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
-              <span className="text-[32px] font-bold text-white">{currentRoom}</span>
+              <span className="text-[32px] font-bold text-white">{activeRoom}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
-              <span className="text-[32px] font-bold text-white">{currentDetails.formattedEnd}</span>
+              <span className="text-[32px] font-bold text-white">{activeEnd}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
-              <span className={`text-[32px] font-bold font-mono ${currentDetails.remainingMins <= 5 && currentDetails.remainingMins > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                {currentDetails.remainingMins > 0 ? `${currentDetails.remainingMins}m` : '--'}
+              <span className={`text-[32px] font-bold font-mono ${activeRemaining <= 5 && activeRemaining > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
               </span>
             </div>
           </div>
@@ -568,6 +659,22 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             </div>
           </div>
         )}
+
+        {/* Overdue Book Notice Banner (if any) */}
+        {overdueCount > 0 && (
+          <div className="border border-red-900/50 bg-red-950/20 px-4 py-2.5 rounded flex items-center justify-between text-xs font-mono text-red-300">
+            <div className="flex items-center gap-2">
+              <span className="text-red-400 font-bold">📚 LIBRARY ALERT:</span>
+              <span>You have {overdueCount} overdue book loan{overdueCount > 1 ? 's' : ''} to return to the library.</span>
+            </div>
+            <button
+              onClick={() => navigate('/timetable')}
+              className="underline text-red-400 hover:text-white cursor-pointer"
+            >
+              View Books →
+            </button>
+          </div>
+        )}
       </section>
     );
   }
@@ -579,21 +686,22 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
-            Timetable Feed
+            Timetable &amp; School Schedule
           </h1>
           <p className="text-xs text-[#8f8f8f] font-mono mt-1">
-            King's High School calendar feed status and schedule preview.
+            King's High School live calendar sync, bell times, schedule customization, and library book loans.
           </p>
         </div>
         <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
           <span>{visiblePeriods.length} PERIODS LOADED</span>
-          <span className="text-[#38bdf8]">· KINGS HIGH FEED ACTIVE</span>
+          <span className="text-[#38bdf8]">· KAMAR FEED ACTIVE</span>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-        {/* Left Column: Calendar Details & Feed Settings */}
+        {/* Left Column: Feed Link & Customization Preferences (5 cols) */}
         <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* Active Calendar Feed Card */}
           <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
             <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
               ACTIVE CALENDAR FEED
@@ -603,12 +711,13 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
             </div>
             <button
               onClick={() => setShowSetup(true)}
-              className="mt-2 py-2 px-4 bg-[#141414] hover:bg-[#1e1e1e] border border-[#2a2a2a] text-xs font-mono font-bold text-white uppercase rounded transition-colors"
+              className="mt-2 py-2 px-4 bg-[#141414] hover:bg-[#1e1e1e] border border-[#2a2a2a] text-xs font-mono font-bold text-white uppercase rounded transition-colors cursor-pointer"
             >
               Update Feed Link
             </button>
           </div>
 
+          {/* Schedule View Range */}
           <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
             <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
               VIEW SCHEDULE RANGE
@@ -618,63 +727,286 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
                 <button
                   key={m}
                   onClick={() => handleViewModeChange(m)}
-                  className={`py-2 px-3 border font-mono text-xs font-bold uppercase transition-colors ${viewMode === m
-                    ? 'bg-[#38bdf8] text-black border-[#38bdf8]'
-                    : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
-                    }`}
+                  className={`py-2 px-3 border font-mono text-xs font-bold uppercase transition-colors cursor-pointer ${
+                    viewMode === m
+                      ? 'bg-[#38bdf8] text-black border-[#38bdf8]'
+                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
+                  }`}
                 >
                   {m}
                 </button>
               ))}
             </div>
           </div>
-        </div>
 
-        {/* Right Column: Mirror Hero Card Live Preview */}
-        <div className="lg:col-span-7 flex flex-col bg-[#0a0a0a] border border-[#1c1c1c] p-6">
-          <div className="border-b border-[#1c1c1c] pb-3 mb-4 flex items-center justify-between">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-              MIRROR DISPLAY PREVIEW
+          {/* Timetable Customization Preferences */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-4">
+            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+              SCHEDULE CUSTOMIZATION PREFERENCES
             </span>
-            <span className="text-[11px] font-mono text-[#38bdf8]">MATCHING MIRROR LAYOUT</span>
-          </div>
 
-          <div className="flex-1 bg-[#000000] border border-[#1c1c1c] p-6 rounded flex flex-col justify-center">
-            <div className="flex flex-col gap-2">
-              <span className="text-[13px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
-                CURRENT CLASS
-              </span>
-              <h2 className="text-[54px] font-extrabold text-white leading-none tracking-tight my-1">
-                {currentSubject}
-              </h2>
-
-              <div className="flex gap-8 mt-3">
-                <div className="flex flex-col">
-                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
-                  <span className="text-2xl font-bold text-white">{currentRoom}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
-                  <span className="text-2xl font-bold text-white">{currentDetails.formattedEnd}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
-                  <span className="text-2xl font-bold font-mono text-white">
-                    {currentDetails.remainingMins > 0 ? `${currentDetails.remainingMins}m` : '--'}
-                  </span>
-                </div>
+            {/* Toggle 1: School Breaks */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white">Show School Breaks (Interval &amp; Lunch)</p>
+                <p className="text-[11px] text-[#8f8f8f]">Display dedicated break cards with countdowns between bells.</p>
               </div>
+              <button
+                onClick={toggleShowBreaks}
+                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+                  showBreaks ? 'bg-[#38bdf8]' : 'bg-[#222222]'
+                }`}
+              >
+                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  showBreaks ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
             </div>
 
-            {nextSubject && (
-              <div className="border-t border-[#1c1c1c] pt-4 mt-6 flex items-baseline gap-4">
-                <span className="text-xs uppercase tracking-[2px] font-bold text-[#8f8f8f]">
-                  NEXT
-                </span>
-                <span className="text-xl font-bold text-white">{nextSubject}</span>
-                <span className="text-xs text-[#cbd5e1] font-mono">{nextRoom} · {nextTime}</span>
+            {/* Toggle 2: Hide Completed */}
+            <div className="flex items-center justify-between border-t border-[#1c1c1c] pt-3">
+              <div>
+                <p className="text-xs font-bold text-white">Hide Completed Periods</p>
+                <p className="text-[11px] text-[#8f8f8f]">Remove finished classes from today's timetable list.</p>
               </div>
+              <button
+                onClick={toggleHideCompleted}
+                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+                  hideCompleted ? 'bg-[#38bdf8]' : 'bg-[#222222]'
+                }`}
+              >
+                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  hideCompleted ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            {/* Toggle 3: Highlight Free / Study */}
+            <div className="flex items-center justify-between border-t border-[#1c1c1c] pt-3">
+              <div>
+                <p className="text-xs font-bold text-white">Highlight Study / Free Periods</p>
+                <p className="text-[11px] text-[#8f8f8f]">Emphasize study line and non-contact times.</p>
+              </div>
+              <button
+                onClick={toggleHighlightFree}
+                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+                  highlightFree ? 'bg-[#38bdf8]' : 'bg-[#222222]'
+                }`}
+              >
+                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  highlightFree ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+          </div>
+
+          {/* King's Library & Book Loans Card */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                  📚 LIBRARY BOOKS &amp; LOANS
+                </span>
+                {overdueCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
+                    {overdueCount} OVERDUE
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowAddBook(!showAddBook)}
+                className="text-[11px] font-mono text-[#38bdf8] hover:underline cursor-pointer"
+              >
+                {showAddBook ? 'Cancel' : '+ Add Book'}
+              </button>
+            </div>
+
+            {showAddBook && (
+              <form onSubmit={handleAddBook} className="flex flex-col gap-2 p-3 bg-[#000000] border border-[#222] rounded">
+                <input
+                  type="text"
+                  placeholder="Book Title (e.g. 1984, Biology Study Guide)"
+                  value={newBookTitle}
+                  onChange={e => setNewBookTitle(e.target.value)}
+                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Author (optional)"
+                  value={newBookAuthor}
+                  onChange={e => setNewBookAuthor(e.target.value)}
+                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
+                />
+                <input
+                  type="date"
+                  value={newBookDue}
+                  onChange={e => setNewBookDue(e.target.value)}
+                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
+                />
+                <button
+                  type="submit"
+                  className="py-1.5 bg-[#38bdf8] text-black font-mono font-bold text-xs uppercase cursor-pointer"
+                >
+                  Save Loan
+                </button>
+              </form>
             )}
+
+            <div className="flex flex-col gap-2">
+              {libraryLoans.length === 0 ? (
+                <p className="text-xs text-[#666] font-mono italic">No borrowed books currently on loan.</p>
+              ) : (
+                libraryLoans.map((b) => (
+                  <div
+                    key={b.id}
+                    className={`p-3 border rounded flex items-center justify-between text-xs font-mono ${
+                      b.isOverdue
+                        ? 'bg-red-950/20 border-red-800/50 text-red-300'
+                        : 'bg-[#000000] border-[#1c1c1c] text-[#cbd5e1]'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white">{b.title}</span>
+                        {b.isOverdue && (
+                          <span className="px-1.5 py-0.5 bg-red-900/60 text-red-200 text-[9px] uppercase font-bold rounded">
+                            OVERDUE
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#8f8f8f] mt-0.5">{b.author} · Due: {b.dueDate}</p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteBook(b.id)}
+                      title="Return / Remove loan"
+                      className="text-[#666] hover:text-red-400 p-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Full Day Class Schedule & Mirror Preview (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          {/* Mirror Hero Preview Card */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-6">
+            <div className="border-b border-[#1c1c1c] pb-3 mb-4 flex items-center justify-between">
+              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                LIVE MIRROR DISPLAY HERO
+              </span>
+              <span className="text-[11px] font-mono text-[#38bdf8]">MATCHING MIRROR LAYOUT</span>
+            </div>
+
+            <div className="bg-[#000000] border border-[#1c1c1c] p-6 rounded flex flex-col justify-center">
+              <div className="flex flex-col gap-2">
+                <span className="text-[13px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
+                  {activeEyebrow}
+                </span>
+                <h2 className="text-[54px] font-extrabold text-white leading-none tracking-tight my-1">
+                  {activeSubject}
+                </h2>
+
+                <div className="flex gap-8 mt-3">
+                  <div className="flex flex-col">
+                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
+                    <span className="text-2xl font-bold text-white">{activeRoom}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
+                    <span className="text-2xl font-bold text-white">{activeEnd}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
+                    <span className="text-2xl font-bold font-mono text-white">
+                      {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {nextSubject && (
+                <div className="border-t border-[#1c1c1c] pt-4 mt-6 flex items-baseline gap-4">
+                  <span className="text-xs uppercase tracking-[2px] font-bold text-[#8f8f8f]">
+                    NEXT
+                  </span>
+                  <span className="text-xl font-bold text-white">{nextSubject}</span>
+                  <span className="text-xs text-[#cbd5e1] font-mono">{nextRoom} · {nextTime}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Full Schedule Breakdown Table */}
+          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-6 flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-3">
+              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                COMPLETE SCHEDULE BREAKDOWN
+              </span>
+              <span className="text-[11px] font-mono text-[#8f8f8f]">
+                {processedPeriods.length} CLASSES SCHEDULED
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {processedPeriods.length === 0 ? (
+                <p className="text-xs text-[#8f8f8f] font-mono italic py-4 text-center">
+                  No classes loaded for this period range.
+                </p>
+              ) : (
+                processedPeriods
+                  .filter(p => !hideCompleted || !p.details.isDone)
+                  .map((p, idx) => {
+                    const isStudy = highlightFree && (p.subject?.toLowerCase().includes('study') || p.subject?.toLowerCase().includes('free'));
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3.5 border flex items-center justify-between transition-colors ${
+                          p.details.isNow
+                            ? 'bg-[#001824] border-[#38bdf8] text-white'
+                            : p.details.isDone
+                            ? 'bg-[#000000] border-[#161616] opacity-60 text-[#777]'
+                            : isStudy
+                            ? 'bg-[#150f24] border-[#818cf8]/40 text-[#c7d2fe]'
+                            : 'bg-[#000000] border-[#1c1c1c] text-[#cbd5e1]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <span className={`px-2.5 py-1 text-[11px] font-mono font-bold uppercase rounded ${
+                            p.details.isNow
+                              ? 'bg-[#38bdf8] text-black'
+                              : 'bg-[#161616] text-[#8f8f8f]'
+                          }`}>
+                            P{idx + 1}
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-white">{p.subject || p.summary}</span>
+                              {p.details.isNow && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                              )}
+                            </div>
+                            <span className="text-xs text-[#8f8f8f] font-mono">
+                              Room: {p.room || p.location || '--'} {p.teacher ? `· ${p.teacher}` : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-end font-mono text-xs">
+                          <span className="text-white font-medium">{p.details.formattedStart} – {p.details.formattedEnd}</span>
+                          <span className={p.details.isNow ? 'text-[#38bdf8] font-bold' : 'text-[#666]'}>
+                            {p.details.isNow ? `${p.details.remainingMins}m remaining` : p.details.isDone ? 'Completed' : 'Upcoming'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
           </div>
         </div>
       </div>

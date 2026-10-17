@@ -84,107 +84,273 @@ def format_fetched_at(iso_str):
 # Notice Card matching the web UI
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _make_notice_card(notice):
-    """Build a single notice card QFrame matching the web screenshot (scaled up)."""
-    category = notice.get('category', 'General')
-    is_urgent = notice.get('importance', 'normal') == 'high'
-    is_medium = category in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']
+class NoticeDetailModal(QFrame):
+    """Full expanded notice modal with AI summary, key details, and full text."""
 
-    title = notice.get('title', category)
-    body_raw = notice.get('notice', '')
-    body_text = strip_html(body_raw)
-    combined = f"{title} {body_text} {category}".lower()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("NoticeDetailModal")
+        self.setStyleSheet("""
+            #NoticeDetailModal {
+                background-color: #07090e;
+                border: 2px solid #38bdf8;
+                border-radius: 14px;
+            }
+        """)
+        self.hide()
+        self._build_ui()
 
-    is_room_change = (
-        'room change' in combined or
-        'room changes' in combined or
-        'relocated' in combined or
-        'relocation' in combined or
-        'class change' in combined or
-        'moved to room' in combined or
-        category.lower() in ('room change', 'room changes', 'relocations')
-    )
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
 
-    card_bg = '#0c0c0c'
-    border_main = '#1a1a1a'
-
-    if is_urgent:
-        border_color = '#ff4d4d'
-        meta_color = '#ff4d4d'
-        prefix = 'URGENT'
-    elif is_room_change:
-        border_color = '#38bdf8'
-        meta_color = '#38bdf8'
-        prefix = 'ROOM CHANGE'
-        card_bg = '#091524'
-        border_main = '#1e3a5f'
-    elif is_medium:
-        border_color = '#ffb020'
-        meta_color = '#ffb020'
-        prefix = category.upper()
-    else:
-        border_color = '#475569'
-        meta_color = '#cbd5e1'
-        prefix = category.upper()
-
-    details = extract_details(body_raw)
-    date_str = details.get('date', '')
-    if not date_str:
-        date_str = datetime.now().strftime('%d %B %Y')
-
-    loc_str = details.get('location', '')
-    loc_part = f" · {loc_str.upper()}" if loc_str and is_room_change else ""
-
-    card = QFrame()
-    card.setObjectName('NoticeCard')
-    card.setStyleSheet(f"""
-        #NoticeCard {{
-            background-color: {card_bg};
-            border: 1px solid {border_main};
-            border-left: 4px solid {border_color};
-            border-radius: 4px;
-        }}
-    """)
-
-    lay = QVBoxLayout(card)
-    lay.setContentsMargins(18, 16, 18, 16)
-    lay.setSpacing(8)
-
-    # ── Meta row: CATEGORY · DATE · SEE NAME · LOCATION ──────────────────
-    contact = notice.get('contact', '').strip()
-    contact_part = f" · SEE {contact.upper()}" if contact else ""
-    meta_tag = f"{prefix} · {date_str.upper()}{loc_part}{contact_part}"
-    meta_lbl = QLabel(meta_tag)
-    meta_lbl.setStyleSheet(
-        f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
-        f"font-size: 15px; font-weight: 800; color: {meta_color}; "
-        f"letter-spacing: 1px; background: transparent; border: none;"
-    )
-    lay.addWidget(meta_lbl)
-
-    # ── Title ──────────────────────────────────────────────────────────────
-    title_lbl = QLabel(title)
-    title_lbl.setWordWrap(True)
-    title_lbl.setStyleSheet(
-        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; "
-        "color: #ffffff; background: transparent; border: none; line-height: 1.25;"
-    )
-    lay.addWidget(title_lbl)
-
-    # ── Body text preview ──────────────────────────────────────────────────
-    body_text = strip_html(notice.get('notice', ''))
-    if body_text:
-        if len(body_text) > 280:
-            body_text = body_text[:280].rsplit(' ', 1)[0] + '…'
-        body_lbl = QLabel(body_text)
-        body_lbl.setWordWrap(True)
-        body_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 500; "
-            "color: #f1f5f9; background: transparent; border: none; line-height: 1.45;"
+        # Header bar
+        header = QHBoxLayout()
+        self.badge_lbl = QLabel("GENERAL", self)
+        self.badge_lbl.setStyleSheet(
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 14px; font-weight: 800; "
+            "color: #38bdf8; letter-spacing: 1.5px; background: rgba(56, 189, 248, 0.15); "
+            "border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px; padding: 4px 10px;"
         )
-        lay.addWidget(body_lbl)
+        header.addWidget(self.badge_lbl)
+        header.addStretch(1)
 
-    return card
+        close_hint = QLabel("TAP ANYWHERE TO CLOSE ✕", self)
+        close_hint.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; "
+            "color: #cbd5e1; letter-spacing: 1px; background: transparent;"
+        )
+        header.addWidget(close_hint)
+        root.addLayout(header)
+
+        # Title
+        self.title_lbl = QLabel("", self)
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 800; "
+            "color: #ffffff; line-height: 1.25;"
+        )
+        root.addWidget(self.title_lbl)
+
+        # Metadata Row (Time, Location, Contact)
+        self.meta_box = QWidget(self)
+        self.meta_box.setStyleSheet("background: #0d131f; border-radius: 8px; border: 1px solid #1e293b;")
+        m_lay = QHBoxLayout(self.meta_box)
+        m_lay.setContentsMargins(14, 8, 14, 8)
+        m_lay.setSpacing(18)
+
+        self.loc_lbl = QLabel("", self.meta_box)
+        self.loc_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #38bdf8;")
+        m_lay.addWidget(self.loc_lbl)
+
+        self.time_lbl = QLabel("", self.meta_box)
+        self.time_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #cbd5e1;")
+        m_lay.addWidget(self.time_lbl)
+
+        self.contact_lbl = QLabel("", self.meta_box)
+        self.contact_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #f59e0b;")
+        m_lay.addWidget(self.contact_lbl)
+        m_lay.addStretch(1)
+        root.addWidget(self.meta_box)
+
+        # AI Summary Callout Box
+        self.summary_box = QWidget(self)
+        self.summary_box.setStyleSheet("background: rgba(56, 189, 248, 0.08); border-radius: 8px; border-left: 4px solid #38bdf8;")
+        s_lay = QVBoxLayout(self.summary_box)
+        s_lay.setContentsMargins(14, 10, 14, 10)
+        s_lay.setSpacing(4)
+        s_title = QLabel("⚡ QUICK SUMMARY & ACTION ITEMS", self.summary_box)
+        s_title.setStyleSheet("font-family: 'Consolas', monospace; font-size: 12px; font-weight: 800; color: #38bdf8; letter-spacing: 1px;")
+        s_lay.addWidget(s_title)
+        self.summary_text = QLabel("", self.summary_box)
+        self.summary_text.setWordWrap(True)
+        self.summary_text.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 600; color: #e2e8f0; line-height: 1.4;")
+        s_lay.addWidget(self.summary_text)
+        root.addWidget(self.summary_box)
+
+        # Full notice body scroll area
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("background: transparent; border: none;")
+
+        self.body_content = QLabel(self.scroll)
+        self.body_content.setWordWrap(True)
+        self.body_content.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 17px; font-weight: 500; color: #cbd5e1; line-height: 1.5; padding: 4px 0;")
+        self.scroll.setWidget(self.body_content)
+        root.addWidget(self.scroll, 1)
+
+    def mousePressEvent(self, event):
+        self.close_modal()
+        event.accept()
+
+    def set_notice(self, notice):
+        category = notice.get('category', 'General')
+        title = notice.get('title', category)
+        raw_body = notice.get('notice', '')
+        clean_body = strip_html(raw_body)
+        details = extract_details(raw_body)
+
+        self.badge_lbl.setText(category.upper())
+        self.title_lbl.setText(title)
+
+        loc = details.get('location') or 'Campus'
+        date_time = details.get('time') or details.get('date') or 'Today'
+        contact = notice.get('contact', '').strip() or 'Staff'
+
+        self.loc_lbl.setText(f"📍 {loc}")
+        self.time_lbl.setText(f"⏰ {date_time}")
+        self.contact_lbl.setText(f"👤 {contact}")
+
+        # Synthesize concise summary
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', clean_body) if len(s.strip()) > 8]
+        if sentences:
+            summary_preview = sentences[0]
+            if len(sentences) > 1 and len(summary_preview) < 70:
+                summary_preview += f". {sentences[1]}"
+            self.summary_text.setText(f"• {summary_preview}.")
+            self.summary_box.show()
+        else:
+            self.summary_box.hide()
+
+        self.body_content.setText(clean_body)
+
+    def close_modal(self):
+        self.hide()
+
+
+class NoticeCard(QFrame):
+    """Interactive notice card with hover/tap affordance opening NoticeDetailModal."""
+
+    def __init__(self, notice, on_click=None, parent=None):
+        super().__init__(parent)
+        self.notice = notice
+        self.on_click = on_click
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setObjectName('NoticeCard')
+        self._build_ui()
+
+    def _build_ui(self):
+        notice = self.notice
+        category = notice.get('category', 'General')
+        is_urgent = notice.get('importance', 'normal') == 'high'
+        is_medium = category in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']
+
+        title = notice.get('title', category)
+        body_raw = notice.get('notice', '')
+        body_text = strip_html(body_raw)
+        combined = f"{title} {body_text} {category}".lower()
+
+        is_room_change = (
+            'room change' in combined or
+            'room changes' in combined or
+            'relocated' in combined or
+            'relocation' in combined or
+            'class change' in combined or
+            'moved to room' in combined or
+            category.lower() in ('room change', 'room changes', 'relocations')
+        )
+
+        card_bg = '#0c0c0c'
+        border_main = '#1a1a1a'
+
+        if is_urgent:
+            border_color = '#ff4d4d'
+            meta_color = '#ff4d4d'
+            prefix = 'URGENT'
+        elif is_room_change:
+            border_color = '#38bdf8'
+            meta_color = '#38bdf8'
+            prefix = 'ROOM CHANGE'
+            card_bg = '#091524'
+            border_main = '#1e3a5f'
+        elif is_medium:
+            border_color = '#ffb020'
+            meta_color = '#ffb020'
+            prefix = category.upper()
+        else:
+            border_color = '#475569'
+            meta_color = '#cbd5e1'
+            prefix = category.upper()
+
+        details = extract_details(body_raw)
+        date_str = details.get('date', '')
+        if not date_str:
+            date_str = datetime.now().strftime('%d %B %Y')
+
+        loc_str = details.get('location', '')
+        loc_part = f" · {loc_str.upper()}" if loc_str and is_room_change else ""
+
+        self.setStyleSheet(f"""
+            #NoticeCard {{
+                background-color: {card_bg};
+                border: 1px solid {border_main};
+                border-left: 4px solid {border_color};
+                border-radius: 4px;
+            }}
+            #NoticeCard:hover {{
+                border-color: #38bdf8;
+            }}
+        """)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(8)
+
+        # Meta row
+        contact = notice.get('contact', '').strip()
+        contact_part = f" · SEE {contact.upper()}" if contact else ""
+        meta_tag = f"{prefix} · {date_str.upper()}{loc_part}{contact_part}"
+        meta_lbl = QLabel(meta_tag, self)
+        meta_lbl.setStyleSheet(
+            f"font-family: 'Consolas', 'SFMono-Regular', 'Segoe UI', monospace; "
+            f"font-size: 15px; font-weight: 800; color: {meta_color}; "
+            f"letter-spacing: 1px; background: transparent; border: none;"
+        )
+        lay.addWidget(meta_lbl)
+
+        # Title
+        title_lbl = QLabel(title, self)
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 700; "
+            "color: #ffffff; background: transparent; border: none; line-height: 1.25;"
+        )
+        lay.addWidget(title_lbl)
+
+        # Body preview
+        if body_text:
+            if len(body_text) > 280:
+                body_text = body_text[:280].rsplit(' ', 1)[0] + '…'
+            body_lbl = QLabel(body_text, self)
+            body_lbl.setWordWrap(True)
+            body_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 500; "
+                "color: #f1f5f9; background: transparent; border: none; line-height: 1.45;"
+            )
+            lay.addWidget(body_lbl)
+
+        # Subtle tap-to-expand prompt footer
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        expand_hint = QLabel("🔎 TAP TO EXPAND & SUMMARIZE", self)
+        expand_hint.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11px; font-weight: 700; "
+            "color: #64748b; letter-spacing: 0.5px; background: transparent; border: none;"
+        )
+        footer.addWidget(expand_hint)
+        lay.addLayout(footer)
+
+    def mousePressEvent(self, event):
+        if self.on_click:
+            self.on_click(self.notice)
+        super().mousePressEvent(event)
+
+
+def _make_notice_card(notice, on_click=None):
+    """Build a single notice card QFrame."""
+    return NoticeCard(notice, on_click=on_click)
 
 
 def _make_downtime_card(message='Server is experiencing downtime'):
@@ -379,7 +545,33 @@ class NoticesWidget(QFrame):
         self.scroll_timer.timeout.connect(self._auto_scroll_tick)
         self.scroll_timer.start(30)
 
+        # Notice detail inspection modal overlay
+        self.modal = NoticeDetailModal(self)
+
         self._start_fetch()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'modal') and self.modal is not None:
+            self.modal.setGeometry(12, 12, max(100, self.width() - 24), max(100, self.height() - 24))
+
+    def open_modal(self, notice):
+        """Open detailed modal inspection with AI summary for selected notice."""
+        if hasattr(self, 'modal') and self.modal is not None:
+            self.modal.set_notice(notice)
+            self.modal.setGeometry(12, 12, max(100, self.width() - 24), max(100, self.height() - 24))
+            self.modal.show()
+            self.modal.raise_()
+            self._scroll_paused = True
+
+    def close_modal(self):
+        """Dismiss notice detail modal."""
+        if hasattr(self, 'modal') and self.modal is not None:
+            self.modal.close_modal()
+
+    @property
+    def modal_open(self):
+        return hasattr(self, 'modal') and self.modal is not None and self.modal.isVisible()
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -387,6 +579,8 @@ class NoticesWidget(QFrame):
 
     def scroll_by_pixels(self, delta_y):
         """Manual scroll clamping cleanly within scrollbar limits."""
+        if self.modal_open:
+            return
         sb = self.scroll_area.verticalScrollBar()
         cur = sb.value()
         self._auto_scroll_paused_until = time.time() + 10.0
@@ -397,7 +591,11 @@ class NoticesWidget(QFrame):
         return self._scroll_paused
 
     def toggle_scroll_pause(self):
-        """Tap handler: hold the list still, or let it resume. Returns the new state."""
+        """Tap handler: close modal if open, else toggle pause/resume."""
+        if self.modal_open:
+            self.close_modal()
+            return self._scroll_paused
+
         self._scroll_paused = not self._scroll_paused
         if not self._scroll_paused:
             # A beat before it starts moving again, so resuming isn't jarring.
@@ -418,6 +616,8 @@ class NoticesWidget(QFrame):
 
     def reset_gesture_state(self):
         """Forget tap-pause and affordance — the mirror changed who it's showing."""
+        if self.modal_open:
+            self.close_modal()
         self._scroll_paused = False
         self._variant = 'A'
         self.set_gesture_active(False)
@@ -616,7 +816,7 @@ class NoticesWidget(QFrame):
 
         # Add cards
         for notice in filtered:
-            card = _make_notice_card(notice)
+            card = _make_notice_card(notice, on_click=self.open_modal)
             self.cards_lay.addWidget(card)
 
         self.cards_lay.addStretch(1)

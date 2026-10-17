@@ -89,10 +89,11 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
     setIsCameraReady(false)
   }, [])
 
-  // ── Reset on open/close ──────────────────────────────────────────────────
+  const [checkingBarcode, setCheckingBarcode] = useState(false)
+
+  // ── Reset on open/close & Verify Barcode Prerequisite ────────────────────
   useEffect(() => {
     if (isOpen) {
-      setPhase('parental-gate')
       setAgreedPrivacy(false)
       setAgreedTerms(false)
       setCaptureProgress(0)
@@ -104,10 +105,35 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
       setIsCameraReady(false)
       setCameraError(false)
       setBrightness(255)
+
+      // Mandatory check: student ID barcode must be linked first
+      setCheckingBarcode(true)
+      const checkBarcodeStatus = async () => {
+        try {
+          const token = await getAccessTokenSilently().catch(() => null)
+          const headers = token ? { Authorization: `Bearer ${token}` } : {}
+          const res = await fetch(`${API_URL}/api/users/me/barcode`, { headers })
+          if (res.ok) {
+            const data = await res.json()
+            if (!data.barcode || !data.barcode.trim()) {
+              setPhase('require-barcode')
+            } else {
+              setPhase('parental-gate')
+            }
+          } else {
+            setPhase('require-barcode')
+          }
+        } catch {
+          setPhase('parental-gate')
+        } finally {
+          setCheckingBarcode(false)
+        }
+      }
+      checkBarcodeStatus()
     } else {
       stopCamera()
     }
-  }, [isOpen, stopCamera])
+  }, [isOpen, stopCamera, getAccessTokenSilently])
 
   useEffect(() => {
     if (phase !== 'capture') stopCamera()
@@ -268,6 +294,74 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
           <button className="fc-close" onClick={handleClose} aria-label="Close">&#x2715;</button>
 
           <AnimatePresence mode="wait">
+
+            {/* REQUIRE BARCODE FIRST GATE */}
+            {phase === 'require-barcode' && (
+              <motion.div
+                key="require-barcode"
+                className="fc-phase"
+                variants={slideVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.25 }}
+                style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}
+              >
+                <p className="fc-overline" style={{ color: '#fbbf24' }}>Prerequisite: Student ID</p>
+                <h2 className="fc-title" style={{ marginBottom: '16px' }}>Student ID Barcode Required</h2>
+
+                <div style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '16px',
+                  background: 'rgba(251, 191, 36, 0.1)',
+                  border: '1px solid rgba(251, 191, 36, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '16px',
+                  color: '#fbbf24'
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '32px' }}>barcode_scanner</span>
+                </div>
+
+                <div style={{
+                  background: 'rgba(251, 191, 36, 0.05)',
+                  border: '1px solid rgba(251, 191, 36, 0.2)',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  maxWidth: '440px',
+                  textAlign: 'left',
+                  marginBottom: '24px'
+                }}>
+                  <p style={{ margin: 0, fontSize: '13px', lineHeight: '1.6', color: '#fef3c7' }}>
+                    <strong>Why is this necessary?</strong>
+                    <br />
+                    To prevent misidentification and protect your student profile, a physical Student ID barcode must be linked to your account before enrolling facial biometrics.
+                    <br /><br />
+                    If the mirror's camera encounters backlight, sun glare, or is unsure of your identity, it will prompt: <em>"We might be getting the wrong person — scan your Student ID barcode below to make sure!"</em>
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button
+                    className="fc-btn fc-btn-primary"
+                    style={{ background: '#fbbf24', color: '#000000', fontWeight: 'bold' }}
+                    onClick={() => {
+                      handleClose()
+                      if (window.location.pathname !== '/settings') {
+                        window.location.href = '/settings'
+                      }
+                    }}
+                  >
+                    Go to Link Barcode
+                  </button>
+                  <button className="fc-btn fc-btn-secondary" onClick={handleClose}>
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
             {/* PARENTAL GATE */}
             {phase === 'parental-gate' && (
@@ -510,10 +604,27 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                     <path d="M10 10l12 12M22 10L10 22" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                   </svg>
                 </div>
-                <h2 className="fc-title">Something Went Wrong</h2>
-                <p className="fc-sub" style={{ color: 'rgba(255,255,255,0.5)' }}>{errorMsg}</p>
+                <h2 className="fc-title">
+                  {errorMsg.toLowerCase().includes('already registered') || errorMsg.toLowerCase().includes('collision')
+                    ? 'Biometric Conflict Detected'
+                    : 'Registration Failed'}
+                </h2>
+                
+                {errorMsg.toLowerCase().includes('already registered') || errorMsg.toLowerCase().includes('collision') ? (
+                  <div style={{ marginTop: 12, padding: '12px 16px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: 8, maxWidth: 380, textAlign: 'left' }}>
+                    <p style={{ color: '#fca5a5', fontSize: '0.82rem', lineHeight: 1.5, margin: 0 }}>
+                      <strong>Face Already Registered:</strong> This facial biometric vector matches an existing registered student account.
+                    </p>
+                    <p style={{ color: '#cbd5e1', fontSize: '0.78rem', marginTop: 8, marginBottom: 0 }}>
+                      If this is an error or someone mistakenly scanned your face, contact the mirror administrator at <strong style={{ color: '#4fc3ff' }}>marminamina3@gmail.com</strong> with your Student ID barcode number.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="fc-sub" style={{ color: 'rgba(255,255,255,0.7)', maxWidth: 360 }}>{errorMsg}</p>
+                )}
+
                 <div className="fc-row-btns" style={{ marginTop: 24 }}>
-                  <motion.button className="fc-btn fc-btn-outline" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}>Cancel</motion.button>
+                  <motion.button className="fc-btn fc-btn-outline" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}>Close</motion.button>
                   <motion.button className="fc-btn" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleRetry}>Try Again</motion.button>
                 </div>
               </motion.div>

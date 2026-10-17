@@ -380,8 +380,11 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     if (widget.data?.scrollSpeed !== undefined) setScrollSpeed(widget.data.scrollSpeed);
   }, [widget.data]);
 
+  const [activeTab, setActiveTab] = useState('browse'); // 'browse' | 'settings'
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
   // ─── Persist settings (local storage + server API) ───────────────────────────
-  const saveSettings = (updates) => {
+  const saveSettings = async (updates) => {
     try {
       const current = getCachedConfig();
       const next = { ...current, ...updates };
@@ -396,11 +399,14 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         keywordFilter: next.keywordFilter ?? next.keywords ?? keywords,
         scrollSpeed: next.scrollSpeed ?? scrollSpeed,
       };
-      fetch(`${API_URL}/api/notices/config`, {
+      await fetch(`${API_URL}/api/notices/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       }).catch(() => {});
+
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     } catch { /* silent */ }
     if (onUpdateData) onUpdateData({ ...widget.data, ...updates });
   };
@@ -642,256 +648,337 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         </div>
       </div>
 
-      {/* Main 2-Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-        {/* Left Column: Controls & Filters (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col gap-6">
-          {/* Motion & Sequencing Section */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
-              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                MOTION &amp; SEQUENCING
-              </span>
-              <span className="text-[11px] font-mono font-bold text-[#4fc3ff] uppercase">
-                SPEED: {scrollSpeed <= 0.3 ? 'SLOW' : scrollSpeed <= 0.7 ? 'NORMAL' : 'FAST'} ({scrollSpeed.toFixed(2)}x)
-              </span>
-            </div>
+      {/* Tab Switcher: Browse Notices vs Display Preferences */}
+      <div className="flex items-center gap-3 border-b border-[#1c1c1c] pb-3 mb-6 shrink-0">
+        <button
+          onClick={() => setActiveTab('browse')}
+          className={`px-4 py-2 text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer ${
+            activeTab === 'browse'
+              ? 'bg-[#4fc3ff] text-black border border-[#4fc3ff] shadow-md shadow-[#4fc3ff]/10'
+              : 'bg-[#0a0a0a] text-[#8f8f8f] border border-[#1c1c1c] hover:text-white hover:border-[#333]'
+          }`}
+        >
+          📰 Browse Notices ({sorted.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`px-4 py-2 text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer ${
+            activeTab === 'settings'
+              ? 'bg-[#4fc3ff] text-black border border-[#4fc3ff] shadow-md shadow-[#4fc3ff]/10'
+              : 'bg-[#0a0a0a] text-[#8f8f8f] border border-[#1c1c1c] hover:text-white hover:border-[#333]'
+          }`}
+        >
+          ⚙️ Display &amp; Filter Settings
+        </button>
+      </div>
 
-            {/* Slider */}
-            <div className="py-2 flex items-center">
+      {activeTab === 'browse' ? (
+        /* BROWSE NOTICES VIEW */
+        <div className="flex-1 flex flex-col gap-4 min-h-0">
+          {/* Filter Bar in Browse Mode */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0a0a0a] border border-[#1c1c1c] p-3.5">
+            <div className="flex items-center gap-2 flex-1">
               <input
-                type="range"
-                min="0.1"
-                max="2.5"
-                step="0.05"
-                value={scrollSpeed}
-                onChange={e => {
-                  const v = parseFloat(e.target.value);
-                  setScrollSpeed(v);
-                  saveSettings({ scrollSpeed: v });
-                }}
-                className="w-full h-1 bg-[#1c1c1c] appearance-none cursor-pointer accent-[#4fc3ff]"
+                type="text"
+                placeholder="Search notices by keyword, teacher, sport, room..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#000000] border border-[#222222] focus:border-[#4fc3ff] px-3 py-2 text-xs text-white placeholder-[#555] font-mono outline-none"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="px-2 py-1 text-xs font-mono text-[#8f8f8f] hover:text-white"
+                >
+                  Clear
+                </button>
+              )}
             </div>
 
-            {/* Presets */}
-            <div className="grid grid-cols-3 gap-2">
-              {SPEED_PRESETS.map((p) => (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+              <span className="text-[10px] font-mono uppercase text-[#666] mr-1">Year:</span>
+              {YEAR_TABS.map(yr => (
                 <button
-                  key={p.label}
-                  onClick={() => { setScrollSpeed(p.value); saveSettings({ scrollSpeed: p.value }); }}
-                  className={`py-2 px-3 border font-mono text-xs font-bold rounded-none uppercase transition-colors ${
-                    scrollSpeed === p.value
-                      ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                  key={yr}
+                  onClick={() => { setYearFilter(yr); saveSettings({ yearFilter: yr }); }}
+                  className={`px-2 py-1 text-[11px] font-mono font-bold uppercase transition-colors cursor-pointer ${
+                    yearFilter === yr ? 'bg-[#4fc3ff] text-black' : 'bg-[#000000] text-[#8f8f8f] hover:text-white border border-[#222]'
                   }`}
                 >
-                  {p.label}
+                  {yr === 'All' ? 'All' : `Y${yr}`}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Audience & Content Section */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-4">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              AUDIENCE &amp; CONTENT
-            </span>
-
-            {/* Year Level Buttons */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
-                YEAR LEVEL TARGETING
-              </label>
-              <div className="grid grid-cols-6 gap-2">
-                {YEAR_TABS.map(yr => {
-                  const active = yearFilter === yr;
-                  return (
-                    <button
-                      key={yr}
-                      onClick={() => {
-                        setYearFilter(yr);
-                        saveSettings({ yearFilter: yr });
-                      }}
-                      className={`py-2 px-1 border font-mono text-xs font-bold rounded-none uppercase transition-colors text-center ${
-                        active
-                          ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                          : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
-                      }`}
-                    >
-                      {yr === 'All' ? 'ALL' : `Y${yr}`}
-                    </button>
-                  );
-                })}
+          {/* Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto custom-scrollbar flex-1 pr-1">
+            {sorted.length === 0 ? (
+              <div className="col-span-full py-16 text-center text-[#8f8f8f] font-mono text-sm">
+                No notices match your current filters.
+              </div>
+            ) : (
+              sorted.map((n) => (
+                <NoticeCard
+                  key={n.id}
+                  n={n}
+                  urgent={n.importance === 'high'}
+                  onClick={() => setSelectedNotice(n)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        /* SETTINGS & CONFIGURATION VIEW */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+          {/* Left Column: Controls & Filters (7 cols) */}
+          <div className="lg:col-span-7 flex flex-col gap-6">
+            {/* Motion & Sequencing Section */}
+            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                  MOTION &amp; SEQUENCING
+                </span>
+                <span className="text-[11px] font-mono font-bold text-[#4fc3ff] uppercase">
+                  SPEED: {scrollSpeed <= 0.3 ? 'SLOW' : scrollSpeed <= 0.7 ? 'NORMAL' : 'FAST'} ({scrollSpeed.toFixed(2)}x)
+                </span>
               </div>
 
-              {/* Class Name Input for Year 9 or Year 10 */}
-              {(yearFilter === '9' || yearFilter === '10') && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="flex flex-col gap-1.5 pt-2 border-t border-[#1c1c1c] mt-1"
-                >
-                  <label className="text-[10px] font-mono text-[#4fc3ff] uppercase tracking-wider flex items-center justify-between">
-                    <span>CLASS NAME / FORM CLASS</span>
-                    <span className="text-[9px] text-[#8f8f8f]">e.g. {yearFilter === '9' ? '9SR, 9ST, 9CR, 9EA' : '10TE, 10ST, 10FE'}</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder={`e.g. ${yearFilter === '9' ? '9SR' : '10TE'}`}
-                    value={className}
-                    onChange={e => {
-                      const val = e.target.value.toUpperCase().trim();
-                      setClassName(val);
-                      
-                      // Auto-add class code to keyword boost tags if provided
-                      let nextKeywords = keywords;
-                      if (val && !keywords.includes(val.toLowerCase())) {
-                        nextKeywords = [...keywords, val.toLowerCase()];
-                        setKeywords(nextKeywords);
-                      }
-                      
-                      saveSettings({ className: val, keywordFilter: nextKeywords });
-                    }}
-                    className="w-full bg-[#000000] border border-[#4fc3ff]/50 rounded-none px-3 py-2 text-xs text-white uppercase placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
-                  />
-                  <p className="text-[10px] text-[#8f8f8f] font-mono italic">
-                    Entering your class code enables automatic room change alerts and keyword matching for Year {yearFilter} notices.
-                  </p>
-                </motion.div>
-              )}
+              {/* Slider */}
+              <div className="py-2 flex items-center">
+                <input
+                  type="range"
+                  min="0.1"
+                  max="2.5"
+                  step="0.05"
+                  value={scrollSpeed}
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    setScrollSpeed(v);
+                    saveSettings({ scrollSpeed: v });
+                  }}
+                  className="w-full h-1 bg-[#1c1c1c] appearance-none cursor-pointer accent-[#4fc3ff]"
+                />
+              </div>
+
+              {/* Presets */}
+              <div className="grid grid-cols-3 gap-2">
+                {SPEED_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() => { setScrollSpeed(p.value); saveSettings({ scrollSpeed: p.value }); }}
+                    className={`py-2 px-3 border font-mono text-xs font-bold rounded-none uppercase transition-colors cursor-pointer ${
+                      scrollSpeed === p.value
+                        ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                        : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Keyword Boost Tag Input */}
-            <div className="flex flex-col gap-2 pt-2 border-t border-[#1c1c1c]">
-              <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
-                KEYWORD BOOST
-              </label>
+            {/* Audience & Content Section */}
+            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-4">
+              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
+                AUDIENCE &amp; CONTENT
+              </span>
 
-              {/* Tag pills */}
-              {keywords.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {keywords.map((kw) => (
-                    <motion.span
-                      key={kw}
-                      layout
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      className="group relative inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1a26] border border-[#4fc3ff]/30 text-[#4fc3ff] font-mono text-[10px] uppercase font-bold select-none"
-                    >
-                      {kw}
+              {/* Year Level Buttons */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
+                  YEAR LEVEL TARGETING
+                </label>
+                <div className="grid grid-cols-6 gap-2">
+                  {YEAR_TABS.map(yr => {
+                    const active = yearFilter === yr;
+                    return (
                       <button
+                        key={yr}
                         onClick={() => {
-                          const next = keywords.filter(k => k !== kw);
-                          setKeywords(next);
-                          saveSettings({ keywordFilter: next });
+                          setYearFilter(yr);
+                          saveSettings({ yearFilter: yr });
                         }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 text-[#4fc3ff] hover:text-white leading-none"
-                        aria-label={`Remove ${kw}`}
+                        className={`py-2 px-1 border font-mono text-xs font-bold rounded-none uppercase transition-colors text-center cursor-pointer ${
+                          active
+                            ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
+                            : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                        }`}
                       >
-                        ✕
+                        {yr === 'All' ? 'ALL' : `Y${yr}`}
                       </button>
-                    </motion.span>
-                  ))}
+                    );
+                  })}
                 </div>
-              )}
 
-              {/* Input */}
-              <input
-                type="text"
-                placeholder="Type a keyword and press Enter"
-                value={keywordInput}
-                onChange={e => setKeywordInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const tag = keywordInput.trim().toLowerCase();
-                    if (tag && !keywords.includes(tag)) {
-                      const next = [...keywords, tag];
+                {/* Class Name Input for Year 9 or Year 10 */}
+                {(yearFilter === '9' || yearFilter === '10') && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="flex flex-col gap-1.5 pt-2 border-t border-[#1c1c1c] mt-1"
+                  >
+                    <label className="text-[10px] font-mono text-[#4fc3ff] uppercase tracking-wider flex items-center justify-between">
+                      <span>CLASS NAME / FORM CLASS</span>
+                      <span className="text-[9px] text-[#8f8f8f]">e.g. {yearFilter === '9' ? '9SR, 9ST, 9CR, 9EA' : '10TE, 10ST, 10FE'}</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={`e.g. ${yearFilter === '9' ? '9SR' : '10TE'}`}
+                      value={className}
+                      onChange={e => {
+                        const val = e.target.value.toUpperCase().trim();
+                        setClassName(val);
+                        
+                        let nextKeywords = keywords;
+                        if (val && !keywords.includes(val.toLowerCase())) {
+                          nextKeywords = [...keywords, val.toLowerCase()];
+                          setKeywords(nextKeywords);
+                        }
+                        
+                        saveSettings({ className: val, keywordFilter: nextKeywords });
+                      }}
+                      className="w-full bg-[#000000] border border-[#4fc3ff]/50 rounded-none px-3 py-2 text-xs text-white uppercase placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
+                    />
+                    <p className="text-[10px] text-[#8f8f8f] font-mono italic">
+                      Entering your class code enables automatic room change alerts and keyword matching for Year {yearFilter} notices.
+                    </p>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Keyword Boost Tag Input */}
+              <div className="flex flex-col gap-2 pt-2 border-t border-[#1c1c1c]">
+                <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
+                  KEYWORD BOOST
+                </label>
+
+                {/* Tag pills */}
+                {keywords.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {keywords.map((kw) => (
+                      <motion.span
+                        key={kw}
+                        layout
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        className="group relative inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1a26] border border-[#4fc3ff]/30 text-[#4fc3ff] font-mono text-[10px] uppercase font-bold select-none"
+                      >
+                        {kw}
+                        <button
+                          onClick={() => {
+                            const next = keywords.filter(k => k !== kw);
+                            setKeywords(next);
+                            saveSettings({ keywordFilter: next });
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 text-[#4fc3ff] hover:text-white leading-none cursor-pointer"
+                          aria-label={`Remove ${kw}`}
+                        >
+                          ✕
+                        </button>
+                      </motion.span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Input */}
+                <input
+                  type="text"
+                  placeholder="Type a keyword and press Enter"
+                  value={keywordInput}
+                  onChange={e => setKeywordInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const tag = keywordInput.trim().toLowerCase();
+                      if (tag && !keywords.includes(tag)) {
+                        const next = [...keywords, tag];
+                        setKeywords(next);
+                        saveSettings({ keywordFilter: next });
+                      }
+                      setKeywordInput('');
+                    } else if (e.key === 'Backspace' && keywordInput === '' && keywords.length > 0) {
+                      const next = keywords.slice(0, -1);
                       setKeywords(next);
                       saveSettings({ keywordFilter: next });
                     }
-                    setKeywordInput('');
-                  } else if (e.key === 'Backspace' && keywordInput === '' && keywords.length > 0) {
-                    const next = keywords.slice(0, -1);
-                    setKeywords(next);
-                    saveSettings({ keywordFilter: next });
-                  }
+                  }}
+                  className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2.5 text-xs text-white placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
+                />
+                <p className="text-[11px] text-[#666] font-mono italic">
+                  Notices matching these keywords float to the top of the list.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Category Order (5 cols) */}
+          <div className="lg:col-span-5 flex flex-col gap-6">
+            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
+                  CATEGORY ORDER
+                </span>
+                <span className="text-[10px] font-mono text-[#555] uppercase">DRAG TO REORDER</span>
+              </div>
+
+              <Reorder.Group
+                axis="y"
+                values={catOrder}
+                onReorder={(newOrder) => {
+                  setCatOrder(newOrder);
+                  saveSettings({ catOrder: newOrder });
                 }}
-                className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2.5 text-xs text-white placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
-              />
-              <p className="text-[11px] text-[#666] font-mono italic">
-                Notices matching these keywords float to the top of the list.
+                className="flex flex-col gap-1.5"
+              >
+                {catOrder.map((cat) => {
+                  const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
+                  return (
+                    <Reorder.Item
+                      key={cat}
+                      value={cat}
+                      className="flex items-center justify-between px-3 py-2.5 border bg-[#000000] border-[#1c1c1c] cursor-grab active:cursor-grabbing border-l-4 group"
+                      style={{ borderLeftColor: colors.accent }}
+                      whileDrag={{
+                        scale: 1.02,
+                        backgroundColor: '#141414',
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                        zIndex: 50,
+                      }}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="text-[#555] group-hover:text-[#8f8f8f] transition-colors shrink-0">
+                          <circle cx="2" cy="2" r="1.5" fill="currentColor"/>
+                          <circle cx="8" cy="2" r="1.5" fill="currentColor"/>
+                          <circle cx="2" cy="7" r="1.5" fill="currentColor"/>
+                          <circle cx="8" cy="7" r="1.5" fill="currentColor"/>
+                          <circle cx="2" cy="12" r="1.5" fill="currentColor"/>
+                          <circle cx="8" cy="12" r="1.5" fill="currentColor"/>
+                        </svg>
+                        <span className="text-xs font-mono font-bold uppercase text-white">{cat}</span>
+                      </div>
+                      <span
+                        className="text-[10px] font-mono uppercase"
+                        style={{ color: colors.accent, opacity: 0.7 }}
+                      >
+                        {catOrder.indexOf(cat) + 1}
+                      </span>
+                    </Reorder.Item>
+                  );
+                })}
+              </Reorder.Group>
+
+              <p className="text-[11px] font-mono text-[#555] italic border-t border-[#1c1c1c] pt-2">
+                Order determines priority on the mirror display. Drag rows to reorder.
               </p>
             </div>
           </div>
         </div>
-
-        {/* Right Column: Category Order (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col gap-6">
-          {/* Drag-to-reorder Category List */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
-              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                CATEGORY ORDER
-              </span>
-              <span className="text-[10px] font-mono text-[#555] uppercase">DRAG TO REORDER</span>
-            </div>
-
-            <Reorder.Group
-              axis="y"
-              values={catOrder}
-              onReorder={(newOrder) => {
-                setCatOrder(newOrder);
-                saveSettings({ catOrder: newOrder });
-              }}
-              className="flex flex-col gap-1.5"
-            >
-              {catOrder.map((cat) => {
-                const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
-                return (
-                  <Reorder.Item
-                    key={cat}
-                    value={cat}
-                    className="flex items-center justify-between px-3 py-2.5 border bg-[#000000] border-[#1c1c1c] cursor-grab active:cursor-grabbing border-l-4 group"
-                    style={{ borderLeftColor: colors.accent }}
-                    whileDrag={{
-                      scale: 1.02,
-                      backgroundColor: '#141414',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                      zIndex: 50,
-                    }}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="text-[#555] group-hover:text-[#8f8f8f] transition-colors shrink-0">
-                        <circle cx="2" cy="2" r="1.5" fill="currentColor"/>
-                        <circle cx="8" cy="2" r="1.5" fill="currentColor"/>
-                        <circle cx="2" cy="7" r="1.5" fill="currentColor"/>
-                        <circle cx="8" cy="7" r="1.5" fill="currentColor"/>
-                        <circle cx="2" cy="12" r="1.5" fill="currentColor"/>
-                        <circle cx="8" cy="12" r="1.5" fill="currentColor"/>
-                      </svg>
-                      <span className="text-xs font-mono font-bold uppercase text-white">{cat}</span>
-                    </div>
-                    <span
-                      className="text-[10px] font-mono uppercase"
-                      style={{ color: colors.accent, opacity: 0.7 }}
-                    >
-                      {catOrder.indexOf(cat) + 1}
-                    </span>
-                  </Reorder.Item>
-                );
-              })}
-            </Reorder.Group>
-
-            <p className="text-[11px] font-mono text-[#555] italic border-t border-[#1c1c1c] pt-2">
-              Order determines priority on the mirror display. Drag rows to reorder.
-            </p>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Bottom Actions Bar */}
       <div className="flex items-center justify-between pt-4 border-t border-[#1c1c1c] mt-6 shrink-0">
@@ -911,18 +998,37 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
               setScrollSpeed(0.5);
               saveSettings({ catFilters: ALL_CATEGORIES, catOrder: ALL_CATEGORIES, yearFilter: 'All', className: '', keywordFilter: [], scrollSpeed: 0.5 });
             }}
-            className="px-4 py-2 border border-[#1c1c1c] hover:border-[#333] text-[#8f8f8f] hover:text-white font-mono text-xs font-bold rounded-none uppercase transition-colors"
+            className="px-4 py-2 border border-[#1c1c1c] hover:border-[#333] text-[#8f8f8f] hover:text-white font-mono text-xs font-bold rounded-none uppercase transition-colors cursor-pointer"
           >
             RESET
           </button>
           <button
             onClick={() => saveSettings({ catFilters, catOrder, yearFilter, className, keywordFilter: keywords, scrollSpeed })}
-            className="px-5 py-2 bg-[#4fc3ff] text-black hover:bg-[#7dd3fc] font-mono text-xs font-bold rounded-none uppercase transition-colors"
+            className={`px-6 py-2.5 font-mono text-xs font-bold rounded-none uppercase transition-all cursor-pointer ${
+              saveSuccess
+                ? 'bg-[#10b981] text-black shadow-lg shadow-[#10b981]/25 font-extrabold'
+                : 'bg-[#4fc3ff] text-black hover:bg-[#7dd3fc]'
+            }`}
           >
-            APPLY
+            {saveSuccess ? '✓ APPLIED & SYNCED' : 'APPLY'}
           </button>
         </div>
       </div>
+
+      {/* Floating Save Success Toast */}
+      <AnimatePresence>
+        {saveSuccess && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 15 }}
+            className="fixed bottom-6 right-6 bg-[#041d15] border border-[#10b981] text-[#34d399] px-4 py-2.5 rounded shadow-2xl font-mono text-xs flex items-center gap-2 z-50 select-none"
+          >
+            <span>✓</span>
+            <span>Notices configuration applied &amp; synchronized to Smart Mirror</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Interactive Notice Details Modal */}
       <AnimatePresence>

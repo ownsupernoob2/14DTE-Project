@@ -25,6 +25,21 @@ export default function Settings() {
   // Timetable check
   const [hasTimetable, setHasTimetable] = useState(() => Boolean(localStorage.getItem('timetable_ics_url')))
 
+  // Theme & Language
+  const [theme, setTheme] = useState(() => localStorage.getItem('mirror_theme') || 'oled-black')
+  const [language, setLanguage] = useState(() => localStorage.getItem('mirror_lang') || 'en-NZ')
+
+  const changeTheme = (newTheme) => {
+    setTheme(newTheme)
+    localStorage.setItem('mirror_theme', newTheme)
+    document.documentElement.setAttribute('data-theme', newTheme)
+  }
+
+  const changeLanguage = (newLang) => {
+    setLanguage(newLang)
+    localStorage.setItem('mirror_lang', newLang)
+  }
+
   const lastScan = localStorage.getItem('lastFaceScan')
   const scanTime = lastScan ? parseInt(lastScan, 10) : 0
   const isScanRecent = (Date.now() - scanTime) < 24 * 60 * 60 * 1000
@@ -455,6 +470,93 @@ export default function Settings() {
             </div>
           </section>
         )}
+
+        {/* Section: Display Theme & Regional Language Preferences */}
+        <section className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-2xl p-6 flex flex-col gap-5">
+          <div className="border-b border-[#1c1c1c] pb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[#4fc3ff]">palette</span>
+              <h2 className="text-lg font-bold text-white tracking-tight">
+                {language === 'mi-NZ' ? 'Āhua me te Reo' : 'Appearance & Regional Language'}
+              </h2>
+            </div>
+            <span className="text-[11px] font-mono text-[#8f8f8f]">
+              {language === 'mi-NZ' ? 'Pūnaha Tautuhinga' : 'Active System Config'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Theme Selector */}
+            <div className="flex flex-col gap-2.5">
+              <label className="text-xs font-mono text-[#8f8f8f] uppercase tracking-wider font-bold">
+                {language === 'mi-NZ' ? 'Kaupapa Ataata' : 'Portal Theme (Smart Mirror Contrast)'}
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'oled-black', name: 'OLED Pure Black', preview: 'bg-black border-[#222]' },
+                  { id: 'cyber-cyan', name: 'Cyber Neon Cyan', preview: 'bg-[#040d17] border-[#4fc3ff]/50' },
+                  { id: 'midnight-navy', name: 'Deep Midnight', preview: 'bg-[#080d1a] border-[#38bdf8]/30' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => changeTheme(t.id)}
+                    className={`p-3 rounded-xl border flex flex-col gap-2 text-left transition-all cursor-pointer ${
+                      theme === t.id
+                        ? 'border-[#4fc3ff] bg-[#4fc3ff]/10 shadow-lg shadow-[#4fc3ff]/15'
+                        : 'border-[#1c1c1c] bg-[#050505] hover:border-[#333]'
+                    }`}
+                  >
+                    <div className={`w-full h-5 rounded ${t.preview} border`} />
+                    <span className="text-[11px] font-mono font-bold text-white leading-tight">
+                      {t.name}
+                    </span>
+                    <span className="text-[9px] font-mono text-[#8f8f8f]">
+                      {theme === t.id ? '✓ Active' : 'Select'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Language Selector */}
+            <div className="flex flex-col gap-2.5">
+              <label className="text-xs font-mono text-[#8f8f8f] uppercase tracking-wider font-bold">
+                {language === 'mi-NZ' ? 'Reo Pūnaha' : 'Regional Language / Reo'}
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => changeLanguage('en-NZ')}
+                  className={`p-3.5 rounded-xl border flex flex-col gap-1 transition-all text-left cursor-pointer ${
+                    language === 'en-NZ'
+                      ? 'border-[#4fc3ff] bg-[#4fc3ff]/10 text-white'
+                      : 'border-[#1c1c1c] bg-[#050505] text-[#8f8f8f] hover:border-[#333]'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-white font-mono">English (New Zealand)</span>
+                  <span className="text-[11px] text-[#8f8f8f]">Default school portal dialect</span>
+                  <span className="text-[10px] font-mono text-[#4fc3ff] mt-1">
+                    {language === 'en-NZ' ? '✓ Selected' : 'Choose'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => changeLanguage('mi-NZ')}
+                  className={`p-3.5 rounded-xl border flex flex-col gap-1 transition-all text-left cursor-pointer ${
+                    language === 'mi-NZ'
+                      ? 'border-[#4fc3ff] bg-[#4fc3ff]/10 text-white'
+                      : 'border-[#1c1c1c] bg-[#050505] text-[#8f8f8f] hover:border-[#333]'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-white font-mono">Te Reo Māori</span>
+                  <span className="text-[11px] text-[#8f8f8f]">He reo whai mana o Aotearoa</span>
+                  <span className="text-[10px] font-mono text-[#4fc3ff] mt-1">
+                    {language === 'mi-NZ' ? '✓ Kōwhiria' : 'Kōwhiri'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Section: Policies & Privacy */}
         <section className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-2xl p-6 flex flex-col gap-4">

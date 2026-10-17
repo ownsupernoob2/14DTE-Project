@@ -430,12 +430,12 @@ class SmartMirrorPro(QMainWindow):
         is_tutorial = (hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None and self.gesture_demo_overlay.isVisible())
         
         if (is_guest or is_tutorial) and getattr(self, '_last_state', 'idle') != 'user':
-            pill_w = 480
-            pill_h = 38
+            pill_w = 520
+            pill_h = 42
             x = (self.width() - pill_w) // 2
-            y = self.height() - pill_h - 24
+            y = self.height() - pill_h - 20
             self.barcode_guide_pill.setGeometry(x, y, pill_w, pill_h)
-            self.barcode_guide_pill.setText("💳 STUDENT ID SCANNER ⬇️  (Hold card steady in slot below)")
+            self.barcode_guide_pill.setText("💳 STUDENT ID BARCODE SCANNER ⬇️  (Slide card into physical slot below)")
             self.barcode_guide_pill.show()
             self.barcode_guide_pill.raise_()
         else:
@@ -682,6 +682,27 @@ class SmartMirrorPro(QMainWindow):
         self.guest_server_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.guest_server_status_lbl.hide()
         card_lay.addWidget(self.guest_server_status_lbl)
+
+        # Unsure face recognition alert banner
+        self.guest_unsure_prompt_lbl = QLabel(
+            "⚠️ Face Not Confirmed: We might be getting the wrong person.\nScan your Student ID barcode below to make sure!",
+            self.guest_register_card
+        )
+        self.guest_unsure_prompt_lbl.setWordWrap(True)
+        self.guest_unsure_prompt_lbl.setStyleSheet("""
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 19px;
+            font-weight: 700;
+            color: #fef08a;
+            background: rgba(133, 77, 14, 0.40);
+            border: 2px solid #eab308;
+            border-radius: 12px;
+            padding: 10px 16px;
+            letter-spacing: 0.3px;
+        """)
+        self.guest_unsure_prompt_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.guest_unsure_prompt_lbl.hide()
+        card_lay.addWidget(self.guest_unsure_prompt_lbl)
 
         # Domain title with clean prominence (fits column without cutoff)
         domain_lbl = QLabel("smartmirror.me", self.guest_register_card)
@@ -1273,6 +1294,8 @@ class SmartMirrorPro(QMainWindow):
 
         if present:
             self._last_interaction_time = time.time()
+            if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None and self.gesture_demo_overlay.isVisible():
+                self._fade_out_gesture_scrim()
 
         # Variant B live floating on-screen hand cursor dot
         if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'hand_cursor_dot'):
@@ -1599,7 +1622,9 @@ class SmartMirrorPro(QMainWindow):
                 new_user_id = fdata.get('user_id', 'idle')
                 daemon_auth = fdata.get('auth_method', '')
                 if daemon_auth:
-                    self._auth_method = daemon_auth
+                    is_barcode_live = (getattr(self, '_auth_method', '') == 'barcode' and (now - getattr(self, '_last_barcode_scan_time', 0) < 300.0))
+                    if not is_barcode_live:
+                        self._auth_method = daemon_auth
             else:
                 self.face_detected   = False
                 self.face_recognized = False
@@ -1607,6 +1632,13 @@ class SmartMirrorPro(QMainWindow):
                 self.in_grace        = False
                 new_state   = 'idle'
                 new_user_id = 'idle'
+
+            # Unsure face recognition alert prompt on guest screen
+            if hasattr(self, 'guest_unsure_prompt_lbl'):
+                if (new_state == 'guest' or self._last_state == 'guest') and self.face_detected and not self.face_recognized:
+                    self.guest_unsure_prompt_lbl.show()
+                else:
+                    self.guest_unsure_prompt_lbl.hide()
 
             # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
             if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':

@@ -98,6 +98,34 @@ def main():
                     if other_encs:
                         dists = [float(np.linalg.norm(median_enc - o)) for o in other_encs]
                         if min(dists) < 0.38:
+                            matched_account = fname.replace('.pickle', '')
+                            attempted_account = target_basename.replace('.pickle', '')
+
+                            # Append collision record to audit log for admin tracing
+                            try:
+                                log_dir = os.path.join(os.path.dirname(enc_dir), "data")
+                                os.makedirs(log_dir, exist_ok=True)
+                                log_path = os.path.join(log_dir, "face_collisions.json")
+                                logs = []
+                                if os.path.exists(log_path):
+                                    try:
+                                        with open(log_path, 'r') as lf:
+                                            logs = json.load(lf)
+                                    except Exception:
+                                        logs = []
+                                logs.append({
+                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                    "attempted_user": attempted_account,
+                                    "matched_user": matched_account,
+                                    "min_distance": round(min(dists), 4),
+                                    "action": "BLOCKED_REGISTRATION",
+                                    "contact_email": "marminamina3@gmail.com"
+                                })
+                                with open(log_path, 'w') as lf:
+                                    json.dump(logs, lf, indent=2)
+                            except Exception as le:
+                                print(f"[train] Could not write collision log: {le}", file=sys.stderr)
+
                             print(
                                 f"ERROR:COLLISION:This face closely matches an already registered account ({fname}).",
                                 file=sys.stderr

@@ -14,7 +14,8 @@ export default function AdminAnalytics() {
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedVariantFilter, setSelectedVariantFilter] = useState('ALL') // 'ALL', 'A', 'B'
-  const [activeTab, setActiveTab] = useState('overview') // 'overview', 'ab_testing', 'sessions'
+  const [activeTab, setActiveTab] = useState('overview') // 'overview', 'ab_testing', 'sessions', 'biometrics'
+  const [auditData, setAuditData] = useState(null)
 
   const userEmail = (user?.email || '').toLowerCase().trim()
   const isAdmin = userEmail === AUTHORIZED_ADMIN_EMAIL
@@ -44,6 +45,15 @@ export default function AdminAnalytics() {
 
       const json = await res.json()
       setData(json)
+
+      // Fetch biometric collision & account audit data
+      try {
+        const auditRes = await fetch(`${API_URL}/api/admin/face-audit`, { headers })
+        if (auditRes.ok) {
+          const auditJson = await auditRes.json()
+          setAuditData(auditJson)
+        }
+      } catch { /* silent */ }
     } catch (err) {
       console.error('Failed to fetch analytics:', err)
       setError(err.message || 'Unable to connect to analytics service.')
@@ -343,6 +353,21 @@ export default function AdminAnalytics() {
                 }`}
               >
                 Recent Session Feed ({data.recent_sessions?.length || 0})
+              </button>
+              <button
+                onClick={() => setActiveTab('biometrics')}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'biometrics'
+                    ? 'bg-[#1c1c1c] text-[#4fc3ff] border border-[#2e2e2e]'
+                    : 'text-[#888888] hover:text-white'
+                }`}
+              >
+                <span>Biometric Audit &amp; Collisions</span>
+                {auditData?.collisions?.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-red-950 text-red-400 border border-red-800">
+                    {auditData.collisions.length}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -802,6 +827,163 @@ export default function AdminAnalytics() {
                     </table>
                   </div>
                 )}
+              </section>
+            )}
+
+            {/* ── TAB 3: BIOMETRIC AUDIT & COLLISION LOGS ───────────────────── */}
+            {activeTab === 'biometrics' && (
+              <section className="space-y-6">
+                {/* Overview Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-[#888888] mb-2">
+                      <span className="text-xs uppercase font-mono tracking-wider font-semibold">Enrolled Faces</span>
+                      <span className="material-symbols-outlined text-lg text-emerald-400">face</span>
+                    </div>
+                    <div className="text-3xl font-extrabold text-white font-mono">
+                      {auditData?.total_enrolled ?? '—'}
+                    </div>
+                    <p className="text-[11px] text-[#666666] mt-1 font-mono">Unique student biometric vectors stored</p>
+                  </div>
+
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-[#888888] mb-2">
+                      <span className="text-xs uppercase font-mono tracking-wider font-semibold">Collisions Intercepted</span>
+                      <span className="material-symbols-outlined text-lg text-red-400">security</span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-extrabold text-red-400 font-mono">
+                        {auditData?.collisions?.length || 0}
+                      </span>
+                      <span className="text-xs text-[#888888]">attempts blocked</span>
+                    </div>
+                    <p className="text-[11px] text-[#666666] mt-1 font-mono">Duplicate or unauthorized registration blocks</p>
+                  </div>
+
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-[#888888] mb-2">
+                      <span className="text-xs uppercase font-mono tracking-wider font-semibold">Distance Threshold</span>
+                      <span className="material-symbols-outlined text-lg text-[#4fc3ff]">straighten</span>
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#4fc3ff] font-mono">
+                      &lt; 0.38
+                    </div>
+                    <p className="text-[11px] text-[#666666] mt-1 font-mono">Strict Euclidean threshold for collisions</p>
+                  </div>
+
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-[#888888] mb-2">
+                      <span className="text-xs uppercase font-mono tracking-wider font-semibold">Admin Escalation</span>
+                      <span className="material-symbols-outlined text-lg text-purple-400">mail</span>
+                    </div>
+                    <div className="text-xs font-bold text-white font-mono truncate" title="marminamina3@gmail.com">
+                      marminamina3@gmail.com
+                    </div>
+                    <p className="text-[11px] text-[#666666] mt-1 font-mono">Primary administrative tracing contact</p>
+                  </div>
+                </div>
+
+                {/* Collisions Log Table */}
+                <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <span className="material-symbols-outlined text-red-400 text-lg">warning</span>
+                        Biometric Collision &amp; Impersonation Intercept Log
+                      </h3>
+                      <p className="text-xs text-[#888888] mt-0.5">
+                        Logged whenever a student registration attempts to use a facial biometric vector that matches an existing account
+                      </p>
+                    </div>
+                  </div>
+
+                  {!auditData?.collisions || auditData.collisions.length === 0 ? (
+                    <div className="py-12 text-center text-[#666666] font-mono text-xs border border-dashed border-[#1e1e1e] rounded-xl bg-[#0d0d0d]/40">
+                      <span className="material-symbols-outlined text-3xl text-emerald-500/40 mb-2 block">verified_user</span>
+                      No biometric collisions detected yet. All registered faces are unique.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-[#1c1c1c] text-[#777777] font-mono uppercase text-[10px] tracking-wider">
+                            <th className="py-3 px-3">Timestamp (UTC)</th>
+                            <th className="py-3 px-3">Attempted Account</th>
+                            <th className="py-3 px-3">Matched Existing Account</th>
+                            <th className="py-3 px-3">Distance Score</th>
+                            <th className="py-3 px-3">Action</th>
+                            <th className="py-3 px-3 text-right">Escalation</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#141414] font-mono">
+                          {auditData.collisions.map((col, idx) => (
+                            <tr key={idx} className="hover:bg-red-950/10 transition-colors">
+                              <td className="py-3 px-3 text-[#aaaaaa] text-[11px]">
+                                {col.timestamp ? new Date(col.timestamp).toLocaleString() : '—'}
+                              </td>
+                              <td className="py-3 px-3 font-semibold text-white">
+                                {col.attempted_user || 'Unknown'}
+                              </td>
+                              <td className="py-3 px-3 text-red-400 font-bold">
+                                {col.matched_user || 'Unknown'}
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="px-2 py-0.5 rounded bg-red-950/80 text-red-300 border border-red-800 text-[10px] font-bold">
+                                  {col.min_distance} (&lt; 0.38)
+                                </span>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800 text-[10px] font-bold uppercase">
+                                  {col.action || 'BLOCKED'}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 text-right text-[#888888] text-[11px]">
+                                {col.contact_email || 'marminamina3@gmail.com'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Enrolled Accounts Grid */}
+                <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-400 text-lg">badge</span>
+                        Registered Biometric Encodings
+                      </h3>
+                      <p className="text-xs text-[#888888] mt-0.5">
+                        Students currently registered with 128-dimensional facial embeddings for instant mirror unlock
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono text-[#888888] bg-[#141414] px-2.5 py-1 rounded-lg border border-[#222222]">
+                      {auditData?.enrolled_users?.length || 0} enrolled
+                    </span>
+                  </div>
+
+                  {!auditData?.enrolled_users || auditData.enrolled_users.length === 0 ? (
+                    <div className="py-8 text-center text-[#666666] font-mono text-xs">
+                      No facial encodings found in server storage.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5 font-mono text-xs">
+                      {auditData.enrolled_users.map((uid, idx) => (
+                        <div
+                          key={idx}
+                          className="px-3 py-2 rounded-xl bg-[#121212] border border-[#222222] text-[#cccccc] flex items-center gap-2 overflow-hidden"
+                          title={uid}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                          <span className="truncate">{uid}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </section>
             )}
           </>

@@ -385,18 +385,22 @@ def write_face_status(state, detected, faces_count,
     os.replace() never crosses a filesystem boundary (which causes WinError 5
     when antivirus or another process briefly holds the handle).
     """
-    # ── Preserve active barcode session when no face is detected ─────────
-    if state in (STATE_IDLE, STATE_GUEST) and os.path.exists(FACE_DATA_FILE):
+    # ── Preserve active barcode session when barcode was scanned ─────────
+    existing_is_barcode = False
+    if os.path.exists(FACE_DATA_FILE):
         try:
             with open(FACE_DATA_FILE) as f:
                 cur = json.load(f)
             # Hold active barcode login session for up to 300s
             if cur.get('auth_method') == 'barcode' and (time.time() - cur.get('timestamp', 0) < 300.0):
-                return
+                existing_is_barcode = True
+                if state in (STATE_IDLE, STATE_GUEST):
+                    return
         except Exception:
             pass
 
     is_recognised = (state == STATE_USER)
+    final_auth = "barcode" if existing_is_barcode else (auth_method if is_recognised else "")
     data = {
         "state":         state,
         "detected":      detected,
@@ -409,7 +413,7 @@ def write_face_status(state, detected, faces_count,
         "widgets":       session_widgets if is_recognised else [],
         "in_grace":      in_grace,
         # How this session was established, so the mirror can label it.
-        "auth_method":   auth_method if is_recognised else "",
+        "auth_method":   final_auth,
         "server_online": bool(server_online),
         "server_status": "online" if server_online else "offline",
     }

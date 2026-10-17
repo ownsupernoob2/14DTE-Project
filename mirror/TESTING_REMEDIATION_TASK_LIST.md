@@ -226,15 +226,27 @@ Based on your Day 1 testing, we can evolve the A/B experiment from a subtle text
 
 ---
 
-## 4. Implementation Checklist for Friday Testing
+## 4. Implementation Checklist Status
 
-- [ ] **Step 1:** Relocate mirror away from direct window backlight.
-- [ ] **Step 2:** Deploy server fix for `/api/faces/train` (Python virtual environment path).
-- [ ] **Step 3:** Fix Dashboard timetable link redirect (`navigate('/timetable')`).
-- [ ] **Step 4:** Fix telemetry barcode session attribution in `smart_mirror_pro.py`.
-- [ ] **Step 5:** Add floating hand cursor dot to PySide6 mirror overlay.
-- [ ] **Step 6:** Add open-palm vertical swipe detection to `gesture_engine.py`.
-- [ ] **Step 7:** Add anti-touchscreen tutorial overlay (❌ Touch / ✔️ Air).
-- [ ] **Step 8:** Add interactive modal for notices on web and mirror.
-- [ ] **Step 9:** Add step-by-step KAMAR ICS guide with diagrams.
-- [ ] **Step 10:** Add Interval & Lunch indicators to mirror timetable.
+### Software Tasks Completed & Deployed
+- [x] **Step 2:** Fix `/api/faces/train` 500 error & add biometric collision detection (< 0.38 distance).
+- [x] **Step 3:** Fix Dashboard timetable link redirect (`navigate('/timetable')`).
+- [x] **Step 4:** Fix telemetry barcode session attribution in `smart_mirror_pro.py` & `face_recognize.py`.
+- [x] **Step 5:** Add floating hand cursor dot to PySide6 mirror overlay (Variant B).
+- [x] **Step 6:** Add open-palm vertical swipe detection to `gesture_engine.py`.
+- [x] **Step 7:** Add anti-touchscreen tutorial overlay (❌ Touch / ✔️ Air) and instant skip on gesture.
+- [x] **Step 8:** Add interactive modal for notices with AI summary on web (`DailyNoticesWidget.jsx`) and mirror (`notices_widget.py`).
+- [x] **Step 9:** Add step-by-step KAMAR ICS guide with visual step cards in `TimetableWidget.jsx`.
+- [x] **Step 10:** Add Interval (10:30–10:55 AM) & Lunch (12:45–1:30 PM) break countdowns & indicators to web and mirror.
+- [x] **Step 11:** Gate face registration behind student ID barcode link on web (`FaceCaptureModal.jsx`) and mirror unsure face prompt.
+- [x] **Step 12:** Add Biometric Collisions & Enrolled Faces Audit tab to Admin Analytics for `marminamina3@gmail.com`.
+- [x] **Step 13:** Fix Notices "Apply Changes" visual feedback & add Timetable display customization toggles.
+- [x] **Step 14:** Add King's Library & Book Loans tracker with overdue alerts.
+- [x] **Step 15:** Implement functional Theme switcher (OLED, Cyber Cyan, Midnight) and Language switcher (English / Te Reo Māori).
+
+### Physical / Hardware Actions Checklist (User Action Required)
+- [ ] **Physical Step 1: Mirror Relocation** — Move mirror away from direct window backlight onto a shaded corridor wall or perpendicular to windows so facial features are not crushed into silhouettes.
+- [ ] **Physical Step 2: Display Brightness** — Set monitor hardware brightness and contrast to 100% to maximize luminance through the two-way mirror glass.
+- [ ] **Physical Step 3: Barcode Slot Chamfering** — Chamfer/file the wooden barcode cutout slot with a ruler or file to ensure student ID cards slide flat and flush at the 5–8 cm focal plane.
+- [ ] **Physical Step 4: KAMAR Photos** — Capture and drop real King's High School KAMAR portal screenshots into `web/public/assets/kamar/` to replace the illustrative diagrams.
+- [ ] **Physical Step 5: Wood Stain (Optional)** — Apply walnut or satin black wood finish to the timber frame to match the black glass aesthetic.

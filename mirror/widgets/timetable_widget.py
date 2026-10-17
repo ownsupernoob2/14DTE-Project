@@ -264,7 +264,39 @@ class TimetableWidget(QFrame):
                        next((pi for pi in processed if not pi['is_done']), None) or \
                        (processed[0] if processed else None)
 
-        if current_info:
+        is_interval = (630 <= now_minutes < 655)
+        is_lunch = (765 <= now_minutes < 810)
+
+        if is_interval:
+            self.eyebrow_lbl.setText("INTERVAL (RECESS)")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #f59e0b; text-transform: uppercase;"
+            )
+            self.subject_lbl.setText("Morning Interval")
+            self.room_v.setText("Campus")
+            self.ends_v.setText("10:55am")
+            rem_break = max(1, 655 - now_minutes)
+            self.left_v.setText(f"{rem_break}m")
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #f59e0b;")
+        elif is_lunch:
+            self.eyebrow_lbl.setText("LUNCHTIME BREAK")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #f59e0b; text-transform: uppercase;"
+            )
+            self.subject_lbl.setText("Lunch Break")
+            self.room_v.setText("Courtyard / Hall")
+            self.ends_v.setText("1:30pm")
+            rem_break = max(1, 810 - now_minutes)
+            self.left_v.setText(f"{rem_break}m")
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #f59e0b;")
+        elif current_info:
+            self.eyebrow_lbl.setText("CURRENT CLASS")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
+            )
             p = current_info['raw']
             subj = p.get('subject') or p.get('summary') or '13DTE (4)'
             room = p.get('room') or p.get('location') or 'T5'
@@ -276,15 +308,20 @@ class TimetableWidget(QFrame):
             self.ends_v.setText(ends)
             self.left_v.setText(f"{rem}m")
             if rem <= 5:
-                self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ff4d4d;")
+                self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ff4d4d;")
             else:
-                self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
+                self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
         else:
+            self.eyebrow_lbl.setText("CURRENT CLASS")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
+            )
             self.subject_lbl.setText("13DTE (4)")
             self.room_v.setText("T5")
             self.ends_v.setText("10:00am")
             self.left_v.setText("68m")
-            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 28px; font-weight: 700; color: #ffffff;")
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
 
         # Next class (Compact Mode)
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
@@ -316,6 +353,20 @@ class TimetableWidget(QFrame):
                 {'raw': {'subject': '13MAT (1)', 'room': 'M2', 'period': 'P3'}, 'start_formatted': '11:30am', 'is_now': False, 'is_done': False},
                 {'raw': {'subject': '13PHY (2)', 'room': 'S4', 'period': 'P4'}, 'start_formatted': '1:30pm', 'is_now': False, 'is_done': False},
             ]
+
+            # Add school break reminder in full schedule
+            interval_row = QWidget(self.schedule_box)
+            interval_row.setStyleSheet("background: rgba(245, 158, 11, 0.08); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);")
+            ir_lay = QHBoxLayout(interval_row)
+            ir_lay.setContentsMargins(12, 6, 12, 6)
+            ir_tag = QLabel("BREAK", interval_row)
+            ir_tag.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; color: #f59e0b;")
+            ir_name = QLabel("Morning Interval (10:30am – 10:55am)", interval_row)
+            ir_name.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef3c7;")
+            ir_lay.addWidget(ir_tag)
+            ir_lay.addWidget(ir_name)
+            ir_lay.addStretch(1)
+            self.schedule_lay.addWidget(interval_row)
 
             for idx, pi in enumerate(sched_periods):
                 raw = pi['raw']
@@ -352,5 +403,20 @@ class TimetableWidget(QFrame):
 
                 r_lay.addStretch(1)
                 self.schedule_lay.addWidget(row_widget)
+
+                # Insert lunch row after P3 (approx idx == 1 or 2)
+                if idx == 1:
+                    lunch_row = QWidget(self.schedule_box)
+                    lunch_row.setStyleSheet("background: rgba(245, 158, 11, 0.08); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);")
+                    lr_lay = QHBoxLayout(lunch_row)
+                    lr_lay.setContentsMargins(12, 6, 12, 6)
+                    lr_tag = QLabel("BREAK", lunch_row)
+                    lr_tag.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; color: #f59e0b;")
+                    lr_name = QLabel("Lunchtime (12:45pm – 1:30pm)", lunch_row)
+                    lr_name.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef3c7;")
+                    lr_lay.addWidget(lr_tag)
+                    lr_lay.addWidget(lr_name)
+                    lr_lay.addStretch(1)
+                    self.schedule_lay.addWidget(lunch_row)
 
 
