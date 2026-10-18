@@ -30,17 +30,13 @@ pkill -f auto_updater.sh  2>/dev/null || true
 sleep 2
 
 # ── Set up v4l2loopback device (/dev/video10) ─────────────────────────────
+# exclusive_caps=0 allows multiple processes (face_recognize & gesture_engine) to read concurrently
 sudo modprobe -r v4l2loopback 2>/dev/null || true
 sleep 1
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam1" exclusive_caps=1
+sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam1" exclusive_caps=0
 
 # ── Pipe rpicam-vid → ffmpeg → /dev/video10 ─────────────────────────────────
-rpicam-vid -t 0 --nopreview --codec yuv420 \
-  --metering spot \
-  --ev 2.0 \
-  --shutter 10000 \
-  --gain 4.0 \
-  -o - --width 640 --height 480 --framerate 30 | \
+rpicam-vid -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 | \
 ffmpeg -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
   -f v4l2 -preset ultrafast -tune zerolatency -fflags nobuffer -flags low_delay /dev/video10 &
 
