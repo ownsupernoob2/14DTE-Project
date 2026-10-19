@@ -26,6 +26,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import socket
 import threading
@@ -98,6 +99,57 @@ def classify_region(x):
     if x > REGION_RIGHT_EDGE:
         return REGION_RIGHT
     return REGION_CENTER
+
+
+def _parse_camera_target(target):
+    """Return integer index if target is an int or '/dev/videoN' / 'N', else raw target."""
+    if isinstance(target, int):
+        return target
+    if isinstance(target, str):
+        target_str = target.strip()
+        m = re.match(r'^/dev/video(\d+)$', target_str)
+        if m:
+            return int(m.group(1))
+        if target_str.isdigit():
+            return int(target_str)
+    return target
+
+
+def _try_open_capture(target):
+    """Open VideoCapture trying index (with V4L2 / DirectShow) or string path."""
+    idx = _parse_camera_target(target)
+
+    # 1. If target resolves to an integer index:
+    if isinstance(idx, int):
+        if sys.platform == 'win32':
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
+        else:
+            # On Linux: OpenCV's V4L2 backend requires an integer index (e.g. 10 for /dev/video10).
+            # Passing string '/dev/video10' to CAP_V4L2 causes cap.cpp:215 "can't be used to capture by name".
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
+
+    # 2. If target is a string (or index attempts failed), try string name directly
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    return None
 
 
 class GestureEngine:
@@ -513,28 +565,34 @@ class GestureEngine:
             print("[GESTURE] No hand tracker — exiting.")
             return
 
-        # On Windows, DirectShow (CAP_DSHOW) avoids MSMF multi-frame internal queue latency
-        if sys.platform == "win32" and isinstance(self.camera_id, int):
-            cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
-            if not cap.isOpened():
-                cap = cv2.VideoCapture(self.camera_id)
-        elif isinstance(self.camera_id, str) and self.camera_id.startswith("/dev/video"):
-            cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
-        else:
-            cap = cv2.VideoCapture(self.camera_id)
+        # Camera initialization with index parsing and retries for v4l2loopback
+        max_attempts = 10 if (isinstance(self.camera_id, str) and "/dev/video" in self.camera_id) else 3
+        cap = None
+        for attempt in range(1, max_attempts + 1):
+            cap = _try_open_capture(self.camera_id)
+            if cap is not None and cap.isOpened():
+                # 480x360 MJPG: good balance between speed and pinch-detection accuracy.
+                # MediaPipe needs enough pixels to measure the small thumb-index gap reliably;
+                # 320x240 was too noisy for that. BUFFERSIZE=1 always returns the newest frame.
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FPS, 30)
 
-        # 480x360 MJPG: good balance between speed and pinch-detection accuracy.
-        # MediaPipe needs enough pixels to measure the small thumb-index gap reliably;
-        # 320x240 was too noisy for that. BUFFERSIZE=1 always returns the newest frame.
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_FPS, 30)
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    break
+                cap.release()
+                cap = None
 
-        if not cap.isOpened():
+            if attempt < max_attempts:
+                time.sleep(1.0)
+
+        if cap is None or not cap.isOpened():
             print(f"[GESTURE] Could not open camera {self.camera_id!r}. Exiting.")
-            cap.release()
+            if cap is not None:
+                cap.release()
             return
 
         print(f"[GESTURE] Running on camera {self.camera_id}. "

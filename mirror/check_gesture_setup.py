@@ -11,6 +11,7 @@ virtual camera loopback, and live hand tracking:
 """
 
 import os
+import re
 import sys
 import time
 import platform
@@ -176,11 +177,55 @@ if is_rpi:
     except Exception:
         pass
 
+def _parse_camera_target(target):
+    if isinstance(target, int):
+        return target
+    if isinstance(target, str):
+        target_str = target.strip()
+        m = re.match(r'^/dev/video(\d+)$', target_str)
+        if m:
+            return int(m.group(1))
+        if target_str.isdigit():
+            return int(target_str)
+    return target
+
+
+def _try_open_capture(target):
+    idx = _parse_camera_target(target)
+    if isinstance(idx, int):
+        if sys.platform == 'win32':
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
+        else:
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target)
+        if cap.isOpened():
+            return cap
+        cap.release()
+    return None
+
+
 # Try opening camera if cv2 is available
 if cv2 is not None:
     print(f"\nTesting camera capture on {target_camera!r}...")
     try:
-        cap = cv2.VideoCapture(target_camera)
+        cap = _try_open_capture(target_camera)
+        if cap is None:
+            cap = cv2.VideoCapture(target_camera)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         opened = cap.isOpened()
@@ -227,7 +272,9 @@ if live_requested and cv2 is not None and mp is not None and os.path.exists(mode
     print("  Starting 10-Second Live Tracking Test (Wave your hand!)...")
     print("=" * 65)
     try:
-        cap = cv2.VideoCapture(target_camera)
+        cap = _try_open_capture(target_camera)
+        if cap is None:
+            cap = cv2.VideoCapture(target_camera)
         options = mp_vision.GestureRecognizerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=model_path),
             running_mode=mp_vision.RunningMode.VIDEO,

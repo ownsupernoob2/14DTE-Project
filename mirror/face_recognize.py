@@ -24,6 +24,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -346,28 +347,87 @@ def verify_barcode_worker(code, on_result):
             barcode_state["busy"] = False
 
 
-def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-    if rpi_mode:
-        device = "/dev/video10"
-        print(f"[CAMERA] RPi mode — opening {device} via V4L2", flush=True)
-        cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
-    else:
-        if os.name == 'nt':
-            cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+def _parse_camera_target(target):
+    """Return integer index if target is an int or '/dev/videoN' / 'N', else raw target."""
+    if isinstance(target, int):
+        return target
+    if isinstance(target, str):
+        target_str = target.strip()
+        m = re.match(r'^/dev/video(\d+)$', target_str)
+        if m:
+            return int(m.group(1))
+        if target_str.isdigit():
+            return int(target_str)
+    return target
+
+
+def _try_open_capture(target):
+    """Open VideoCapture trying index (with V4L2 / DirectShow) or string path."""
+    idx = _parse_camera_target(target)
+
+    # 1. If target resolves to an integer index:
+    if isinstance(idx, int):
+        if sys.platform == 'win32':
+            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
         else:
-            cap = cv2.VideoCapture(camera_id)
-        print(f"[CAMERA] Desktop mode — opening camera index {camera_id}", flush=True)
+            # On Linux: OpenCV's V4L2 backend requires an integer index (e.g. 10 for /dev/video10).
+            # Passing string '/dev/video10' to CAP_V4L2 causes cap.cpp:215 "can't be used to capture by name".
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if cap.isOpened():
+                return cap
+            cap.release()
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                return cap
+            cap.release()
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # 2. If target is a string (or index attempts failed), try string name directly
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target)
+        if cap.isOpened():
+            return cap
+        cap.release()
 
-    if not cap.isOpened():
-        print(f"[ERROR] Could not open camera {device if rpi_mode else camera_id}.", flush=True)
-        sys.exit(1)
+    return None
 
-    print("[CAMERA] Opened successfully.", flush=True)
-    return cap
+
+def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
+    target = "/dev/video10" if rpi_mode else camera_id
+    mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
+    print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
+
+    max_attempts = 10 if rpi_mode else 3
+    cap = None
+    for attempt in range(1, max_attempts + 1):
+        cap = _try_open_capture(target)
+        if cap is not None and cap.isOpened():
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            # Test frame read — v4l2loopback requires ffmpeg actively writing before read succeeds
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                print(f"[CAMERA] Opened successfully on attempt {attempt}.", flush=True)
+                return cap
+            cap.release()
+            cap = None
+
+        if attempt < max_attempts:
+            print(f"[CAMERA] Waiting for camera {target} to become ready (attempt {attempt}/{max_attempts})...", flush=True)
+            time.sleep(1.0)
+
+    print(f"[ERROR] Could not open camera {target} after {max_attempts} attempts.", flush=True)
+    if rpi_mode:
+        print("[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding /dev/video10.", flush=True)
+    sys.exit(1)
 
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
