@@ -135,7 +135,7 @@ except Exception as e:
 
 # ── 6. Check Camera Pipeline & Devices ───────────────────────────────────────
 print("\nChecking Camera Pipeline & Devices...")
-is_rpi = (os_name == "Linux" and ("arm" in arch or "aarch" in arch or os.path.exists("/dev/video10")))
+is_rpi = (os_name == "Linux" and ("arm" in arch or "aarch" in arch or os.path.exists("/dev/video20") or os.path.exists("/dev/video10")))
 
 camera_arg = None
 for i, arg in enumerate(sys.argv):
@@ -145,31 +145,37 @@ for i, arg in enumerate(sys.argv):
 if camera_arg is not None:
     target_camera = int(camera_arg) if camera_arg.isdigit() else camera_arg
 elif is_rpi:
-    target_camera = "/dev/video10"
+    if os.path.exists("/dev/video20"):
+        target_camera = "/dev/video20"
+    elif os.path.exists("/dev/video10"):
+        target_camera = "/dev/video10"
+    else:
+        target_camera = "/dev/video20"
 else:
     target_camera = 0
 
 print(f"{INFO} Target camera: {target_camera}")
 
 if is_rpi:
-    if os.path.exists("/dev/video10"):
-        print(f"{PASS} Virtual camera device /dev/video10 exists.")
+    loopback_dev = str(target_camera) if str(target_camera).startswith("/dev/video") else "/dev/video20"
+    if os.path.exists(loopback_dev):
+        print(f"{PASS} Virtual camera device {loopback_dev} exists.")
     else:
-        print(f"{WARN} /dev/video10 does not exist yet.")
+        print(f"{WARN} {loopback_dev} does not exist yet.")
         print("       (This device is created by start_smart_mirror.sh using v4l2loopback).")
-        warnings.append("/dev/video10 virtual camera not found. Run start_smart_mirror.sh first.")
+        warnings.append(f"{loopback_dev} virtual camera not found. Run start_smart_mirror.sh first.")
 
     # Check for rpicam-vid and ffmpeg processes
     try:
         ps_out = subprocess.check_output(["ps", "aux"], text=True)
-        if "rpicam-vid" in ps_out:
-            print(f"{PASS} rpicam-vid process is running.")
+        if "rpicam-vid" in ps_out or "libcamera-vid" in ps_out:
+            print(f"{PASS} rpicam-vid / libcamera-vid process is running.")
         else:
-            print(f"{WARN} rpicam-vid is not currently running.")
-        if "ffmpeg" in ps_out and "video10" in ps_out:
-            print(f"{PASS} ffmpeg loopback pipe to /dev/video10 is running.")
+            print(f"{WARN} rpicam-vid / libcamera-vid is not currently running.")
+        if "ffmpeg" in ps_out and ("video20" in ps_out or "video10" in ps_out):
+            print(f"{PASS} ffmpeg loopback pipe to virtual camera is running.")
         else:
-            print(f"{WARN} ffmpeg /dev/video10 feed is not currently running.")
+            print(f"{WARN} ffmpeg virtual camera feed is not currently running.")
         if "face_recognize" in ps_out:
             print(f"{INFO} face_recognize daemon is currently running.")
         if "gesture_engine" in ps_out:
@@ -202,6 +208,7 @@ def _try_open_capture(target):
             if cap.isOpened():
                 return cap
             cap.release()
+            return None
         else:
             cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
             if cap.isOpened():
@@ -212,6 +219,10 @@ def _try_open_capture(target):
                 return cap
             cap.release()
     if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+        if cap.isOpened():
+            return cap
+        cap.release()
         cap = cv2.VideoCapture(target)
         if cap.isOpened():
             return cap

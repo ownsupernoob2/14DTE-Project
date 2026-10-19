@@ -573,9 +573,9 @@ class TestFlip(unittest.TestCase):
             os.environ['GESTURE_FLIP'] = value
             self.assertFalse(default_flip(), value)
 
-    def test_default_flip_defaults_to_false(self):
-        # By default, frame mirroring is disabled so physical left moves cursor left.
-        self.assertFalse(default_flip())
+    def test_default_flip_defaults_to_true(self):
+        # By default, frame mirroring is enabled so moving hand left moves left on the mirror screen.
+        self.assertTrue(default_flip())
 
     def test_the_flags_override_the_default(self):
         self.assertTrue(gesture_engine.parse_args(['--flip'])[2])
