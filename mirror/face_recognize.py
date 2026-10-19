@@ -220,7 +220,7 @@ def verify_face_worker(frame, on_result):
         total_faces = len(face_locations)
 
         if total_faces == 0:
-            print("[FAISS] No face detected in frame.")
+            print("[FAISS] No face detected in frame.", flush=True)
             on_result(None, [], None, server_online)
             return
 
@@ -347,33 +347,27 @@ def verify_barcode_worker(code, on_result):
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-    """
-    Open the right camera source.
-
-    --rpi   → /dev/video10  (the v4l2loopback virtual device fed by rpicam-vid)
-    default → webcam index  (camera_id, e.g. 4 on the dev Windows machine)
-    """
     if rpi_mode:
         device = "/dev/video10"
-        print(f"[CAMERA] RPi mode — opening {device}")
-        cap = cv2.VideoCapture(device)
+        print(f"[CAMERA] RPi mode — opening {device} via V4L2", flush=True)
+        cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
     else:
         if os.name == 'nt':
             cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
         else:
             cap = cv2.VideoCapture(camera_id)
-        print(f"[CAMERA] Desktop mode — opening camera index {camera_id}")
+        print(f"[CAMERA] Desktop mode — opening camera index {camera_id}", flush=True)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
-        print(f"[ERROR] Could not open camera.")
+        print(f"[ERROR] Could not open camera {device if rpi_mode else camera_id}.", flush=True)
         sys.exit(1)
 
-    print("[CAMERA] Opened successfully.")
+    print("[CAMERA] Opened successfully.", flush=True)
     return cap
-
 
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
