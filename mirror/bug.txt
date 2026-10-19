@@ -3,3 +3,7 @@ pgrep -a ffmpeg
 cat ffmpeg.log
 
 v4l2-ctl -d /dev/video42 --all
+
+
+rm -f camera_pipeline.log
+tail -n 20 face_daemon.log gesture_daemon.log ffmpeg.log rpicam.log
