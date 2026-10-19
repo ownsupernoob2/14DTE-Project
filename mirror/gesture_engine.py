@@ -53,7 +53,7 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "gesture_recognizer.task")
 
 # The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds (/dev/video20).
-RPI_CAMERA = "/dev/video20"
+RPI_CAMERA = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
 
 
 def default_flip():
