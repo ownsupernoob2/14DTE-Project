@@ -35,10 +35,15 @@ sudo modprobe -r v4l2loopback 2>/dev/null || true
 sleep 1
 sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam1" exclusive_caps=0
 
-# ── Pipe rpicam-vid → ffmpeg → /dev/video10 ─────────────────────────────────
-rpicam-vid -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 | \
+# ── Pipe rpicam-vid / libcamera-vid → ffmpeg → /dev/video10 ─────────────────
+RPICAM_BIN="rpicam-vid"
+if ! command -v rpicam-vid &>/dev/null && command -v libcamera-vid &>/dev/null; then
+    RPICAM_BIN="libcamera-vid"
+fi
+
+$RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 2>> "$APP_DIR/camera_pipeline.log" | \
 ffmpeg -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
-  -f v4l2 -preset ultrafast -tune zerolatency -fflags nobuffer -flags low_delay /dev/video10 &
+  -f v4l2 -preset ultrafast -tune zerolatency -fflags nobuffer -flags low_delay /dev/video10 > "$APP_DIR/camera_pipeline.log" 2>&1 &
 
 echo "[START] Camera pipeline started. Waiting 5s..."
 sleep 5

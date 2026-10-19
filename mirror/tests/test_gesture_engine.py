@@ -536,6 +536,13 @@ class TestCameraArgs(unittest.TestCase):
         self.assertFalse(gesture_engine.parse_args([])[1])
         self.assertTrue(gesture_engine.parse_args(['--exit-with-parent'])[1])
 
+    def test_parse_camera_target(self):
+        self.assertEqual(gesture_engine._parse_camera_target("/dev/video10"), 10)
+        self.assertEqual(gesture_engine._parse_camera_target("/dev/video0"), 0)
+        self.assertEqual(gesture_engine._parse_camera_target(4), 4)
+        self.assertEqual(gesture_engine._parse_camera_target("4"), 4)
+        self.assertEqual(gesture_engine._parse_camera_target("rtsp://stream"), "rtsp://stream")
+
 
 class TestFlip(unittest.TestCase):
     """Which physical side of you drives which panel.
