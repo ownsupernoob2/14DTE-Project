@@ -1,0 +1,8 @@
+# 1. Kill any stale processes
+pkill -f face_recognize 2>/dev/null || true
+
+# 2. Run face_recognize directly with unbuffered output
+~/mirror-venv/bin/python -u face_recognize.py --rpi
+
+
+tail -f face_daemon.log gesture_daemon.log mirror.log
