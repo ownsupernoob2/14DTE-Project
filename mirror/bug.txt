@@ -1,3 +1,96 @@
+spi@raspi:~/14DTE-Project/mirror $ tail -n 20 face_daemon.log gesture_daemon.log ffmpeg.log rpicam.log
+==> face_daemon.log <==
+  File "/home/raspi/14DTE-Project/mirror/face_recognize.py", line 416
+    mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
+                                                                                                    ^
+IndentationError: unindent does not match any outer indentation level
+
+==> gesture_daemon.log <==
+[ WARN:0@10.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@10.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@10.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@10.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@10.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@10.015] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[ WARN:0@11.016] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@11.016] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@11.016] global cap.cpp:215 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+[ WARN:0@11.017] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.018] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.019] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[GESTURE] Could not open camera '/dev/video42'. Exiting.
+
+==> ffmpeg.log <==
+
+==> rpicam.log <==
+[0:54:25.992722408] [11794]  INFO Camera camera_manager.cpp:340 libcamera v0.7.2+rpt20261009
+[0:54:26.006706167] [11803]  INFO RPI pisp.cpp:725 libpisp version v1.7.0 07-08-2026 (09:22:13)
+[0:54:26.020923428] [11803]  INFO IPAProxy ipa_proxy.cpp:184 Using tuning file /usr/share/libcamera/ipa/rpi/pisp/imx708.json
+[0:54:26.031638619] [11803]  INFO Camera camera_manager.cpp:223 Adding camera '/base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a' for pipeline handler rpi/pisp
+[0:54:26.031682748] [11803]  INFO RPI pisp.cpp:1186 Registered camera /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a to CFE device /dev/media0 and ISP device /dev/media1 using PiSP variant BCM2712_D0
+[0:54:26.074422253] [11803]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc30
+[0:54:26.074466734] [11803]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc12
+Mode selection for 640:480:12:P(30)
+    SRGGB10_CSI2P,1536x864/120.135 - Score: 1486.67
+    SRGGB10_CSI2P,2304x1296/56.0255 - Score: 1786.67
+    SRGGB10_CSI2P,4608x2592/14.3536 - Score: 33979.5
+Stream configuration adjusted
+[0:54:26.074614550] [11794]  INFO Camera camera.cpp:1216 configuring streams: (0) 640x480-YUV420/sYCC (1) 1536x864-BGGR_PISP_COMP1/RAW
+[0:54:26.074678087] [11803]  INFO RPI pisp.cpp:1502 Sensor: /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a - Selected sensor format: 1536x864-SBGGR10_1X10/RAW - Selected CFE format: 1536x864-PC1B/RAW
+
+Driver Info:
+	Driver name      : v4l2 loopback
+	Card type        : VirtualCam1
+	Bus info         : platform:v4l2loopback-042
+	Driver version   : 6.18.50
+	Capabilities     : 0x85200001
+		Video Capture
+		Read/Write
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x05200001
+		Video Capture
+		Read/Write
+		Streaming
+		Extended Pix Format
+Priority: 2
+Video input : 0 (loopback: ok)
+Format Video Capture:
+	Width/Height      : 640/480
+	Pixel Format      : 'YUYV' (YUYV 4:2:2)
+	Field             : None
+	Bytes per Line    : 1280
+	Size Image        : 614400
+	Colorspace        : sRGB
+	Transfer Function : Default (maps to sRGB)
+	YCbCr/HSV Encoding: Default (maps to ITU-R 601)
+	Quantization      : Default (maps to Limited Range)
+	Flags             : 
+Streaming Parameters Video Capture:
+	Capabilities     : timeperframe
+	Frames per second: 30.000 (30/1)
+	Read buffers     : 2
+
+User Controls
+
+                    keep_format 0x0098f900 (bool)   : default=0 value=0 flags=has-min-max
+              sustain_framerate 0x0098f901 (bool)   : default=0 value=0 flags=has-min-max
+                        timeout 0x0098f902 (int)    : min=0 max=100000 step=1 default=0 value=0 flags=has-min-max
+               timeout_image_io 0x0098f903 (button) : value=0 flags=write-only, execute-on-write
+raspi@raspi:~/14DTE-Project/mirror $ rm -f camera_pipeline.log
+raspi@raspi:~/14DTE-Project/mirror $ pgrep -a ffmpeg
+
+cat ffmpeg.log
+
+11795 ffmpeg -hide_banner -loglevel warning -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - -pix_fmt yuyv422 -f v4l2 /dev/video42
 pgrep -a ffmpeg
 
 cat ffmpeg.log
