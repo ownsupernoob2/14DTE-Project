@@ -6,3 +6,21 @@ pkill -f face_recognize 2>/dev/null || true
 
 
 tail -f face_daemon.log gesture_daemon.log mirror.log
+for feedback tensors.
+W0000 00:00:1792444309.423988    3216 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1792444309.424126    3216 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+[ WARN:0@2.808] global cap.cpp:215 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+[GESTURE] Could not open camera '/dev/video10'. Exiting.
+
+==> mirror.log <==
+============================================================
+Smart Mirror — Face Recognition Daemon
+  Mode       : Raspberry Pi (rpicam → /dev/video10)
+  API        : https://api.smartmirror.me
+  IDLE after : 10.0s  |  GUEST grace: 1s  |  USER hold: 25.0s
+  Poll IDLE  : 1.5s  |  GUEST: 3.0s  |  USER: 5.0s
+  Status file: /tmp/face_status.json
+[CAMERA] RPi mode — opening /dev/video10 via V4L2
+[ WARN:0@4.282] global cap.cpp:215 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+[ERROR] Could not open camera /dev/video10.
+
