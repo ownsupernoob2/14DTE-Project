@@ -115,9 +115,10 @@ The Raspberry Pi runs the camera pipeline (`rpicam-vid` + `ffmpeg`), the face re
 ```
 1. Startup via start_smart_mirror.sh:
    - Kills any previous camera, face detection, UI, or updater processes.
-   - Sets up v4l2loopback virtual camera (/dev/video10).
+   - Sets up v4l2loopback virtual camera (/dev/video20).
    - Starts rpicam-vid -> ffmpeg camera pipeline.
    - Starts face_recognize.py --rpi.
+   - Starts gesture_engine.py --rpi --flip.
    - Starts smart_mirror_pro.py on DISPLAY=:0.
    - Spawns auto_updater.sh in the background.
 

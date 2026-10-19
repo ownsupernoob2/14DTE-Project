@@ -362,35 +362,46 @@ def _parse_camera_target(target):
 
 
 def _try_open_capture(target):
-    """Open VideoCapture trying index (with V4L2 / DirectShow) or string path."""
+    """Open VideoCapture trying index or string path across backends."""
     idx = _parse_camera_target(target)
 
-    # 1. If target resolves to an integer index:
-    if isinstance(idx, int):
-        if sys.platform == 'win32':
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                return cap
-            cap.release()
-            cap = cv2.VideoCapture(idx)
-            if cap.isOpened():
-                return cap
-            cap.release()
-        else:
-            # On Linux: OpenCV's V4L2 backend requires an integer index (e.g. 10 for /dev/video10).
-            # Passing string '/dev/video10' to CAP_V4L2 causes cap.cpp:215 "can't be used to capture by name".
-            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
-            if cap.isOpened():
-                return cap
-            cap.release()
-            cap = cv2.VideoCapture(idx)
-            if cap.isOpened():
-                return cap
-            cap.release()
+    # 1. On Windows: DirectShow
+    if sys.platform == 'win32' and isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            return cap
+        cap.release()
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            return cap
+        cap.release()
+        return None
 
-    # 2. If target is a string (or index attempts failed), try string name directly
+    # 2. On Linux:
+    # Try V4L2 by integer index first (OpenCV V4L2 backend requires index in many builds)
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try V4L2 by device path string (e.g. /dev/video20)
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try device string with default backend (e.g. GStreamer / FFmpeg)
     if isinstance(target, str):
         cap = cv2.VideoCapture(target)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try integer index with default backend
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx)
         if cap.isOpened():
             return cap
         cap.release()
@@ -399,7 +410,17 @@ def _try_open_capture(target):
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-    target = "/dev/video10" if rpi_mode else camera_id
+    if rpi_mode:
+        # Detect loopback device: prefer /dev/video20 (avoids bcm2835-codec collision), then /dev/video10
+        if os.path.exists("/dev/video20"):
+            target = "/dev/video20"
+        elif os.path.exists("/dev/video10"):
+            target = "/dev/video10"
+        else:
+            target = "/dev/video20"
+    else:
+        target = camera_id
+
     mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
     print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
 
@@ -426,7 +447,7 @@ def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
 
     print(f"[ERROR] Could not open camera {target} after {max_attempts} attempts.", flush=True)
     if rpi_mode:
-        print("[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding /dev/video10.", flush=True)
+        print(f"[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding {target}.", flush=True)
     sys.exit(1)
 
 def write_face_status(state, detected, faces_count,
@@ -513,7 +534,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Smart Mirror — Face Recognition Daemon")
     parser.add_argument('--rpi',       action='store_true',
-                        help="Raspberry Pi mode: read from /dev/video10 (v4l2loopback)")
+                        help="Raspberry Pi mode: read from /dev/video20 (v4l2loopback)")
     default_cam = int(os.environ.get('MIRROR_CAMERA_INDEX', '0'))
     parser.add_argument('--camera-id', default=default_cam, type=int,
                         help=f"Webcam index for desktop/dev mode (default: {default_cam})")
@@ -530,7 +551,7 @@ def main():
 
     print("=" * 60)
     print("Smart Mirror — Face Recognition Daemon")
-    print(f"  Mode       : {'Raspberry Pi (rpicam → /dev/video10)' if args.rpi else f'Desktop (camera {args.camera_id})'}")
+    print(f"  Mode       : {'Raspberry Pi (rpicam → loopback)' if args.rpi else f'Desktop (camera {args.camera_id})'}")
     print(f"  API        : {API_URL}")
     print(f"  IDLE after : {IDLE_TIMEOUT_SEC}s  |  GUEST grace: {GUEST_GRACE_SEC}s  "
           f"|  USER hold: {USER_HOLD_SEC}s")

@@ -52,16 +52,20 @@ GESTURE_STATUS_FILE = os.path.join(
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "gesture_recognizer.task")
 
-# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds.
-RPI_CAMERA = "/dev/video10"
+# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds (/dev/video20).
+RPI_CAMERA = "/dev/video20"
 
 
 def default_flip():
-    """Whether to mirror the frame, unless told otherwise."""
+    """Whether to mirror the frame, unless told otherwise.
+
+    Defaults to True so moving hand to user's left maps to mirror's left.
+    Can be overridden via GESTURE_FLIP environment variable or --no-flip flag.
+    """
     env = os.environ.get("GESTURE_FLIP")
     if env is not None:
         return env not in ("0", "false", "False", "no", "off", "")
-    return False
+    return True
 
 # ── Region boundaries ────────────────────────────────────────────────────────
 REGION_LEFT_EDGE  = 0.50
@@ -119,32 +123,43 @@ def _try_open_capture(target):
     """Open VideoCapture trying index (with V4L2 / DirectShow) or string path."""
     idx = _parse_camera_target(target)
 
-    # 1. If target resolves to an integer index:
-    if isinstance(idx, int):
-        if sys.platform == 'win32':
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                return cap
-            cap.release()
-            cap = cv2.VideoCapture(idx)
-            if cap.isOpened():
-                return cap
-            cap.release()
-        else:
-            # On Linux: OpenCV's V4L2 backend requires an integer index (e.g. 10 for /dev/video10).
-            # Passing string '/dev/video10' to CAP_V4L2 causes cap.cpp:215 "can't be used to capture by name".
-            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
-            if cap.isOpened():
-                return cap
-            cap.release()
-            cap = cv2.VideoCapture(idx)
-            if cap.isOpened():
-                return cap
-            cap.release()
+    # 1. On Windows: DirectShow
+    if sys.platform == 'win32' and isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            return cap
+        cap.release()
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            return cap
+        cap.release()
+        return None
 
-    # 2. If target is a string (or index attempts failed), try string name directly
+    # 2. On Linux:
+    # Try V4L2 by integer index first
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try V4L2 by device path string (e.g. /dev/video20)
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try device string with default backend
     if isinstance(target, str):
         cap = cv2.VideoCapture(target)
+        if cap.isOpened():
+            return cap
+        cap.release()
+
+    # Try integer index with default backend
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx)
         if cap.isOpened():
             return cap
         cap.release()
@@ -571,10 +586,17 @@ class GestureEngine:
         for attempt in range(1, max_attempts + 1):
             cap = _try_open_capture(self.camera_id)
             if cap is not None and cap.isOpened():
-                # 480x360 MJPG: good balance between speed and pinch-detection accuracy.
-                # MediaPipe needs enough pixels to measure the small thumb-index gap reliably;
-                # 320x240 was too noisy for that. BUFFERSIZE=1 always returns the newest frame.
-                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                # On Windows desktop webcams, request MJPG for performance.
+                # On Linux loopback (/dev/video*), DO NOT force MJPG because v4l2loopback
+                # provides raw uncompressed frames (YUYV) from ffmpeg.
+                is_linux_loopback = isinstance(self.camera_id, str) and "/dev/video" in self.camera_id
+                if sys.platform == 'win32':
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                elif not is_linux_loopback:
+                    try:
+                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    except Exception:
+                        pass
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -663,18 +685,26 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Smart Mirror — Region-based Hand Gesture Daemon")
     parser.add_argument('--rpi', action='store_true',
-                        help=f"Raspberry Pi mode: read from {RPI_CAMERA}")
+                        help=f"Raspberry Pi mode: read from loopback ({RPI_CAMERA})")
     parser.add_argument('--camera-id', default=0, type=int,
                         help="Desktop webcam index (default 0)")
     parser.add_argument('--exit-with-parent', action='store_true',
                         help="Exit when stdin closes.")
     flip = parser.add_mutually_exclusive_group()
     flip.add_argument('--flip', dest='flip', action='store_true', default=None,
-                      help="Mirror the frame horizontally.")
+                      help="Mirror the frame horizontally (default on).")
     flip.add_argument('--no-flip', dest='flip', action='store_false',
                       help="Do not mirror.")
     args = parser.parse_args(argv)
-    camera = RPI_CAMERA if args.rpi else args.camera_id
+    if args.rpi:
+        if os.path.exists("/dev/video20"):
+            camera = "/dev/video20"
+        elif os.path.exists("/dev/video10"):
+            camera = "/dev/video10"
+        else:
+            camera = RPI_CAMERA
+    else:
+        camera = args.camera_id
     flip_frame = default_flip() if args.flip is None else args.flip
     return camera, args.exit_with_parent, flip_frame
 

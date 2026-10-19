@@ -1,1 +1,76 @@
-tail -f face_daemon.log gesture_daemon.log camera_pipeline.log mirror.log
+raspi@raspi:~/14DTE-Project/mirror $ tail -f face_daemon.log gesture_daemon.log camera_pipeline.log mirror.log
+==> face_daemon.log <==
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.221] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.222] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[ERROR] Could not open camera /dev/video10 after 10 attempts.
+[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding /dev/video10.
+
+==> gesture_daemon.log <==
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+raspi@raspi:~/14DTE-Project/mirror $ tail -f face_daemon.log gesture_daemon.log camera_pipeline.log mirror.log
+==> face_daemon.log <==
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.069] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[ERROR] Could not open camera /dev/video20 after 10 attempts.
+[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding /dev/video20.
+
+==> gesture_daemon.log <==
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.015] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[GESTURE] Could not open camera '/dev/video20'. Exiting.
+
+==> camera_pipeline.log <==
+[vf#0:0 @ 0x5555ef6322d0] Error sending frames to consumers: Invalid argument
+[vf#0:0 @ 0x5555ef6322d0] Task finished with error code: -22 (Invalid argument)
+[vf#0:0 @ 0x5555ef6322d0] Terminating thread with return code -22 (Invalid argument)
+[out#0/video4linux2,v4l2 @ 0x5555ef631780] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A    
+Conversion failed!
+Received signal 13
+Received signal 13
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  failed to write output bytes
+
+==> mirror.log <==
+[MIRROR] Face recognition daemon started (pid 3058, --rpi --exit-with-parent).
+[MIRROR] Gesture daemon started (pid 3059, --rpi --exit-with-parent). Logs: /home/raspi/14DTE-Project/mirror/gesture_daemon.log
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.316] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[GESTURE] Could not open camera '/dev/video10'. Exiting.
+
+==> camera_pipeline.log <==
+[out#0/video4linux2,v4l2 @ 0x55560c2cd740] Codec AVOption tune (The metric that the encoder tunes for. Automatically chosen by the encoder by default) has not been used for any stream. The most likely reason is either wrong type (e.g. a video option with no video streams) or that it is a private option of some decoder which was not actually used for any stream.
+Stream mapping:
+  Stream #0:0 -> #0:0 (rawvideo (native) -> rawvideo (native))
+Output #0, video4linux2,v4l2, to '/dev/video10':
+  Metadata:
+    encoder         : Lavf61.7.103
+  Stream #0:0: Video: rawvideo (I420 / 0x30323449), yuv420p(progressive), 640x480, q=2-31, 110592 kb/s, 30 fps, 30 tbn
+      Metadata:
+        encoder         : Lavc61.19.101 rawvideo
+frame=   14 fps=0.0 q=-0.0 size=N/A time=00:00:00.46 bitrate=N/A speed=0.933x   frame=   44 fps= 29 q=-0.0 size=N/A time=00:00:01.46 bitrate=N/A speed=0.978x   frame=   59 fps= 29 q=-0.0 size=N/A time=00:00:01.96 bitrate=N/A speed=0.983x   frame=   74 fps= 30 q=-0.0 size=N/A time=00:00:02.46 bitrate=N/A speed=0.986x   frame=  119 fps= 30 q=-0.0 size=N/A time=00:00:03.96 bitrate=N/A speed=0.991x   frame=  134 fps= 30 q=-0.0 size=N/A time=00:00:04.46 bitrate=N/A speed=0.992x   frame=  164 fps= 30 q=-0.0 size=N/A time=00:00:05.46 bitrate=N/A speed=0.994x   frame=  179 fps= 30 q=-0.0 size=N/A time=00:00:05.96 bitrate=N/A speed=0.994x   frame=  194 fps= 30 q=-0.0 size=N/A time=00:00:06.46 bitrate=N/A speed=0.995x   frame=  239 fps= 30 q=-0.0 size=N/A time=00:00:07.96 bitrate=N/A speed=0.995x   frame=  254 fps= 30 q=-0.0 size=N/A time=00:00:08.46 bitrate=N/A speed=0.995x   frame=  270 fps= 30 q=-0.0 size=N/A time=00:00:09.00 bitrate=N/A speed=0.999x   frame=  284 fps= 30 q=-0.0 size=N/A time=00:00:09.46 bitrate=N/A speed=0.995x   frame=  299 fps= 30 q=-0.0 size=N/A time=00:00:09.96 bitrate=N/A speed=0.996x   frame=  314 fps= 30 q=-0.0 size=N/A time=00:00:10.46 bitrate=N/A speed=0.996x   frame=  330 fps= 30 q=-0.0 size=N/A time=00:00:11.00 bitrate=N/A speed=0.999x   frame=  344 fps= 30 q=-0.0 size=N/A time=00:00:11.46 bitrate=N/A speed=0.996x   frame=  359 fps= 30 q=-0.0 size=N/A time=00:00:11.96 bitrate=N/A speed=0.996x   frame=  374 fps= 30 q=-0.0 size=N/A time=00:00:12.46 bitrate=N/A speed=0.996x   frame=  390 fps= 30 q=-0.0 size=N/A time=00:00:13.00 bitrate=N/A speed=0.999x   frame=  404 fps= 30 q=-0.0 size=N/A time=00:00:13.46 bitrate=N/A speed=0.997x   frame=  419 fps= 30 q=-0.0 size=N/A time=00:00:13.96 bitrate=N/A speed=0.997x   frame=  434 fps= 30 q=-0.0 size=N/A time=00:00:14.46 bitrate=N/A speed=0.997x   frame=  450 fps= 30 q=-0.0 size=N/A time=00:00:15.00 bitrate=N/A speed=0.999x   frame=  464 fps= 30 q=-0.0 size=N/A time=00:00:15.46 bitrate=N/A speed=0.997x   frame=  479 fps= 30 q=-0.0 size=N/A time=00:00:15.96 bitrate=N/A speed=0.997x   frame=  494 fps= 30 q=-0.0 size=N/A time=00:00:16.46 bitrate=N/A speed=0.997x   frame=  510 fps= 30 q=-0.0 size=N/A time=00:00:17.00 bitrate=N/A speed=0.999x   frame=  524 fps= 30 q=-0.0 size=N/A time=00:00:17.46 bitrate=N/A speed=0.997x   frame=  539 fps= 30 q=-0.0 size=N/A time=00:00:17.96 bitrate=N/A speed=0.997x   frame=  554 fps= 30 q=-0.0 size=N/A time=00:00:18.46 bitrate=N/A speed=0.997x   frame=  570 fps= 30 q=-0.0 size=N/A time=00:00:19.00 bitrate=N/A speed=0.999x   frame=  584 fps= 30 q=-0.0 size=N/A time=00:00:19.46 bitrate=N/A speed=0.998x   frame=  599 fps= 30 q=-0.0 size=N/A time=00:00:19.96 bitrate=N/A speed=0.998x   frame=  614 fps= 30 q=-0.0 size=N/A time=00:00:20.46 bitrate=N/A speed=0.998x   frame=  630 fps= 30 q=-0.0 size=N/A time=00:00:21.00 bitrate=N/A speed=0.999x   frame=  644 fps= 30 q=-0.0 size=N/A time=00:00:21.46 bitrate=N/A speed=0.998x   frame=  659 fps= 30 q=-0.0 size=N/A time=00:00:21.96 bitrate=N/A speed=0.998x   frame=  674 fps= 30 q=-0.0 size=N/A time=00:00:22.46 bitrate=N/A speed=0.998x   frame=  690 fps= 30 q=-0.0 size=N/A time=00:00:23.00 bitrate=N/A speed=0.999x   frame=  704 fps= 30 q=-0.0 size=N/A time=00:00:23.46 bitrate=N/A speed=0.998x   frame=  719 fps= 30 q=-0.0 size=N/A time=00:00:23.96 bitrate=N/A speed=0.998x   frame=  734 fps= 30 q=-0.0 size=N/A time=00:00:24.46 bitrate=N/A speed=0.998x   frame=  750 fps= 30 q=-0.0 size=N/A time=00:00:25.00 bitrate=N/A speed=0.999x   frame=  764 fps= 30 q=-0.0 size=N/A time=00:00:25.46 bitrate=N/A speed=0.998x   frame=  779 fps= 30 q=-0.0 size=N/A time=00:00:25.96 bitrate=N/A speed=0.998x   frame=  794 fps= 30 q=-0.0 size=N/A time=00:00:26.46 bitrate=N/A speed=0.998x   frame=  810 fps= 30 q=-0.0 size=N/A time=00:00:27.00 bitrate=N/A speed=0.999x   frame=  824 fps= 30 q=-0.0 size=N/A time=00:00:27.46 bitrate=N/A speed=0.998x   frame=  839 fps= 30 q=-0.0 size=N/A time=00:00:27.96 bitrate=N/A speed=0.998x   frame=  854 fps= 30 q=-0.0 size=N/A time=00:00:28.46 bitrate=N/A speed=0.998x   frame=  870 fps= 30 q=-0.0 size=N/A time=00:00:29.00 bitrate=N/A speed=0.999x   frame=  884 fps= 30 q=-0.0 size=N/A time=00:00:2tail -f face_daemon.log gesture_daemon.log camera_pipeline.log mirror.log
