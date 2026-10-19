@@ -1,0 +1,8 @@
+pkill rpicam-vid
+
+rpicam-hello -t 0 --width 640 --height 480 --framerate 30
+
+git add .
+git commit -m "bug"
+git push
+
