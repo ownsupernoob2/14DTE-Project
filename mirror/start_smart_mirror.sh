@@ -59,9 +59,14 @@ if [ ! -e "$LOOP_DEV" ]; then
 fi
 
 # Existing is not enough: make sure the node really is the loopback driver.
-if command -v v4l2-ctl &>/dev/null && ! v4l2-ctl -d "$LOOP_DEV" -D 2>/dev/null | grep -qi 'loopback'; then
-    echo "[ERROR] $LOOP_DEV exists but is NOT a v4l2loopback device:"
-    v4l2-ctl -d "$LOOP_DEV" -D 2>&1 | head -5
+# Retry briefly: right after modprobe the node can exist before udev has settled.
+LOOP_NAME_FILE="/sys/class/video4linux/$(basename "$LOOP_DEV")/name"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(cat "$LOOP_NAME_FILE" 2>/dev/null)" = "VirtualCam1" ] && break
+    sleep 0.5
+done
+if [ "$(cat "$LOOP_NAME_FILE" 2>/dev/null)" != "VirtualCam1" ]; then
+    echo "[ERROR] $LOOP_DEV is NOT the v4l2loopback device (name: '$(cat "$LOOP_NAME_FILE" 2>/dev/null)')."
     echo "        Devices present:"
     v4l2-ctl --list-devices 2>&1
     exit 1
