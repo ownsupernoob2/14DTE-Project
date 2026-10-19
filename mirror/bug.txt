@@ -1,2 +1,66 @@
+raspi@raspi:~/14DTE-Project/mirror $ ./start_smart_mirror.sh
+[START] Checking for updates from GitHub...
+Already up to date.
+[START] Using Python: Python 3.10.7
+[START] Camera pipeline started. Waiting 5s...
+[START] /dev/video42 is delivering frames.
+[START] face_recognize.py started.
+[START] gesture_engine.py started.
+[START] Smart Mirror is running.
+[2026-10-20 11:57:50] Auto-updater started (interval: 120s, branch: main)
+raspi@raspi:~/14DTE-Project/mirror $ cat bug.txt
+v4l2-ctl --list-devices
+v4l2-ctl -d /dev/video20 -D | head
+raspi@raspi:~/14DTE-Project/mirror $ v4l2-ctl --list-devices
+v4l2-ctl -d /dev/video20 -D | head
+pispbe (platform:1000880000.pisp_be):
+	/dev/video20
+	/dev/video21
+	/dev/video22
+	/dev/video23
+	/dev/video24
+	/dev/video25
+	/dev/video26
+	/dev/video27
+	/dev/video28
+	/dev/video29
+	/dev/video30
+	/dev/video31
+	/dev/video32
+	/dev/video33
+	/dev/video34
+	/dev/video35
+	/dev/media1
+	/dev/media2
+
+rp1-cfe (platform:1f00128000.csi):
+	/dev/video0
+	/dev/video1
+	/dev/video2
+	/dev/video3
+	/dev/video4
+	/dev/video5
+	/dev/video6
+	/dev/video7
+	/dev/media0
+
+rpi-hevc-dec (platform:rpi-hevc-dec):
+	/dev/video19
+	/dev/media3
+
+VirtualCam1 (platform:v4l2loopback-042):
+	/dev/video42
+FAIL: could not find device 81:0 in topology
+Driver Info:
+	Driver name      : pispbe
+	Card type        : pispbe
+	Bus info         : platform:1000880000.pisp_be
+	Driver version   : 6.18.50
+	Capabilities     : 0x84202000
+		Video Output Multiplanar
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+raspi@raspi:~/14DTE-Project/mirror $ 
 v4l2-ctl --list-devices
 v4l2-ctl -d /dev/video20 -D | head
