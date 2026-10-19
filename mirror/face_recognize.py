@@ -410,10 +410,13 @@ def _try_open_capture(target):
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-       if rpi_mode:
+    if rpi_mode:
         target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
+    else:
+        target = camera_id
 
     mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
+    
     print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
 
     max_attempts = 10 if rpi_mode else 3
