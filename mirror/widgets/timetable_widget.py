@@ -44,6 +44,21 @@ def _format_time_12h(time_str):
 class TimetableWidget(QFrame):
     """Class focus widget matching the web screenshot (CURRENT CLASS hero + details + NEXT class block)."""
 
+    # King's High School bell schedule (minutes since midnight)
+    # Grouptime  08:40 - 09:00
+    # Period 1   09:00 - 10:00
+    # Period 2   10:00 - 11:00
+    # Interval   11:00 - 11:25
+    # Period 3   11:25 - 12:25
+    # Period 4   12:25 - 13:25
+    # Lunch      13:25 - 14:00
+    # Period 5   14:00 - 15:05
+    INTERVAL_START = 11 * 60          # 660 mins  11:00am
+    INTERVAL_END   = 11 * 60 + 25     # 685 mins  11:25am
+    LUNCH_START    = 13 * 60 + 25     # 805 mins  1:25pm
+    LUNCH_END      = 14 * 60          # 840 mins  2:00pm
+    SCHOOL_END     = 15 * 60 + 5      # 905 mins  3:05pm
+
     def __init__(self, parent=None, api_url='https://api.smartmirror.me', user_id=''):
         super().__init__(parent)
         self.setObjectName("TimetableWidget")
@@ -69,11 +84,21 @@ class TimetableWidget(QFrame):
     def _build_ui(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 40, 0, 20)
-        lay.setSpacing(32)
+        lay.setSpacing(24)
+
+        # ── PREVIOUS COMPLETED PERIODS BLOCK (Full mode) ─────────────────
+        self.prev_box = QWidget(self)
+        self.prev_box.setStyleSheet("background: transparent;")
+        self.prev_lay = QVBoxLayout(self.prev_box)
+        self.prev_lay.setContentsMargins(0, 0, 0, 4)
+        self.prev_lay.setSpacing(8)
+        self.prev_box.hide()
+        lay.addWidget(self.prev_box)
 
         # ── CURRENT CLASS BLOCK ──────────────────────────────────────────
         current_box = QWidget(self)
         current_box.setStyleSheet("background: transparent;")
+        self.current_box = current_box
         c_lay = QVBoxLayout(current_box)
         c_lay.setContentsMargins(0, 0, 0, 0)
         c_lay.setSpacing(8)
@@ -189,15 +214,25 @@ class TimetableWidget(QFrame):
         self.mode = 'compact'
 
     def set_mode(self, mode):
-        """Switch between 'compact' (hero + next) and 'full' (hero + all periods)."""
-        self.mode = mode
-        if mode == 'full':
+        """Switch between 'compact'/'current_next' (hero + next) and 'full'/'all_today' (all periods)."""
+        if mode in ('full', 'all_today'):
+            self.mode = 'full'
             self.next_box.hide()
             self.schedule_box.show()
         else:
+            self.mode = 'compact'
+            self.prev_box.hide()
             self.next_box.show()
             self.schedule_box.hide()
         self.update_ui()
+
+    def set_layout_mode(self, mode):
+        self.set_mode(mode)
+
+    def toggle_layout_mode(self):
+        new_mode = 'compact' if self.mode == 'full' else 'full'
+        self.set_mode(new_mode)
+        return new_mode
 
     def set_user_id(self, user_id):
         if self.user_id != user_id:
@@ -224,21 +259,36 @@ class TimetableWidget(QFrame):
             periods = list(self.periods)
 
         now = datetime.now()
+        today_str = now.strftime('%Y-%m-%d')
         now_minutes = now.hour * 60 + now.minute
+
+        def _get_period_date(p):
+            """Return YYYY-MM-DD for a period, preferring an explicit 'date' key."""
+            d = p.get('date') or p.get('Date')
+            if d:
+                return str(d)[:10]
+            # Fall back to parsing ISO datetime in startTime / dtstart
+            raw = p.get('startTime') or p.get('dtstart') or p.get('start') or ''
+            if 'T' in str(raw):
+                return str(raw)[:10]
+            return today_str  # unknown date -- assume today
+
+        # ── FILTER: only today's periods ────────────────────────────────
+        periods = [p for p in periods if _get_period_date(p) == today_str]
 
         def _calc_period_info(p):
             raw_start = p.get('startTime') or p.get('start') or p.get('dtstart')
-            raw_end = p.get('endTime') or p.get('end') or p.get('dtend')
+            raw_end   = p.get('endTime')   or p.get('end')   or p.get('dtend')
             start_p = _parse_time(raw_start)
-            end_p = _parse_time(raw_end)
+            end_p   = _parse_time(raw_end)
 
             is_done = False
-            is_now = False
+            is_now  = False
             remaining_mins = 0
 
             if start_p and end_p:
                 start_m = start_p[0] * 60 + start_p[1]
-                end_m = end_p[0] * 60 + end_p[1]
+                end_m   = end_p[0]   * 60 + end_p[1]
                 if now_minutes >= end_m:
                     is_done = True
                 elif start_m <= now_minutes < end_m:
@@ -248,50 +298,85 @@ class TimetableWidget(QFrame):
                     remaining_mins = max(0, end_m - now_minutes)
             else:
                 is_done = p.get('isDone', False)
-                is_now = p.get('isNow', False)
+                is_now  = p.get('isNow',  False)
 
             return {
                 'raw': p,
                 'is_done': is_done,
-                'is_now': is_now,
+                'is_now':  is_now,
                 'remaining_mins': remaining_mins,
                 'start_formatted': _format_time_12h(raw_start),
-                'end_formatted': _format_time_12h(raw_end),
+                'end_formatted':   _format_time_12h(raw_end),
             }
 
         processed = [_calc_period_info(p) for p in periods]
+
+        # School-over: all today's classes finished OR past 3:05pm with no upcoming
+        all_done     = bool(processed) and all(pi['is_done'] for pi in processed)
+        no_upcoming  = not any(not pi['is_done'] for pi in processed)
+        school_over  = all_done or (no_upcoming and now_minutes >= self.SCHOOL_END)
+
         current_info = next((pi for pi in processed if pi['is_now']), None) or \
                        next((pi for pi in processed if not pi['is_done']), None) or \
                        (processed[0] if processed else None)
 
-        is_interval = (630 <= now_minutes < 655)
-        is_lunch = (765 <= now_minutes < 810)
+        is_interval = (self.INTERVAL_START <= now_minutes < self.INTERVAL_END)
+        is_lunch    = (self.LUNCH_START    <= now_minutes < self.LUNCH_END)
 
-        if is_interval:
-            self.eyebrow_lbl.setText("INTERVAL (RECESS)")
+        # ── Populate hero block ──────────────────────────────────────────
+        if school_over and not is_interval and not is_lunch:
+            # All of today's classes are done
+            self.eyebrow_lbl.setText("SCHOOL DAY COMPLETE")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #4ade80; text-transform: uppercase;"
+            )
+            self.subject_lbl.setText("Go Home")
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #4ade80; line-height: 1.0; margin: 0; padding: 0;"
+            )
+            self.room_v.setText("--")
+            self.ends_v.setText("--")
+            self.left_v.setText("--")
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #4ade80;")
+        elif is_interval:
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
+            self.eyebrow_lbl.setText("INTERVAL")
             self.eyebrow_lbl.setStyleSheet(
                 "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
                 "letter-spacing: 2px; color: #f59e0b; text-transform: uppercase;"
             )
             self.subject_lbl.setText("Morning Interval")
             self.room_v.setText("Campus")
-            self.ends_v.setText("10:55am")
-            rem_break = max(1, 655 - now_minutes)
+            self.ends_v.setText("11:25am")
+            rem_break = max(1, self.INTERVAL_END - now_minutes)
             self.left_v.setText(f"{rem_break}m")
             self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #f59e0b;")
         elif is_lunch:
-            self.eyebrow_lbl.setText("LUNCHTIME BREAK")
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
+            self.eyebrow_lbl.setText("LUNCH BREAK")
             self.eyebrow_lbl.setStyleSheet(
                 "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
                 "letter-spacing: 2px; color: #f59e0b; text-transform: uppercase;"
             )
             self.subject_lbl.setText("Lunch Break")
-            self.room_v.setText("Courtyard / Hall")
-            self.ends_v.setText("1:30pm")
-            rem_break = max(1, 810 - now_minutes)
+            self.room_v.setText("Courtyard")
+            self.ends_v.setText("2:00pm")
+            rem_break = max(1, self.LUNCH_END - now_minutes)
             self.left_v.setText(f"{rem_break}m")
             self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #f59e0b;")
         elif current_info:
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
             self.eyebrow_lbl.setText("CURRENT CLASS")
             self.eyebrow_lbl.setStyleSheet(
                 "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
@@ -300,8 +385,8 @@ class TimetableWidget(QFrame):
             p = current_info['raw']
             subj = p.get('subject') or p.get('summary') or '13DTE (4)'
             room = p.get('room') or p.get('location') or 'T5'
-            ends = current_info['end_formatted'] if current_info['end_formatted'] != '--' else '10:00am'
-            rem = current_info['remaining_mins'] if current_info['remaining_mins'] > 0 else 68
+            ends = current_info['end_formatted'] if current_info['end_formatted'] != '--' else '3:05pm'
+            rem  = current_info['remaining_mins'] if current_info['remaining_mins'] > 0 else 0
 
             self.subject_lbl.setText(subj)
             self.room_v.setText(room)
@@ -312,111 +397,149 @@ class TimetableWidget(QFrame):
             else:
                 self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
         else:
+            # No data yet -- show placeholders
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
             self.eyebrow_lbl.setText("CURRENT CLASS")
             self.eyebrow_lbl.setStyleSheet(
                 "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
                 "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
             )
-            self.subject_lbl.setText("13DTE (4)")
-            self.room_v.setText("T5")
-            self.ends_v.setText("10:00am")
-            self.left_v.setText("68m")
+            self.subject_lbl.setText("--")
+            self.room_v.setText("--")
+            self.ends_v.setText("--")
+            self.left_v.setText("--")
             self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
 
-        # Next class (Compact Mode)
+        # ── Next class (Compact Mode) ────────────────────────────────────
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
         if next_info:
             np = next_info['raw']
-            n_subj = np.get('subject') or np.get('summary') or '13DVC (5)'
-            n_room = np.get('room') or np.get('location') or 'T1'
-            n_time = next_info['start_formatted'] if next_info['start_formatted'] != '--' else '10:00am'
+            n_subj = np.get('subject') or np.get('summary') or '--'
+            n_room = np.get('room') or np.get('location') or '--'
+            n_time = next_info['start_formatted'] if next_info['start_formatted'] != '--' else ''
             self.next_subj_lbl.setText(n_subj)
             self.next_meta_lbl.setText(f"{n_room} · {n_time}")
+        elif school_over:
+            self.next_subj_lbl.setText("See you tomorrow")
+            self.next_meta_lbl.setText("")
         else:
-            self.next_subj_lbl.setText("13DVC (5)")
-            self.next_meta_lbl.setText("T1 · 10:00am")
+            self.next_subj_lbl.setText("--")
+            self.next_meta_lbl.setText("")
 
-        # Full Schedule (Full Mode)
+        # ── Clear and rebuild prev / schedule lists ──────────────────────
+        while self.prev_lay.count():
+            item = self.prev_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         while self.schedule_lay.count():
             item = self.schedule_lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         if self.mode == 'full':
-            divider = QWidget()
-            divider.setFixedHeight(1)
-            divider.setStyleSheet("background: #1c1c1c; margin-bottom: 8px;")
-            self.schedule_lay.addWidget(divider)
-
-            sched_periods = processed if processed else [
-                {'raw': {'subject': '13DVC (5)', 'room': 'T1', 'period': 'P2'}, 'start_formatted': '10:00am', 'is_now': False, 'is_done': False},
-                {'raw': {'subject': '13MAT (1)', 'room': 'M2', 'period': 'P3'}, 'start_formatted': '11:30am', 'is_now': False, 'is_done': False},
-                {'raw': {'subject': '13PHY (2)', 'room': 'S4', 'period': 'P4'}, 'start_formatted': '1:30pm', 'is_now': False, 'is_done': False},
-            ]
-
-            # Add school break reminder in full schedule
-            interval_row = QWidget(self.schedule_box)
-            interval_row.setStyleSheet("background: rgba(245, 158, 11, 0.08); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);")
-            ir_lay = QHBoxLayout(interval_row)
-            ir_lay.setContentsMargins(12, 6, 12, 6)
-            ir_tag = QLabel("BREAK", interval_row)
-            ir_tag.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; color: #f59e0b;")
-            ir_name = QLabel("Morning Interval (10:30am – 10:55am)", interval_row)
-            ir_name.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef3c7;")
-            ir_lay.addWidget(ir_tag)
-            ir_lay.addWidget(ir_name)
-            ir_lay.addStretch(1)
-            self.schedule_lay.addWidget(interval_row)
-
-            for idx, pi in enumerate(sched_periods):
-                raw = pi['raw']
-                p_label = raw.get('period') or (f"P{idx + 1}" if idx > 0 else "NEXT")
-                if pi == next_info:
-                    p_label = "NEXT"
-                subj = raw.get('subject') or raw.get('summary') or f"Subject {idx + 1}"
-                room = raw.get('room') or raw.get('location') or "T1"
-                t_str = pi['start_formatted'] if pi['start_formatted'] != '--' else "10:00am"
-
-                row_widget = QWidget(self.schedule_box)
-                row_widget.setStyleSheet("background: transparent;")
-                r_lay = QHBoxLayout(row_widget)
-                r_lay.setContentsMargins(0, 4, 0, 4)
-                r_lay.setSpacing(24)
-
-                lbl_tag = QLabel(p_label, row_widget)
-                lbl_tag.setFixedWidth(64)
-                tag_color = "#38bdf8" if (p_label == "NEXT" or pi.get('is_now')) else "#cbd5e1"
-                lbl_tag.setStyleSheet(
-                    f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 800; "
-                    f"letter-spacing: 2px; color: {tag_color}; text-transform: uppercase;"
+            # Previous periods completed earlier today
+            prev_periods = [pi for pi in processed if pi.get('is_done') and pi != current_info]
+            if prev_periods:
+                hdr = QLabel("COMPLETED EARLIER TODAY", self.prev_box)
+                hdr.setStyleSheet(
+                    "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; "
+                    "letter-spacing: 2px; color: #64748b; text-transform: uppercase;"
                 )
-                r_lay.addWidget(lbl_tag)
+                self.prev_lay.addWidget(hdr)
 
-                lbl_subj = QLabel(subj, row_widget)
-                subj_color = "#ffffff" if not pi.get('is_done') else "#94a3b8"
-                lbl_subj.setStyleSheet(f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: {subj_color};")
-                r_lay.addWidget(lbl_subj)
+                for pi in prev_periods:
+                    raw = pi['raw']
+                    subj  = raw.get('subject') or raw.get('summary') or 'Class'
+                    room  = raw.get('room') or raw.get('location') or '--'
+                    t_str = pi['start_formatted'] if pi['start_formatted'] != '--' else ''
+                    end_str = f" · ended {pi['end_formatted']}" if pi['end_formatted'] != '--' else ""
 
-                lbl_meta = QLabel(f"{room} · {t_str}", row_widget)
-                lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; color: #e2e8f0;")
-                r_lay.addWidget(lbl_meta)
+                    row_w = QWidget(self.prev_box)
+                    row_w.setStyleSheet("background: transparent;")
+                    r_lay = QHBoxLayout(row_w)
+                    r_lay.setContentsMargins(0, 2, 0, 2)
+                    r_lay.setSpacing(20)
 
-                r_lay.addStretch(1)
-                self.schedule_lay.addWidget(row_widget)
+                    lbl_t = QLabel(t_str, row_w)
+                    lbl_t.setFixedWidth(64)
+                    lbl_t.setStyleSheet(
+                        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 700; "
+                        "color: #64748b; text-transform: uppercase; letter-spacing: 1px;"
+                    )
+                    r_lay.addWidget(lbl_t)
 
-                # Insert lunch row after P3 (approx idx == 1 or 2)
-                if idx == 1:
-                    lunch_row = QWidget(self.schedule_box)
-                    lunch_row.setStyleSheet("background: rgba(245, 158, 11, 0.08); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);")
-                    lr_lay = QHBoxLayout(lunch_row)
-                    lr_lay.setContentsMargins(12, 6, 12, 6)
-                    lr_tag = QLabel("BREAK", lunch_row)
-                    lr_tag.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; color: #f59e0b;")
-                    lr_name = QLabel("Lunchtime (12:45pm – 1:30pm)", lunch_row)
-                    lr_name.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #fef3c7;")
-                    lr_lay.addWidget(lr_tag)
-                    lr_lay.addWidget(lr_name)
-                    lr_lay.addStretch(1)
-                    self.schedule_lay.addWidget(lunch_row)
+                    lbl_s = QLabel(subj, row_w)
+                    lbl_s.setStyleSheet(
+                        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 700; "
+                        "color: #64748b; text-decoration: line-through;"
+                    )
+                    r_lay.addWidget(lbl_s)
 
+                    lbl_m = QLabel(f"{room}{end_str}", row_w)
+                    lbl_m.setStyleSheet(
+                        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 600; color: #475569;"
+                    )
+                    r_lay.addWidget(lbl_m)
+                    r_lay.addStretch(1)
+                    self.prev_lay.addWidget(row_w)
 
+                self.prev_box.show()
+            else:
+                self.prev_box.hide()
+
+            # Next and subsequent periods of today
+            sched_periods = [pi for pi in processed if pi != current_info and not pi.get('is_done')]
+
+            if sched_periods:
+                divider = QWidget()
+                divider.setFixedHeight(1)
+                divider.setStyleSheet("background: #1c1c1c; margin: 4px 0;")
+                self.schedule_lay.addWidget(divider)
+
+                for idx, pi in enumerate(sched_periods):
+                    raw    = pi['raw']
+                    p_label = "NEXT" if idx == 0 else (raw.get('period') or pi['start_formatted'])
+                    subj   = raw.get('subject') or raw.get('summary') or f"Period {idx + 1}"
+                    room   = raw.get('room') or raw.get('location') or "--"
+                    t_str  = pi['start_formatted'] if pi['start_formatted'] != '--' else ""
+
+                    row_widget = QWidget(self.schedule_box)
+                    row_widget.setStyleSheet("background: transparent;")
+                    r_lay = QHBoxLayout(row_widget)
+                    r_lay.setContentsMargins(0, 4, 0, 4)
+                    r_lay.setSpacing(24)
+
+                    lbl_tag = QLabel(p_label, row_widget)
+                    lbl_tag.setFixedWidth(64)
+                    tag_color = "#38bdf8" if idx == 0 else "#cbd5e1"
+                    lbl_tag.setStyleSheet(
+                        f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 800; "
+                        f"letter-spacing: 2px; color: {tag_color}; text-transform: uppercase;"
+                    )
+                    r_lay.addWidget(lbl_tag)
+
+                    lbl_subj = QLabel(subj, row_widget)
+                    lbl_subj.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+                    r_lay.addWidget(lbl_subj)
+
+                    lbl_meta = QLabel(f"{room} · {t_str}", row_widget)
+                    lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; color: #e2e8f0;")
+                    r_lay.addWidget(lbl_meta)
+
+                    r_lay.addStretch(1)
+                    self.schedule_lay.addWidget(row_widget)
+
+            elif school_over:
+                # Show "go home" in schedule pane too
+                go_lbl = QLabel("All done for today. See you tomorrow.", self.schedule_box)
+                go_lbl.setStyleSheet(
+                    "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; "
+                    "font-weight: 600; color: #4ade80;"
+                )
+                self.schedule_lay.addWidget(go_lbl)
+        else:
+            self.prev_box.hide()

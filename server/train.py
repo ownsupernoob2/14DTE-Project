@@ -9,6 +9,8 @@ saves the list of encodings to output_pickle. Prints OK:<N> or ERROR:<msg>.
 import sys
 import os
 import pickle
+import json
+import time
 import face_recognition
 import numpy as np
 

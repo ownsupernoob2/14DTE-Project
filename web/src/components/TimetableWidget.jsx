@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import { motion } from 'framer-motion';
+import { useLanguage } from '../contexts/LanguageContext';
+import step1Img from '../assets/timetable-instructions/1.png';
+import step2Img from '../assets/timetable-instructions/2.png';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -107,44 +109,265 @@ function getPeriodDetails(p, now = new Date()) {
   };
 }
 
-export default function TimetableWidget({ widget = {}, onUpdateData, readonly = false }) {
-  const navigate = useNavigate();
+// ── Slideshow Steps for Setup Modal with Real Screenshots & Redirect Link ───
+export function TimetableSetupModal({ isOpen, onClose, onSave, saving, error, currentUrl }) {
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [urlInput, setUrlInput] = useState(currentUrl || '');
+  const [localError, setLocalError] = useState(null);
+  const { t } = useLanguage();
+
+  const slides = [
+    {
+      step: 1,
+      title: 'CLICK LINK & SIGN IN TO SCHOOL KAMAR',
+      desc: 'Click on the link below and sign in to your school KAMAR portal using your student login:',
+      isLink: true,
+    },
+    {
+      step: 2,
+      title: 'CLICK ON "TIMETABLE AND ATTENDANCE"',
+      desc: 'After signing in, click on the "Timetable and Attendance" tile on your portal dashboard:',
+      img: step1Img,
+    },
+    {
+      step: 3,
+      title: 'SCROLL DOWN AND COPY THE .ICS URL',
+      desc: 'Scroll down to the bottom of the page and copy the URL ending in .ics circled below:',
+      img: step2Img,
+    },
+    {
+      step: 4,
+      title: 'PASTE URL BELOW AND SUBMIT',
+      desc: 'Paste the copied .ics address directly into the field below and click SAVE TIMETABLE:',
+      isArrow: true,
+    },
+  ];
+
+  useEffect(() => {
+    if (isOpen) {
+      setUrlInput(currentUrl || '');
+      setLocalError(null);
+      setCurrentSlide(0);
+    }
+  }, [isOpen, currentUrl]);
+
+  if (!isOpen) return null;
+
+  const slide = slides[currentSlide];
+
+  const handleNext = () => {
+    if (currentSlide < slides.length - 1) {
+      setCurrentSlide(s => s + 1);
+    }
+  };
+
+  const handlePrev = () => {
+    if (currentSlide > 0) {
+      setCurrentSlide(s => s - 1);
+    }
+  };
+
+  const handleSubmit = (e) => {
+    e?.preventDefault();
+    const trimmed = urlInput.trim();
+    if (!trimmed) {
+      setLocalError('Please enter an .ics link');
+      return;
+    }
+    if (!isValidKingsHighUrl(trimmed)) {
+      setLocalError('Link must start with https://kingshigh.school.kiwi/ics/ and end with .ics');
+      return;
+    }
+    setLocalError(null);
+    onSave(trimmed);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.97 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.97 }}
+        className="bg-[#0a0a0a] border border-[#222222] rounded-none w-full max-w-xl p-6 flex flex-col gap-5 text-white font-mono shadow-2xl select-none"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-white">
+            {t('set_up_timetable')}
+          </span>
+          <button
+            onClick={onClose}
+            className="text-[#888888] hover:text-white text-xs font-mono uppercase cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Slideshow Display Area */}
+        <div className="bg-[#0e0e0e] p-5 flex flex-col gap-3 rounded-none border border-[#1a1a1a]">
+          {/* Step indicator header */}
+          <div className="flex items-center justify-between text-[11px] text-[#888888]">
+            <span className="uppercase font-bold tracking-widest text-white">
+              {t('slideshow_step')} {slide.step} / {slides.length}
+            </span>
+            <div className="flex gap-1.5">
+              {slides.map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setCurrentSlide(idx)}
+                  className={`w-6 h-1 transition-colors cursor-pointer ${
+                    idx === currentSlide ? 'bg-white' : 'bg-[#2a2a2a] hover:bg-[#444444]'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Slide Title and Description */}
+          <div className="flex flex-col gap-1">
+            <h3 className="text-xs font-bold text-white uppercase tracking-tight">
+              {slide.title}
+            </h3>
+            <p className="text-xs text-[#aaaaaa] leading-relaxed">
+              {slide.desc}
+            </p>
+          </div>
+
+          {/* Slide Visual Content */}
+          <div className="py-2 flex flex-col items-center justify-center min-h-[140px] bg-[#000000] border border-[#1c1c1c] p-2">
+            {slide.isLink && (
+              <div className="flex flex-col items-center gap-3 p-4 text-center">
+                <span className="text-xs text-[#888888]">Official School Portal Redirect:</span>
+                <a
+                  href="https://kingshigh.school.kiwi"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-5 py-2.5 bg-white text-black font-mono text-xs font-bold uppercase tracking-wider hover:bg-[#e0e0e0] flex items-center gap-2 transition-all cursor-pointer rounded-none"
+                >
+                  <span>OPEN KINGSHIGH.SCHOOL.KIWI</span>
+                  <span className="material-symbols-outlined text-sm">open_in_new</span>
+                </a>
+              </div>
+            )}
+
+            {slide.img && (
+              <img
+                src={slide.img}
+                alt={slide.title}
+                className="w-full max-h-52 object-contain"
+              />
+            )}
+
+            {slide.isArrow && (
+              <div className="flex flex-col items-center gap-2 py-4">
+                <span className="text-xs text-[#aaaaaa]">PASTE URL BELOW:</span>
+                <span className="text-3xl text-white animate-bounce">↓</span>
+              </div>
+            )}
+          </div>
+
+          {/* Slideshow Navigation Buttons */}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={handlePrev}
+              disabled={currentSlide === 0}
+              className="px-6 py-3 border border-[#333333] disabled:opacity-20 text-xs font-mono font-bold uppercase hover:border-[#666666] text-[#aaaaaa] hover:text-white transition-colors cursor-pointer rounded-none"
+            >
+              ← {t('prev')}
+            </button>
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={currentSlide === slides.length - 1}
+              className="px-10 py-3.5 bg-white disabled:opacity-20 text-black hover:bg-[#e0e0e0] text-sm font-mono font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none shadow-md"
+            >
+              {t('next')} →
+            </button>
+          </div>
+        </div>
+
+        {/* Input Form Below Slideshow */}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] text-[#888888] uppercase tracking-wider font-bold">
+              {t('paste_ics_link')}
+            </label>
+          </div>
+
+          <input
+            type="url"
+            placeholder="https://kingshigh.school.kiwi/ics/12345-XXXX.ics"
+            value={urlInput}
+            onChange={(e) => {
+              setUrlInput(e.target.value);
+              setLocalError(null);
+            }}
+            className="w-full bg-[#0e0e0e] border border-[#262626] focus:border-white text-white px-3.5 py-3 text-xs font-mono rounded-none outline-none transition-colors"
+          />
+
+          {(localError || error) && (
+            <div className="text-xs text-[#ef4444] font-mono bg-red-950/20 p-2.5">
+              {localError || error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-[#222222] text-[#888888] hover:text-white text-xs uppercase font-bold rounded-none cursor-pointer"
+            >
+              {t('close')}
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !urlInput.trim()}
+              className="px-6 py-2.5 bg-white text-black hover:bg-[#e0e0e0] disabled:opacity-40 text-xs font-bold uppercase rounded-none transition-colors cursor-pointer"
+            >
+              {saving ? 'SAVING...' : t('save_timetable')}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
+export default function TimetableWidget({ widget = {}, externalOpenSetup, onExternalCloseSetup }) {
+  const { t } = useLanguage();
   const { getAccessTokenSilently } = useAuth0();
 
-  // ── Live ticking timer ─────────────────────────────────────────────────────
   const [now, setNow] = useState(() => new Date());
-
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 5000);
     return () => clearInterval(timer);
   }, []);
 
-  // ── ICS URL state ──────────────────────────────────────────────────────────
   const [icsUrl, setIcsUrl] = useState(() => localStorage.getItem('timetable_ics_url') || '');
-  const [urlInput, setUrlInput] = useState('');
-  const [showSetup, setShowSetup] = useState(!localStorage.getItem('timetable_ics_url'));
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showBreaks, setShowBreaks] = useState(() => localStorage.getItem('timetable_show_breaks') !== '0');
+  const [layoutMode, setLayoutMode] = useState(() => localStorage.getItem('timetable_layout_mode') || 'current_next');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // ── View mode ──────────────────────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState(
-    () => widget.data?.viewMode || localStorage.getItem('timetable_view_mode') || 'today'
-  );
+  const [periods, setPeriods] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  // ── Subject filter ────────────────────────────────────────────────────────
-  const [subjectFilter, setSubjectFilter] = useState(() => widget.data?.subjectFilter || '');
-
-  // Keep viewMode synced if changed from parent props
+  // Sync with external modal triggers (from Onboarding modal)
   useEffect(() => {
-    if (widget.data?.viewMode && widget.data.viewMode !== viewMode) {
-      setViewMode(widget.data.viewMode);
+    if (externalOpenSetup) {
+      setShowSetupModal(true);
     }
-    if (widget.data?.subjectFilter !== undefined) {
-      setSubjectFilter(widget.data.subjectFilter);
-    }
-  }, [widget.data?.viewMode, widget.data?.subjectFilter]);
+  }, [externalOpenSetup]);
 
-  // Auto-sync timetable ICS URL from server if not configured locally
+  const handleCloseModal = () => {
+    setShowSetupModal(false);
+    if (onExternalCloseSetup) onExternalCloseSetup();
+  };
+
+  // Auto-sync timetable ICS URL from server if not cached locally
   useEffect(() => {
     const fetchSavedUrl = async () => {
       if (icsUrl) return;
@@ -158,7 +381,6 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
           if (data.ics_url) {
             localStorage.setItem('timetable_ics_url', data.ics_url);
             setIcsUrl(data.ics_url);
-            setShowSetup(false);
           }
         }
       } catch { /* silent */ }
@@ -166,39 +388,18 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     fetchSavedUrl();
   }, [icsUrl, getAccessTokenSilently]);
 
-  // ── Timetable data ─────────────────────────────────────────────────────────
-  const [periods, setPeriods] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  // ── Persist view mode ──────────────────────────────────────────────────────
-  const handleViewModeChange = (newMode) => {
-    setViewMode(newMode);
-    localStorage.setItem('timetable_view_mode', newMode);
-    if (onUpdateData) {
-      onUpdateData({ ...widget.data, viewMode: newMode });
-    }
-  };
-
-  // ── Fetch timetable ────────────────────────────────────────────────────────
-  const fetchTimetable = useCallback(async () => {
+  // Fetch timetable data
+  const fetchTimetable = useCallback(async (force = false) => {
     if (!icsUrl) return;
     setLoading(true);
-    setError(null);
     try {
       const today = new Date().toDateString();
       const cachedDate = localStorage.getItem('timetable_cache_date');
       const cachedData = localStorage.getItem('timetable_cache_data');
-      if (cachedDate === today && cachedData) {
+      if (!force && cachedDate === today && cachedData) {
         const cached = JSON.parse(cachedData);
-        if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
-          setPeriods(cached.periods || []);
-          if (cached.viewMode && cached.viewMode !== viewMode) {
-            setViewMode(cached.viewMode);
-          }
-        } else {
-          setPeriods(Array.isArray(cached) ? cached : []);
-        }
+        const list = Array.isArray(cached) ? cached : (cached.periods || cached.events || []);
+        setPeriods(list);
         setLoading(false);
         return;
       }
@@ -207,40 +408,24 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
       const res = await fetch(`${API_URL}/api/timetable`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(`Failed to load timetable (${res.status})`);
-      const data = await res.json();
-
-      const list = Array.isArray(data) ? data : (data.periods || data.events || []);
-      setPeriods(list);
-
-      if (data.viewMode && data.viewMode !== viewMode) {
-        setViewMode(data.viewMode);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.periods || data.events || []);
+        setPeriods(list);
+        localStorage.setItem('timetable_cache_date', today);
+        localStorage.setItem('timetable_cache_data', JSON.stringify(data));
       }
-
-      localStorage.setItem('timetable_cache_date', today);
-      localStorage.setItem('timetable_cache_data', JSON.stringify(data));
-    } catch (err) {
-      setError(err.message);
-    } finally {
+    } catch { /* silent */ }
+    finally {
       setLoading(false);
     }
-  }, [icsUrl, getAccessTokenSilently, viewMode]);
+  }, [icsUrl, getAccessTokenSilently]);
 
   useEffect(() => {
     fetchTimetable();
   }, [fetchTimetable]);
 
-  // ── Save ICS URL ───────────────────────────────────────────────────────────
-  const handleSaveUrl = async (overrideUrl) => {
-    const candidate = typeof overrideUrl === 'string' ? overrideUrl : urlInput;
-    const trimmed = candidate.trim();
-    if (!trimmed) return;
-
-    if (!isValidKingsHighUrl(trimmed)) {
-      setSaveError("URL must be a valid King's High School calendar link (e.g. https://kingshigh.school.kiwi/ics/23239-SOKKEUXX7P0OKX50E27H4H6L.ics)");
-      return;
-    }
-
+  const handleSaveUrl = async (trimmed) => {
     setSaving(true);
     setSaveError(null);
     try {
@@ -261,9 +446,9 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
       localStorage.removeItem('timetable_cache_date');
       localStorage.removeItem('timetable_cache_data');
       setIcsUrl(trimmed);
-      setShowSetup(false);
-      setUrlInput('');
-      fetchTimetable();
+      handleCloseModal();
+      setShowSettings(false);
+      fetchTimetable(true);
     } catch (err) {
       setSaveError(err.message);
     } finally {
@@ -271,304 +456,32 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
     }
   };
 
-  // ── Filter visible periods ─────────────────────────────────────────────────
-  const visiblePeriods = (() => {
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-
-    let list;
-    if (viewMode === 'week') {
-      list = periods;
-    } else {
-      const todayPeriods = periods.filter(p => p.date === todayStr || !p.date);
-
-      if (viewMode === 'tomorrow') {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-        list = periods.filter(p => p.date === tomorrowStr);
-      } else if (viewMode === 'next') {
-        const nowP = todayPeriods.find(p => p.isNow);
-        if (nowP) list = [nowP];
-        else {
-          const next = todayPeriods.find(p => !p.isDone);
-          list = next ? [next] : [];
-        }
-      } else if (viewMode === 'remaining') {
-        list = todayPeriods.filter(p => !p.isDone);
-      } else {
-        list = todayPeriods;
-      }
-    }
-    return list;
-  })();
-
-  // ─── SETUP CARD (When no URL or modifying) ───────────────────────────────────
-  if (showSetup) {
-    if (readonly) {
-      return (
-        <section className="h-full flex flex-col items-center justify-center p-8 select-none text-center">
-          <div className="w-16 h-16 rounded-2xl bg-[#0d1624] border border-[#1e2f47] flex items-center justify-center mb-4 text-[#4fc3ff] shadow-lg shadow-[#4fc3ff]/10">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="16" y1="2" x2="16" y2="6"></line>
-              <line x1="8" y1="2" x2="8" y2="6"></line>
-              <line x1="3" y1="10" x2="21" y2="10"></line>
-            </svg>
-          </div>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-[#4fc3ff]/10 text-[#4fc3ff] border border-[#4fc3ff]/20 mb-2">
-            Action Required
-          </span>
-          <h3 className="text-xl font-bold text-white mb-2 tracking-tight">No Timetable Configured</h3>
-          <p className="text-xs text-[#8f8f8f] max-w-sm mb-6 leading-relaxed">
-            Link your King's High School KAMAR .ics calendar feed to display your current period, room, and countdown timer.
-          </p>
-          <button
-            onClick={() => navigate('/timetable')}
-            className="px-6 py-2.5 bg-[#4fc3ff] hover:bg-[#38b2ee] text-black font-mono text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-[#4fc3ff]/10 flex items-center gap-2"
-          >
-            <span>Configure Calendar Link</span>
-            <span>→</span>
-          </button>
-        </section>
-      );
-    }
-
-    return (
-      <div className="flex flex-col h-full bg-[#000000] text-white p-6 sm:p-8 font-sans overflow-y-auto custom-scrollbar select-none">
-        <div className="max-w-3xl mx-auto w-full flex flex-col gap-6 pt-2">
-          {/* Header */}
-          <div className="border-b border-[#1c1c1c] pb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-[#4fc3ff]/10 text-[#4fc3ff] border border-[#4fc3ff]/20">
-                King's High School · KAMAR Timetable
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Connect Your KAMAR Timetable
-            </h1>
-            <p className="text-xs sm:text-sm text-[#8f8f8f] mt-1.5 leading-relaxed">
-              Syncing your daily timetable automatically displays your current period, room number, teacher, and an active countdown timer on the smart mirror.
-            </p>
-          </div>
-
-          {/* KAMAR Step-by-Step Instructions */}
-          <div className="flex flex-col gap-3">
-            <h3 className="text-xs font-mono uppercase tracking-widest text-[#888888] font-bold">
-              Step-by-Step KAMAR Instructions
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {[
-                {
-                  step: '01',
-                  title: 'Sign In to KAMAR Portal',
-                  desc: 'Visit kingshigh.school.kiwi on any phone or browser and log in with your student credentials.',
-                  icon: 'login',
-                },
-                {
-                  step: '02',
-                  title: 'Go to Timetable',
-                  desc: 'Click "Timetable" from the main navigation sidebar to open your weekly class schedule.',
-                  icon: 'calendar_month',
-                },
-                {
-                  step: '03',
-                  title: 'Locate "Subscribe / iCal"',
-                  desc: 'In the top-right corner of your timetable screen, find and click the "Subscribe / iCal Feed" icon.',
-                  icon: 'rss_feed',
-                },
-                {
-                  step: '04',
-                  title: 'Copy & Paste the .ics Link',
-                  desc: 'Copy the URL ending in .ics (e.g. https://kingshigh.school.kiwi/ics/...) and paste it into the input below.',
-                  icon: 'content_paste',
-                },
-              ].map(({ step, title, desc, icon }) => (
-                <div
-                  key={step}
-                  className="bg-[#0a0a0a] border border-[#1e2f47]/50 rounded-xl p-4 flex gap-3.5 items-start hover:border-[#4fc3ff]/40 transition-colors"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-[#0d1624] border border-[#1e2f47] text-[#4fc3ff] font-mono text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    {step}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-sm text-[#4fc3ff]">{icon}</span>
-                      {title}
-                    </h4>
-                    <p className="text-xs text-[#8f8f8f] leading-relaxed">{desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Visual KAMAR Portal Diagram Mockup */}
-          <div className="bg-gradient-to-r from-[#0d1624] via-[#0b101b] to-[#0a0a0a] border border-[#1e2f47] rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#1e2f47]/60">
-              <span className="text-[11px] font-mono font-bold text-[#8f8f8f] uppercase flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                KAMAR Student Portal Preview
-              </span>
-              <span className="text-[10px] font-mono text-[#4fc3ff]">kingshigh.school.kiwi</span>
-            </div>
-            <div className="bg-[#05080f] border border-[#1e2f47]/80 rounded-lg p-3 text-xs font-mono text-[#cbd5e1] flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-white font-bold">Timetable · Week A / Day 3</span>
-                <span className="px-2 py-0.5 rounded bg-[#4fc3ff]/20 text-[#4fc3ff] border border-[#4fc3ff]/40 text-[10px] animate-pulse">
-                  🔗 Subscribe to Calendar (iCal) ⬅️ CLICK THIS
-                </span>
-              </div>
-              <div className="text-[11px] text-[#71859e]">
-                URL Format: <code className="text-[#4fc3ff]">https://kingshigh.school.kiwi/ics/&lt;student_token&gt;.ics</code>
-              </div>
-            </div>
-          </div>
-
-          {/* URL Input Form */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-xl p-5 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-mono font-bold tracking-wider text-[#cbd5e1] uppercase flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm text-[#4fc3ff]">link</span>
-                KAMAR ICS Calendar Feed Link
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  setUrlInput('https://kingshigh.school.kiwi/ics/demo-12345-kingshigh.ics');
-                  setSaveError(null);
-                }}
-                className="text-[10px] font-mono text-[#4fc3ff] hover:text-[#7dd3fc] cursor-pointer"
-              >
-                Use Sample Link
-              </button>
-            </div>
-
-            <input
-              type="url"
-              placeholder="https://kingshigh.school.kiwi/ics/12345-QWERTYUIOPASDFGHJKLZXC.ics"
-              value={urlInput}
-              onChange={(e) => {
-                setUrlInput(e.target.value);
-                setSaveError(null);
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && handleSaveUrl()}
-              className="w-full bg-[#000000] border border-[#262626] focus:border-[#4fc3ff] text-white px-3.5 py-3 text-xs font-mono rounded-lg outline-none transition-colors"
-            />
-
-            {saveError && (
-              <div className="text-xs text-[#f87171] font-mono flex items-center gap-1.5 bg-red-950/40 border border-red-800/40 px-3 py-2 rounded-lg">
-                <span className="material-symbols-outlined text-sm">error</span>
-                {saveError}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-3 mt-2">
-              {icsUrl && (
-                <button
-                  type="button"
-                  onClick={() => setShowSetup(false)}
-                  className="px-4 py-2 border border-[#222] text-[#8f8f8f] hover:text-white font-mono text-xs uppercase rounded-lg transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => handleSaveUrl()}
-                disabled={saving || !urlInput.trim()}
-                className="px-5 py-2.5 bg-[#4fc3ff] hover:bg-[#38b2ee] text-black font-mono text-xs font-bold uppercase rounded-lg transition-colors disabled:opacity-50 cursor-pointer shadow-lg shadow-[#4fc3ff]/10"
-              >
-                {saving ? 'Syncing...' : 'Save & Sync Timetable'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Loading state ──────────────────────────────────────────────────────────
-  if (loading && periods.length === 0) {
-    return (
-      <section className="h-full flex flex-col justify-center gap-6 p-6 select-none animate-pulse">
-        <div className="h-4 w-28 bg-[#1c1c1c] rounded"></div>
-        <div className="h-20 w-3/4 bg-[#222222] rounded"></div>
-        <div className="flex gap-8 mt-4">
-          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
-          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
-          <div className="h-10 w-24 bg-[#1c1c1c] rounded"></div>
-        </div>
-      </section>
-    );
-  }
-
-  // ── Customization Toggles ──────────────────────────────────────────────────
-  const [showBreaks, setShowBreaks] = useState(() => localStorage.getItem('tt_show_breaks') !== 'false');
-  const [hideCompleted, setHideCompleted] = useState(() => localStorage.getItem('tt_hide_completed') === 'true');
-  const [highlightFree, setHighlightFree] = useState(() => localStorage.getItem('tt_highlight_free') !== 'false');
-
-  const toggleShowBreaks = () => {
-    const next = !showBreaks;
-    setShowBreaks(next);
-    localStorage.setItem('tt_show_breaks', String(next));
-  };
-  const toggleHideCompleted = () => {
-    const next = !hideCompleted;
-    setHideCompleted(next);
-    localStorage.setItem('tt_hide_completed', String(next));
-  };
-  const toggleHighlightFree = () => {
-    const next = !highlightFree;
-    setHighlightFree(next);
-    localStorage.setItem('tt_highlight_free', String(next));
-  };
-
-  // ── Library Book Loans State ───────────────────────────────────────────────
-  const [libraryLoans, setLibraryLoans] = useState(() => {
+  const handleUnlink = async () => {
     try {
-      const saved = localStorage.getItem('student_library_loans');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [
-      { id: 'b1', title: 'To Kill a Mockingbird', author: 'Harper Lee', barcode: 'LIB-84920', dueDate: '2026-10-15', isOverdue: true },
-      { id: 'b2', title: 'NCEA Level 3 Physics Study Guide', author: 'ESA Publications', barcode: 'LIB-19302', dueDate: '2026-10-28', isOverdue: false }
-    ];
+      const token = await getAccessTokenSilently().catch(() => '');
+      if (token) {
+        await fetch(`${API_URL}/api/timetable/ics`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        }).catch(() => {});
+      }
+    } catch { /* silent */ }
+    localStorage.removeItem('timetable_ics_url');
+    localStorage.removeItem('timetable_cache_date');
+    localStorage.removeItem('timetable_cache_data');
+    setIcsUrl('');
+    setPeriods([]);
+    setShowSettings(false);
+  };
+
+  // ── Timetable periods computation ──────────────────────────────────────────
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+
+  const activePeriodsList = periods.filter(p => {
+    return p.date === todayStr || !p.date;
   });
-  const [newBookTitle, setNewBookTitle] = useState('');
-  const [newBookAuthor, setNewBookAuthor] = useState('');
-  const [newBookDue, setNewBookDue] = useState('');
-  const [showAddBook, setShowAddBook] = useState(false);
 
-  const saveLoans = (loans) => {
-    setLibraryLoans(loans);
-    try { localStorage.setItem('student_library_loans', JSON.stringify(loans)); } catch {}
-  };
-
-  const handleAddBook = (e) => {
-    e.preventDefault();
-    if (!newBookTitle.trim()) return;
-    const newBook = {
-      id: `b-${Date.now()}`,
-      title: newBookTitle.trim(),
-      author: newBookAuthor.trim() || 'King\'s High Library',
-      barcode: `LIB-${Math.floor(10000 + Math.random() * 90000)}`,
-      dueDate: newBookDue || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-      isOverdue: false
-    };
-    saveLoans([...libraryLoans, newBook]);
-    setNewBookTitle('');
-    setNewBookAuthor('');
-    setNewBookDue('');
-    setShowAddBook(false);
-  };
-
-  const handleDeleteBook = (id) => {
-    saveLoans(libraryLoans.filter(b => b.id !== id));
-  };
-
-  // ── READONLY / DASHBOARD CLASS HERO (Matches mirror design) ────────────────
-  const processedPeriods = visiblePeriods.map(p => ({
+  const processedPeriods = activePeriodsList.map(p => ({
     ...p,
     details: getPeriodDetails(p, now)
   }));
@@ -582,434 +495,328 @@ export default function TimetableWidget({ widget = {}, onUpdateData, readonly = 
   const nextRoom = nextP?.room || nextP?.location || '--';
   const nextTime = nextP ? nextP.details.formattedStart : '--';
 
-  // ── School Breaks (Interval & Lunch) Detection ─────────────────────────────
   const nowHour = now.getHours();
   const nowMin = now.getMinutes();
   const nowTotalMins = nowHour * 60 + nowMin;
 
   const isInterval = showBreaks && (nowTotalMins >= (10 * 60 + 30) && nowTotalMins < (10 * 60 + 55));
   const isLunch = showBreaks && (nowTotalMins >= (12 * 60 + 45) && nowTotalMins < (13 * 60 + 30));
-  const isBreak = isInterval || isLunch;
 
-  let activeEyebrow = 'CURRENT CLASS';
-  let activeSubject = currentP?.subject || currentP?.summary || 'No Active Class';
+  let activeEyebrow = t('current_class');
+  let activeSubject = currentP?.subject || currentP?.summary || 'NO ACTIVE CLASS';
   let activeRoom = currentP?.room || currentP?.location || '--';
   let activeEnd = currentP ? currentP.details.formattedEnd : '--';
   let activeRemaining = currentP ? currentP.details.remainingMins : 0;
 
   if (isInterval) {
-    activeEyebrow = '🔔 SCHOOL BREAK';
-    activeSubject = 'INTERVAL (RECESS)';
-    activeRoom = 'Courtyard / Grounds';
+    activeEyebrow = t('interval');
+    activeSubject = t('morning_interval');
+    activeRoom = 'COURTYARD';
     activeEnd = '10:55am';
     activeRemaining = Math.max(0, (10 * 60 + 55) - nowTotalMins);
   } else if (isLunch) {
-    activeEyebrow = '🥪 SCHOOL BREAK';
-    activeSubject = 'LUNCHTIME';
-    activeRoom = 'Courtyard / Grounds';
+    activeEyebrow = t('lunch');
+    activeSubject = t('lunch_break');
+    activeRoom = 'COURTYARD';
     activeEnd = '1:30pm';
     activeRemaining = Math.max(0, (13 * 60 + 30) - nowTotalMins);
   }
 
-  const overdueCount = libraryLoans.filter(b => b.isOverdue).length;
-
-  if (readonly) {
-    return (
-      <section className="h-full flex flex-col justify-center gap-8 p-6 select-none">
-        {/* CURRENT CLASS BLOCK (Matches mirror hero) */}
-        <div className="flex flex-col gap-2">
-          <span className="text-[14px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
-            {activeEyebrow}
-          </span>
-          <h1 className="text-[64px] md:text-[80px] font-extrabold text-white leading-none tracking-tight my-1">
-            {activeSubject}
-          </h1>
-
-          <div className="flex gap-8 md:gap-12 mt-3">
-            <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
-              <span className="text-[32px] font-bold text-white">{activeRoom}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
-              <span className="text-[32px] font-bold text-white">{activeEnd}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[13px] uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
-              <span className={`text-[32px] font-bold font-mono ${activeRemaining <= 5 && activeRemaining > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
-                {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* NEXT CLASS BLOCK */}
-        {nextSubject && (
-          <div className="border-t border-[#1c1c1c] pt-5 mt-2 flex items-baseline gap-6">
-            <span className="text-[13px] uppercase tracking-[2px] font-bold text-[#8f8f8f] w-16 shrink-0">
-              NEXT
-            </span>
-            <div className="flex items-baseline gap-3">
-              <span className="text-[28px] md:text-[32px] font-bold text-white">
-                {nextSubject}
-              </span>
-              <span className="text-[16px] text-[#cbd5e1] font-mono">
-                {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Overdue Book Notice Banner (if any) */}
-        {overdueCount > 0 && (
-          <div className="border border-red-900/50 bg-red-950/20 px-4 py-2.5 rounded flex items-center justify-between text-xs font-mono text-red-300">
-            <div className="flex items-center gap-2">
-              <span className="text-red-400 font-bold">📚 LIBRARY ALERT:</span>
-              <span>You have {overdueCount} overdue book loan{overdueCount > 1 ? 's' : ''} to return to the library.</span>
-            </div>
-            <button
-              onClick={() => navigate('/timetable')}
-              className="underline text-red-400 hover:text-white cursor-pointer"
-            >
-              View Books →
-            </button>
-          </div>
-        )}
-      </section>
-    );
-  }
-
-  // ── EDIT / FULL CONFIGURATION VIEW ─────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
-            Timetable &amp; School Schedule
-          </h1>
-          <p className="text-xs text-[#8f8f8f] font-mono mt-1">
-            King's High School live calendar sync, bell times, schedule customization, and library book loans.
-          </p>
+    <section className="h-full flex flex-col p-5 select-none min-h-0 bg-[#000000] font-mono">
+      {/* HEADER: Highly Obvious Button to Toggle Settings (Exact same style as Notices) */}
+      <div className="flex items-center justify-between mb-3 pb-3 border-b border-[#222222] shrink-0">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-white uppercase tracking-wider">
+            {t('timetable')}
+          </h2>
+          {icsUrl && (
+            <span className="text-xs text-[#888888]">
+              ({processedPeriods.length} {t('periods')})
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
-          <span>{visiblePeriods.length} PERIODS LOADED</span>
-          <span className="text-[#38bdf8]">· KAMAR FEED ACTIVE</span>
-        </div>
+
+        {/* PROMINENT SETTINGS TOGGLE BUTTON - EXACT MATCH FOR NOTICES STYLE */}
+        <button
+          onClick={() => {
+            if (!icsUrl) {
+              setShowSetupModal(true);
+            } else {
+              setShowSettings(prev => !prev);
+            }
+          }}
+          className={`px-3.5 py-1.5 border font-mono text-xs font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none flex items-center gap-2 ${
+            showSettings
+              ? 'bg-white text-black border-white'
+              : 'bg-[#141414] text-white border-[#333333] hover:border-white hover:bg-[#202020]'
+          }`}
+          title="Click to configure timetable display and settings"
+        >
+          <span className="material-symbols-outlined text-sm">tune</span>
+          <span>{showSettings ? t('back_to_timetable') : t('timetable_settings')}</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-        {/* Left Column: Feed Link & Customization Preferences (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col gap-6">
-          {/* Active Calendar Feed Card */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              ACTIVE CALENDAR FEED
+      {/* BODY CONTENT: If no ICS URL is linked */}
+      {!icsUrl ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+          <h3 className="text-xl font-bold text-white mb-2 uppercase tracking-tight">
+            {t('no_timetable')}
+          </h3>
+          <p className="text-xs text-[#888888] max-w-xs mb-8 uppercase tracking-wider">
+            {t('link_kamar_prompt')}
+          </p>
+          <button
+            onClick={() => setShowSetupModal(true)}
+            className="px-8 py-4 bg-white hover:bg-[#e0e0e0] text-black font-mono text-sm font-bold uppercase tracking-wider rounded-none transition-all cursor-pointer"
+          >
+            {t('set_up_timetable')}
+          </button>
+        </div>
+      ) : showSettings ? (
+        /* TIMETABLE DISPLAY & FEED SETTINGS VIEW */
+        <div className="flex-1 flex flex-col gap-5 overflow-y-auto custom-scrollbar pr-1">
+          <div className="flex items-center justify-between pb-2 border-b border-[#1c1c1c]">
+            <span className="text-xs font-bold uppercase tracking-wider text-white">
+              {t('timetable_settings')}
             </span>
-            <div className="p-3 bg-[#000000] border border-[#1c1c1c] text-xs font-mono text-[#cbd5e1] break-all">
-              {icsUrl || 'None configured'}
-            </div>
-            <button
-              onClick={() => setShowSetup(true)}
-              className="mt-2 py-2 px-4 bg-[#141414] hover:bg-[#1e1e1e] border border-[#2a2a2a] text-xs font-mono font-bold text-white uppercase rounded transition-colors cursor-pointer"
-            >
-              Update Feed Link
-            </button>
           </div>
 
-          {/* Schedule View Range */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-3">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              VIEW SCHEDULE RANGE
+          {/* Timetable Layout Selection */}
+          <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase border-b border-[#1c1c1c] pb-2">
+              TIMETABLE LAYOUT
             </span>
-            <div className="grid grid-cols-3 gap-2">
-              {['today', 'tomorrow', 'week'].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => handleViewModeChange(m)}
-                  className={`py-2 px-3 border font-mono text-xs font-bold uppercase transition-colors cursor-pointer ${
-                    viewMode === m
-                      ? 'bg-[#38bdf8] text-black border-[#38bdf8]'
-                      : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white'
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Timetable Customization Preferences */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-4">
-            <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-              SCHEDULE CUSTOMIZATION PREFERENCES
-            </span>
-
-            {/* Toggle 1: School Breaks */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-white">Show School Breaks (Interval &amp; Lunch)</p>
-                <p className="text-[11px] text-[#8f8f8f]">Display dedicated break cards with countdowns between bells.</p>
-              </div>
+            <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={toggleShowBreaks}
-                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
-                  showBreaks ? 'bg-[#38bdf8]' : 'bg-[#222222]'
+                type="button"
+                onClick={() => {
+                  setLayoutMode('current_next');
+                  localStorage.setItem('timetable_layout_mode', 'current_next');
+                }}
+                className={`py-2 px-3 text-xs font-mono font-bold uppercase transition-all rounded-none cursor-pointer ${
+                  layoutMode === 'current_next'
+                    ? 'bg-white text-black'
+                    : 'bg-[#141414] text-[#888888] hover:text-white border border-[#262626] hover:border-[#444444]'
                 }`}
               >
-                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                  showBreaks ? 'translate-x-5' : 'translate-x-0'
-                }`} />
+                CURRENT &amp; NEXT (DEFAULT)
               </button>
-            </div>
-
-            {/* Toggle 2: Hide Completed */}
-            <div className="flex items-center justify-between border-t border-[#1c1c1c] pt-3">
-              <div>
-                <p className="text-xs font-bold text-white">Hide Completed Periods</p>
-                <p className="text-[11px] text-[#8f8f8f]">Remove finished classes from today's timetable list.</p>
-              </div>
               <button
-                onClick={toggleHideCompleted}
-                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
-                  hideCompleted ? 'bg-[#38bdf8]' : 'bg-[#222222]'
+                type="button"
+                onClick={() => {
+                  setLayoutMode('all_today');
+                  localStorage.setItem('timetable_layout_mode', 'all_today');
+                }}
+                className={`py-2 px-3 text-xs font-mono font-bold uppercase transition-all rounded-none cursor-pointer ${
+                  layoutMode === 'all_today'
+                    ? 'bg-white text-black'
+                    : 'bg-[#141414] text-[#888888] hover:text-white border border-[#262626] hover:border-[#444444]'
                 }`}
               >
-                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                  hideCompleted ? 'translate-x-5' : 'translate-x-0'
-                }`} />
-              </button>
-            </div>
-
-            {/* Toggle 3: Highlight Free / Study */}
-            <div className="flex items-center justify-between border-t border-[#1c1c1c] pt-3">
-              <div>
-                <p className="text-xs font-bold text-white">Highlight Study / Free Periods</p>
-                <p className="text-[11px] text-[#8f8f8f]">Emphasize study line and non-contact times.</p>
-              </div>
-              <button
-                onClick={toggleHighlightFree}
-                className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
-                  highlightFree ? 'bg-[#38bdf8]' : 'bg-[#222222]'
-                }`}
-              >
-                <div className={`bg-black w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                  highlightFree ? 'translate-x-5' : 'translate-x-0'
-                }`} />
+                ALL OF TODAY
               </button>
             </div>
           </div>
 
-          {/* King's Library & Book Loans Card */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-5 flex flex-col gap-4">
+          {/* Display Feature Toggles */}
+          <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
+            <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase border-b border-[#1c1c1c] pb-2">
+              {t('display_options')}
+            </span>
+            <div className="flex flex-col gap-2.5">
+              <label className="flex items-center justify-between cursor-pointer py-1">
+                <span className="text-xs text-white uppercase">{t('show_breaks')}</span>
+                <input
+                  type="checkbox"
+                  checked={showBreaks}
+                  onChange={(e) => {
+                    setShowBreaks(e.target.checked);
+                    localStorage.setItem('timetable_show_breaks', e.target.checked ? '1' : '0');
+                  }}
+                  className="accent-white w-4 h-4 cursor-pointer"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Calendar Feed Source & Actions */}
+          <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                  📚 LIBRARY BOOKS &amp; LOANS
-                </span>
-                {overdueCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
-                    {overdueCount} OVERDUE
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => setShowAddBook(!showAddBook)}
-                className="text-[11px] font-mono text-[#38bdf8] hover:underline cursor-pointer"
-              >
-                {showAddBook ? 'Cancel' : '+ Add Book'}
-              </button>
+              <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase">
+                {t('calendar_feed')}
+              </span>
+              <span className="text-[10px] font-mono text-emerald-400 uppercase font-bold">
+                ✓ CONNECTED
+              </span>
             </div>
-
-            {showAddBook && (
-              <form onSubmit={handleAddBook} className="flex flex-col gap-2 p-3 bg-[#000000] border border-[#222] rounded">
-                <input
-                  type="text"
-                  placeholder="Book Title (e.g. 1984, Biology Study Guide)"
-                  value={newBookTitle}
-                  onChange={e => setNewBookTitle(e.target.value)}
-                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Author (optional)"
-                  value={newBookAuthor}
-                  onChange={e => setNewBookAuthor(e.target.value)}
-                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
-                />
-                <input
-                  type="date"
-                  value={newBookDue}
-                  onChange={e => setNewBookDue(e.target.value)}
-                  className="bg-[#111] border border-[#333] px-2.5 py-1.5 text-xs text-white font-mono outline-none"
-                />
-                <button
-                  type="submit"
-                  className="py-1.5 bg-[#38bdf8] text-black font-mono font-bold text-xs uppercase cursor-pointer"
-                >
-                  Save Loan
-                </button>
-              </form>
-            )}
-
-            <div className="flex flex-col gap-2">
-              {libraryLoans.length === 0 ? (
-                <p className="text-xs text-[#666] font-mono italic">No borrowed books currently on loan.</p>
-              ) : (
-                libraryLoans.map((b) => (
-                  <div
-                    key={b.id}
-                    className={`p-3 border rounded flex items-center justify-between text-xs font-mono ${
-                      b.isOverdue
-                        ? 'bg-red-950/20 border-red-800/50 text-red-300'
-                        : 'bg-[#000000] border-[#1c1c1c] text-[#cbd5e1]'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white">{b.title}</span>
-                        {b.isOverdue && (
-                          <span className="px-1.5 py-0.5 bg-red-900/60 text-red-200 text-[9px] uppercase font-bold rounded">
-                            OVERDUE
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-[#8f8f8f] mt-0.5">{b.author} · Due: {b.dueDate}</p>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteBook(b.id)}
-                      title="Return / Remove loan"
-                      className="text-[#666] hover:text-red-400 p-1 cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
+            <div className="text-[11px] font-mono text-[#888888] truncate bg-[#060606] p-2 border border-[#1a1a1a]">
+              {icsUrl}
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowSetupModal(true)}
+                className="px-4 py-2 bg-white text-black hover:bg-[#e0e0e0] text-xs font-mono font-bold uppercase rounded-none transition-colors cursor-pointer"
+              >
+                {t('reconfigure_link')}
+              </button>
+              <button
+                type="button"
+                onClick={() => fetchTimetable(true)}
+                className="px-4 py-2 bg-[#141414] border border-[#333333] hover:border-white text-white text-xs font-mono font-bold uppercase rounded-none transition-colors cursor-pointer"
+              >
+                {loading ? 'SYNCING...' : t('sync_timetable')}
+              </button>
+              <button
+                type="button"
+                onClick={handleUnlink}
+                className="px-4 py-2 border border-[#441111] bg-red-950/20 hover:bg-red-900/30 text-red-400 text-xs font-mono font-bold uppercase rounded-none transition-colors cursor-pointer ml-auto"
+              >
+                {t('unlink_timetable')}
+              </button>
             </div>
           </div>
         </div>
-
-        {/* Right Column: Full Day Class Schedule & Mirror Preview (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col gap-6">
-          {/* Mirror Hero Preview Card */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-6">
-            <div className="border-b border-[#1c1c1c] pb-3 mb-4 flex items-center justify-between">
-              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                LIVE MIRROR DISPLAY HERO
+      ) : layoutMode === 'all_today' ? (
+        /* ALL OF TODAY TIMETABLE LAYOUT */
+        <div className="flex-1 flex flex-col gap-6 overflow-y-auto custom-scrollbar py-2 pr-1">
+          {/* Previous periods of today: same styling as next, but crossed out & grey */}
+          {processedPeriods.filter(p => p.details.isDone && p !== currentP).length > 0 && (
+            <div className="flex flex-col gap-2.5">
+              <span className="text-[10px] uppercase tracking-widest text-[#555555] font-bold">
+                COMPLETED EARLIER TODAY
               </span>
-              <span className="text-[11px] font-mono text-[#38bdf8]">MATCHING MIRROR LAYOUT</span>
-            </div>
-
-            <div className="bg-[#000000] border border-[#1c1c1c] p-6 rounded flex flex-col justify-center">
-              <div className="flex flex-col gap-2">
-                <span className="text-[13px] uppercase tracking-[2px] font-extrabold text-[#38bdf8]">
-                  {activeEyebrow}
-                </span>
-                <h2 className="text-[54px] font-extrabold text-white leading-none tracking-tight my-1">
-                  {activeSubject}
-                </h2>
-
-                <div className="flex gap-8 mt-3">
-                  <div className="flex flex-col">
-                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Room</span>
-                    <span className="text-2xl font-bold text-white">{activeRoom}</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Ends</span>
-                    <span className="text-2xl font-bold text-white">{activeEnd}</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-xs uppercase tracking-wider font-bold text-[#94a3b8]">Left</span>
-                    <span className="text-2xl font-bold font-mono text-white">
-                      {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
+              {processedPeriods.filter(p => p.details.isDone && p !== currentP).map((p, idx) => (
+                <div
+                  key={p.id || `prev-${idx}`}
+                  className="border-t border-[#1c1c1c] pt-3 flex items-baseline gap-6 line-through text-[#555555] opacity-50 select-none"
+                >
+                  <span className="text-xs uppercase tracking-[2px] font-bold text-[#444444] w-16 shrink-0">
+                    {p.details.formattedStart}
+                  </span>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-base font-bold uppercase">
+                      {p.subject || p.summary}
+                    </span>
+                    <span className="text-xs text-[#555555]">
+                      {p.room || p.location || '--'} {p.details.formattedEnd !== '--' ? `· ended ${p.details.formattedEnd}` : ''}
                     </span>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
+
+          {/* Current Period: Exact same hero styling */}
+          <div className="flex flex-col gap-2 border-t border-[#222222] pt-4">
+            <span className="text-xs uppercase tracking-[2px] font-bold text-[#888888]">
+              {activeEyebrow}
+            </span>
+            <h1 className="text-[48px] md:text-[64px] font-bold text-white leading-none tracking-tight my-1 uppercase">
+              {activeSubject}
+            </h1>
+
+            <div className="flex gap-8 md:gap-12 mt-2">
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('room')}</span>
+                <span className="text-[26px] font-bold text-white">{activeRoom}</span>
               </div>
-
-              {nextSubject && (
-                <div className="border-t border-[#1c1c1c] pt-4 mt-6 flex items-baseline gap-4">
-                  <span className="text-xs uppercase tracking-[2px] font-bold text-[#8f8f8f]">
-                    NEXT
-                  </span>
-                  <span className="text-xl font-bold text-white">{nextSubject}</span>
-                  <span className="text-xs text-[#cbd5e1] font-mono">{nextRoom} · {nextTime}</span>
-                </div>
-              )}
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('ends')}</span>
+                <span className="text-[26px] font-bold text-white">{activeEnd}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('left')}</span>
+                <span className={`text-[26px] font-bold ${activeRemaining <= 5 && activeRemaining > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                  {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Full Schedule Breakdown Table */}
-          <div className="bg-[#0a0a0a] border border-[#1c1c1c] p-6 flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-3">
-              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                COMPLETE SCHEDULE BREAKDOWN
-              </span>
-              <span className="text-[11px] font-mono text-[#8f8f8f]">
-                {processedPeriods.length} CLASSES SCHEDULED
-              </span>
+          {/* Next and all subsequent periods of today */}
+          {processedPeriods.filter(p => p !== currentP && !p.details.isDone).length > 0 && (
+            <div className="flex flex-col gap-3 pt-2">
+              {processedPeriods.filter(p => p !== currentP && !p.details.isDone).map((p, idx) => {
+                const isImmediateNext = idx === 0;
+                return (
+                  <div key={p.id || `up-${idx}`} className="border-t border-[#1c1c1c] pt-3 flex items-baseline gap-6">
+                    <span className={`text-xs uppercase tracking-[2px] font-bold ${isImmediateNext ? 'text-[#888888]' : 'text-[#555555]'} w-16 shrink-0`}>
+                      {isImmediateNext ? t('next_class') : p.details.formattedStart}
+                    </span>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-[22px] md:text-[26px] font-bold text-white uppercase">
+                        {p.subject || p.summary}
+                      </span>
+                      <span className="text-[14px] text-[#888888]">
+                        {p.room || p.location || '--'} {p.details.formattedStart !== '--' ? `· ${p.details.formattedStart}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-
-            <div className="flex flex-col gap-2">
-              {processedPeriods.length === 0 ? (
-                <p className="text-xs text-[#8f8f8f] font-mono italic py-4 text-center">
-                  No classes loaded for this period range.
-                </p>
-              ) : (
-                processedPeriods
-                  .filter(p => !hideCompleted || !p.details.isDone)
-                  .map((p, idx) => {
-                    const isStudy = highlightFree && (p.subject?.toLowerCase().includes('study') || p.subject?.toLowerCase().includes('free'));
-                    return (
-                      <div
-                        key={idx}
-                        className={`p-3.5 border flex items-center justify-between transition-colors ${
-                          p.details.isNow
-                            ? 'bg-[#001824] border-[#38bdf8] text-white'
-                            : p.details.isDone
-                            ? 'bg-[#000000] border-[#161616] opacity-60 text-[#777]'
-                            : isStudy
-                            ? 'bg-[#150f24] border-[#818cf8]/40 text-[#c7d2fe]'
-                            : 'bg-[#000000] border-[#1c1c1c] text-[#cbd5e1]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <span className={`px-2.5 py-1 text-[11px] font-mono font-bold uppercase rounded ${
-                            p.details.isNow
-                              ? 'bg-[#38bdf8] text-black'
-                              : 'bg-[#161616] text-[#8f8f8f]'
-                          }`}>
-                            P{idx + 1}
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-white">{p.subject || p.summary}</span>
-                              {p.details.isNow && (
-                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                              )}
-                            </div>
-                            <span className="text-xs text-[#8f8f8f] font-mono">
-                              Room: {p.room || p.location || '--'} {p.teacher ? `· ${p.teacher}` : ''}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col items-end font-mono text-xs">
-                          <span className="text-white font-medium">{p.details.formattedStart} – {p.details.formattedEnd}</span>
-                          <span className={p.details.isNow ? 'text-[#38bdf8] font-bold' : 'text-[#666]'}>
-                            {p.details.isNow ? `${p.details.remainingMins}m remaining` : p.details.isDone ? 'Completed' : 'Upcoming'}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
-          </div>
+          )}
         </div>
-      </div>
-    </div>
+      ) : (
+        /* NORMAL TIMETABLE HERO VIEW (CURRENT & NEXT) */
+        <div className="flex-1 flex flex-col justify-center gap-8 py-4">
+          {/* Current Period / Break Hero */}
+          <div className="flex flex-col gap-2">
+            <span className="text-xs uppercase tracking-[2px] font-bold text-[#888888]">
+              {activeEyebrow}
+            </span>
+            <h1 className="text-[56px] md:text-[72px] font-bold text-white leading-none tracking-tight my-1 uppercase">
+              {activeSubject}
+            </h1>
+
+            <div className="flex gap-8 md:gap-12 mt-3">
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('room')}</span>
+                <span className="text-[28px] font-bold text-white">{activeRoom}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('ends')}</span>
+                <span className="text-[28px] font-bold text-white">{activeEnd}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] uppercase tracking-wider font-bold text-[#777777]">{t('left')}</span>
+                <span className={`text-[28px] font-bold ${activeRemaining <= 5 && activeRemaining > 0 ? 'text-[#ff4d4d]' : 'text-white'}`}>
+                  {activeRemaining > 0 ? `${activeRemaining}m` : '--'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Next Class Block */}
+          {nextSubject && (
+            <div className="border-t border-[#1c1c1c] pt-5 mt-2 flex items-baseline gap-6">
+              <span className="text-xs uppercase tracking-[2px] font-bold text-[#888888] w-16 shrink-0">
+                {t('next_class')}
+              </span>
+              <div className="flex items-baseline gap-3">
+                <span className="text-[24px] md:text-[28px] font-bold text-white uppercase">
+                  {nextSubject}
+                </span>
+                <span className="text-[14px] text-[#888888]">
+                  {nextRoom} {nextTime !== '--' ? `· ${nextTime}` : ''}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <TimetableSetupModal
+        isOpen={showSetupModal}
+        onClose={handleCloseModal}
+        onSave={handleSaveUrl}
+        saving={saving}
+        error={saveError}
+        currentUrl={icsUrl}
+      />
+    </section>
   );
 }

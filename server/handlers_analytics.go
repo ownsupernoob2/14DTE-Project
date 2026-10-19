@@ -406,12 +406,86 @@ func getAdminAnalytics(c echo.Context) error {
 	return c.JSON(200, resp)
 }
 
+// ── A/B Experiment Dynamic Configuration ──────────────────────────────────
+
+type ABExperimentConfig struct {
+	Mode               string `json:"mode"`                 // "auto", "force_a", "force_b", "hourly", "daily"
+	AutoSwitchInterval string `json:"auto_switch_interval"` // "session", "1h", "24h"
+	ActiveVariant      string `json:"active_variant"`      // "A" or "B"
+	AdminEmail         string `json:"admin_email"`
+	UpdatedAt          int64  `json:"updated_at"`
+}
+
+var (
+	abConfigMutex   sync.RWMutex
+	currentABConfig = ABExperimentConfig{
+		Mode:               "auto",
+		AutoSwitchInterval: "session",
+		ActiveVariant:      "A",
+		AdminEmail:         DefaultAdminEmail,
+		UpdatedAt:          time.Now().Unix(),
+	}
+)
+
+func computeActiveVariant(cfg ABExperimentConfig) string {
+	switch cfg.Mode {
+	case "force_a":
+		return "A"
+	case "force_b":
+		return "B"
+	case "hourly":
+		if (time.Now().Unix()/3600)%2 == 0 {
+			return "A"
+		}
+		return "B"
+	case "daily":
+		if (time.Now().Unix()/86400)%2 == 0 {
+			return "A"
+		}
+		return "B"
+	default: // "auto"
+		analyticsMutex.RLock()
+		n := len(analyticsLog)
+		analyticsMutex.RUnlock()
+		if n%2 == 0 {
+			return "A"
+		}
+		return "B"
+	}
+}
+
 // GET /api/analytics/config
 func getAnalyticsConfig(c echo.Context) error {
-	return c.JSON(200, map[string]interface{}{
-		"experiment_name": "touchless_affordance_and_dwell_v1",
-		"enabled":         true,
-		"variants":        []string{"A", "B"},
-		"admin_email":     DefaultAdminEmail,
-	})
+	abConfigMutex.RLock()
+	cfg := currentABConfig
+	abConfigMutex.RUnlock()
+
+	cfg.ActiveVariant = computeActiveVariant(cfg)
+	return c.JSON(200, cfg)
 }
+
+// POST /api/analytics/config
+func updateAnalyticsConfig(c echo.Context) error {
+	var req struct {
+		Mode               string `json:"mode"`
+		AutoSwitchInterval string `json:"auto_switch_interval"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+	}
+
+	abConfigMutex.Lock()
+	if req.Mode != "" {
+		currentABConfig.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
+	}
+	if req.AutoSwitchInterval != "" {
+		currentABConfig.AutoSwitchInterval = strings.ToLower(strings.TrimSpace(req.AutoSwitchInterval))
+	}
+	currentABConfig.UpdatedAt = time.Now().Unix()
+	cfg := currentABConfig
+	abConfigMutex.Unlock()
+
+	cfg.ActiveVariant = computeActiveVariant(cfg)
+	return c.JSON(200, cfg)
+}
+

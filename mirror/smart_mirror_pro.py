@@ -7,12 +7,13 @@ import time
 import threading
 import requests
 import re
+import socket
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, pyqtSignal
-from PyQt6.QtGui import QFont, QFontDatabase, QPixmap, QMovie, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QPointF, QSize, pyqtSignal, QObject
+from PyQt6.QtGui import QFont, QFontDatabase, QPixmap, QMovie, QKeySequence, QPainter, QColor, QPen, QBrush, QRadialGradient, QPainterPath
 
 from config import *
 try:
@@ -162,8 +163,362 @@ class GestureVideoPlayer:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main smart mirror window — clean 2-column layout matching web screenshot
+# Real-Time Zero-Latency UDP Gesture Receiver
 # ─────────────────────────────────────────────────────────────────────────────
+class GestureUdpReceiver(QObject):
+    """Sub-millisecond UDP listener receiving instant hand gesture packets from gesture_engine."""
+    gesture_received = pyqtSignal(dict)
+
+    def __init__(self, parent=None, port=50123):
+        super().__init__(parent)
+        self.port = port
+        self.running = False
+        self._thread = None
+
+    def start(self):
+        self.running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def _run(self):
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("127.0.0.1", self.port))
+            sock.settimeout(0.5)
+            while self.running:
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    if data:
+                        parsed = json.loads(data.decode('utf-8'))
+                        self.gesture_received.emit(parsed)
+                except socket.timeout:
+                    continue
+                except Exception:
+                    time.sleep(0.005)
+        except Exception:
+            pass
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Smooth Gesture Trail Overlay — Catmull-Rom spline ribbon
+# ─────────────────────────────────────────────────────────────────────────────
+class GestureTrailOverlay(QWidget):
+    """Smooth gesture trail with sub-frame interpolation.
+
+    The gesture engine delivers positions at camera FPS (~15-30).  Between
+    real measurements the render head exponentially lerps toward the latest
+    target, injecting a new interpolated point on every 8 ms tick so the
+    trail appears to run at 120 FPS regardless of the upstream rate.
+
+    Colour: near-white when hovering, royal blue when pinching.
+    """
+    _OPEN_RGB  = (220, 220, 255)
+    _PINCH_RGB = ( 59, 130, 246)
+
+    # Lerp alpha per 8ms tick.  0.38 gives ~95% convergence in ~35ms.
+    _LERP_ALPHA = 0.38
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+        # Raw camera-rate state (for ripple / pinch detection only)
+        self._last_raw_x  = None
+        self._last_raw_y  = None
+        self._was_pinched = False
+
+        # Interpolated render head - moves every tick toward the target
+        self._rx = None          # current render position
+        self._ry = None
+        self._target_x = None   # latest real measurement
+        self._target_y = None
+        self._target_pinched = False
+
+        # High-frequency interpolated point buffer for drawing
+        # Each entry: (x, y, timestamp, pinched)
+        self._ipoints   = []
+        self._ripples   = []     # [(x, y, t_start, duration, QColor), ...]
+        self._max_age   = 0.32   # seconds trail lifespan
+        self._STILL_SQ  = 8**2   # suppress static trail if total travel < 8 px
+        self._MIN_MOVE  = 2.0    # px threshold for raw camera samples
+
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)  # Windows: bypasses 15ms default resolution
+        self._timer.setInterval(8)    # 120 FPS tick
+        self._timer.timeout.connect(self._tick)
+        self._active = False
+        self.hide()
+
+    def is_empty(self):
+        return len(self._ipoints) == 0
+
+    def add_point(self, x, y, pinched=False):
+        """Called by the gesture engine at camera rate (~15-30 fps)."""
+        # Ripple on pinch transition
+        if pinched and not self._was_pinched:
+            self.trigger_ripple(x, y, color=QColor(59, 130, 246), duration=0.28)
+        elif not pinched and self._was_pinched:
+            self.trigger_ripple(x, y, color=QColor(210, 220, 255), duration=0.16)
+        self._was_pinched = pinched
+
+        # Check if camera sample has moved enough to update the target
+        if self._last_raw_x is not None:
+            dx = x - self._last_raw_x
+            dy = y - self._last_raw_y
+            if dx*dx + dy*dy < self._MIN_MOVE ** 2:
+                return   # hand stationary -- lerp continues toward existing target
+        self._last_raw_x, self._last_raw_y = x, y
+
+        # Update the lerp target
+        self._target_x = float(x)
+        self._target_y = float(y)
+        self._target_pinched = pinched
+
+        # Seed render head on first point so there is no initial lag
+        if self._rx is None:
+            self._rx, self._ry = self._target_x, self._target_y
+
+        if not self._active:
+            self._active = True
+            self._timer.start()
+            self.show()
+            self.raise_()
+
+    def trigger_ripple(self, x, y, color=None, duration=0.28):
+        if color is None:
+            color = QColor(200, 200, 255)
+        self._ripples.append((float(x), float(y), time.time(), duration, color))
+        if not self._active:
+            self._active = True
+            self._timer.start()
+            self.show()
+            self.raise_()
+        self.update()
+
+    def fade_out(self):
+        """Hand left the frame -- stop advancing the lerp target."""
+        self._target_x = None
+        self._target_y = None
+        self._last_raw_x = None
+        self._last_raw_y = None
+        self._was_pinched = False
+
+    def clear_trail(self):
+        self._ipoints.clear()
+        self._ripples.clear()
+        self._last_raw_x = None
+        self._last_raw_y = None
+        self._was_pinched = False
+        self._rx = self._ry = None
+        self._target_x = self._target_y = None
+        if self._active:
+            self._timer.stop()
+            self._active = False
+            self.hide()
+        self.update()
+
+    def _tick(self):
+        now = time.time()
+
+        # Advance the interpolated render head toward the target
+        if self._target_x is not None and self._rx is not None:
+            a = self._LERP_ALPHA
+            new_rx = self._rx + a * (self._target_x - self._rx)
+            new_ry = self._ry + a * (self._target_y - self._ry)
+            moved_sq = (new_rx - self._rx)**2 + (new_ry - self._ry)**2
+            if moved_sq >= 1.0:   # only record if head moved >= 1px
+                self._rx, self._ry = new_rx, new_ry
+                self._ipoints.append((self._rx, self._ry, now, self._target_pinched))
+
+        # Prune stale entries
+        cutoff = now - self._max_age
+        self._ipoints = [p for p in self._ipoints if p[2] >= cutoff]
+        self._ripples = [r for r in self._ripples if now - r[2] <= r[3]]
+
+        if not self._ipoints and not self._ripples:
+            self._timer.stop()
+            self._active = False
+            self._rx = self._ry = None
+            self.hide()
+            return
+
+        self.update()
+
+    @staticmethod
+    def _smooth_path(pts):
+        """Mid-point quadratic Bezier through recorded positions (C1 continuous)."""
+        path = QPainterPath()
+        if len(pts) < 2:
+            return path
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        path.moveTo(xs[0], ys[0])
+        for i in range(1, len(pts) - 1):
+            mid_x = (xs[i] + xs[i+1]) * 0.5
+            mid_y = (ys[i] + ys[i+1]) * 0.5
+            path.quadTo(xs[i], ys[i], mid_x, mid_y)
+        path.lineTo(xs[-1], ys[-1])
+        return path
+
+    def paintEvent(self, event):
+        now = time.time()
+        pts = [p for p in self._ipoints if now - p[2] <= self._max_age]
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Ripple bursts
+        for rx, ry, rt, rd, rcolor in self._ripples:
+            age = (now - rt) / rd
+            if age > 1.0:
+                continue
+            radius = 5 + 20 * age
+            alpha  = int(190 * (1.0 - age) ** 1.6)
+            c = QColor(rcolor.red(), rcolor.green(), rcolor.blue(), alpha)
+            painter.setPen(QPen(c, 1.8))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(rx, ry), radius, radius)
+
+        # Smooth trail ribbon
+        n = len(pts)
+        if n < 2:
+            painter.end()
+            return
+
+        # Suppress if total travel is too small (stationary hover)
+        dx = pts[-1][0] - pts[0][0]
+        dy = pts[-1][1] - pts[0][1]
+        if dx*dx + dy*dy < self._STILL_SQ:
+            painter.end()
+            return
+
+        pinched = pts[-1][3]
+        r, g, b = self._PINCH_RGB if pinched else self._OPEN_RGB
+        tip_life = max(0.0, 1.0 - (now - pts[-1][2]) / self._max_age)
+
+        path = self._smooth_path(pts)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Pass 1: wide diffuse glow
+        painter.setPen(QPen(QColor(r, g, b, int(85 * tip_life)), 15,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(path)
+
+        # Pass 2: medium halo
+        painter.setPen(QPen(QColor(r, g, b, int(160 * tip_life)), 7,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(path)
+
+        # Pass 3: bright core
+        painter.setPen(QPen(QColor(r, g, b, int(230 * tip_life)), 2.5,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(path)
+
+        # Pass 4: white-hot spine on the newest 40% of the trail
+        if n >= 4 and tip_life > 0.05:
+            tip_pts = pts[max(0, int(n * 0.60)):]
+            if len(tip_pts) >= 2:
+                tip_path = self._smooth_path(tip_pts)
+                painter.setPen(QPen(QColor(255, 255, 255, int(220 * tip_life)), 1.4,
+                                    Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.drawPath(tip_path)
+
+        painter.end()
+
+
+
+class GuestScanCallout(QWidget):
+    """Bouncing + pulsing STUDENT ID SCAN callout drawn entirely in paintEvent.
+
+    Avoids QGraphicsOpacityEffect (which conflicts with the overlay's own
+    fade effect and causes UI freezes). The widget drives its own 60 fps
+    timer and uses time.time() + math.sin() to compute both the bounce
+    offset and the alpha pulse on every frame.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.setStyleSheet("background: transparent;")
+
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.setInterval(16)   # 60 fps
+        self._timer.timeout.connect(self.update)
+
+    def start(self):
+        self._timer.start()
+        self.update()
+
+    def stop(self):
+        self._timer.stop()
+
+    def paintEvent(self, event):
+        import math as _math
+        t = time.time()
+
+        # Pulse: 0.55 -> 1.0 oscillation at ~0.8 Hz
+        pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math.sin(t * _math.pi * 1.6))
+
+        # Bounce: arrow moves up/down 12px at ~1.2 Hz
+        bounce = 12.0 * _math.sin(t * _math.pi * 2.4)
+
+        alpha = int(255 * pulse)
+        w, h = self.width(), self.height()
+        half = h // 2
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        color = QColor(255, 255, 255, alpha)
+        painter.setPen(color)
+
+        # --- Text: "STUDENT ID SCAN" in the top half ---
+        font = painter.font()
+        font.setFamily("Segoe UI")
+        font.setPixelSize(46)
+        font.setWeight(QFont.Weight.Black)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 7)
+        painter.setFont(font)
+        text_rect = QRect(0, 0, w, half)
+        painter.drawText(text_rect,
+                         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                         "STUDENT ID SCAN")
+
+        # --- Arrow "v" in the bottom half, bouncing ---
+        afont = painter.font()
+        afont.setPixelSize(68)
+        afont.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
+        painter.setFont(afont)
+
+        # Translate painter down by bounce amount
+        painter.translate(0.0, bounce)
+        arrow_rect = QRect(0, half, w, half)
+        painter.drawText(arrow_rect,
+                         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                         "▼")
+
+        painter.end()
+
+
 class SmartMirrorPro(QMainWindow):
     barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
     banner_fetched_signal = pyqtSignal(str)
@@ -184,13 +539,13 @@ class SmartMirrorPro(QMainWindow):
         self.server_status_signal.connect(self._on_server_status_changed)
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
-        hk_id = QFontDatabase.addApplicationFont(
-            os.path.join(os.path.dirname(__file__), 'assets', 'HankenGrotesk.ttf')
-        )
-        if hk_id >= 0:
-            families = QFontDatabase.applicationFontFamilies(hk_id)
-            if families:
-                QApplication.instance().setFont(QFont(families[0], 12))
+        font_path = os.path.join(os.path.dirname(__file__), 'assets', 'HankenGrotesk.ttf')
+        if os.path.exists(font_path):
+            hk_id = QFontDatabase.addApplicationFont(font_path)
+            if hk_id >= 0:
+                families = QFontDatabase.applicationFontFamilies(hk_id)
+                if families:
+                    QApplication.instance().setFont(QFont(families[0], 12))
 
         # ── Central widget ────────────────────────────────────────────────
         self.central_widget = QWidget(self)
@@ -286,12 +641,20 @@ class SmartMirrorPro(QMainWindow):
 
         self.gesture_timer = QTimer(self)
         self.gesture_timer.timeout.connect(self._poll_gestures)
-        self.gesture_timer.start(50)
+        self.gesture_timer.start(25)
+
+        # Real-time sub-millisecond UDP gesture listener (bypasses disk I/O and polling lag)
+        self.gesture_receiver = GestureUdpReceiver(self)
+        self.gesture_receiver.gesture_received.connect(self._handle_gesture_direct)
+        self.gesture_receiver.start()
 
         self.banner_timer = QTimer(self)
         self.banner_timer.timeout.connect(self._poll_banner)
         self.banner_timer.start(30000)
         self._poll_banner()
+
+        # Fetch version code from server /health
+        self._fetch_server_version()
 
         # ── Window mode ───────────────────────────────────────────────────
         if os.environ.get('MIRROR_WINDOWED') == '1':
@@ -300,6 +663,25 @@ class SmartMirrorPro(QMainWindow):
         else:
             self.showFullScreen()
             self.setCursor(Qt.CursorShape.BlankCursor)
+
+    def _fetch_server_version(self):
+        """Asynchronously query server /health for dynamic version string."""
+        def _worker():
+            try:
+                resp = requests.get(f"{API_URL}/health", timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    ver = data.get("version")
+                    if ver:
+                        QTimer.singleShot(0, lambda: self._apply_server_version(ver))
+            except Exception:
+                pass
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_server_version(self, ver):
+        if hasattr(self, 'version_lbl') and self.version_lbl:
+            self.version_lbl.setText(ver)
+            self.version_lbl.adjustSize()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: banner
@@ -374,7 +756,7 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.hide()
 
         # Variant B proactive dwell hint pill in header
-        self.dwell_hint_pill = QLabel("✋ Hold hand in top-right for Timetable", self.central_widget)
+        self.dwell_hint_pill = QLabel("Hold hand in top-right for Timetable", self.central_widget)
         self.dwell_hint_pill.setObjectName("DwellHintPill")
         self.dwell_hint_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dwell_hint_pill.setStyleSheet("""
@@ -383,9 +765,9 @@ class SmartMirrorPro(QMainWindow):
                 font-size: 13px;
                 font-weight: 700;
                 color: #e2e8f0;
-                background: rgba(15, 23, 42, 0.88);
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                border-radius: 12px;
+                background: #000000;
+                border: none;
+                border-radius: 0px;
                 padding: 4px 12px;
             }
         """)
@@ -409,37 +791,29 @@ class SmartMirrorPro(QMainWindow):
         """)
         self.barcode_guide_pill.hide()
 
-        # Variant B live floating on-screen hand cursor dot
+        # Responsive fluid gesture trail overlay (replaces static cursor dot)
+        self.gesture_trail = GestureTrailOverlay(self.central_widget)
+        self.gesture_trail.setObjectName("GestureTrailOverlay")
+
+        # Kept hidden for backward compatibility
         self.hand_cursor_dot = QLabel(self.central_widget)
         self.hand_cursor_dot.setObjectName("HandCursorDot")
-        self.hand_cursor_dot.setFixedSize(28, 28)
-        self.hand_cursor_dot.setStyleSheet("""
-            #HandCursorDot {
-                background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 rgba(79, 195, 255, 0.95), stop:0.7 rgba(56, 189, 248, 0.8), stop:1 rgba(56, 189, 248, 0));
-                border: 2px solid #ffffff;
-                border-radius: 14px;
-            }
-        """)
         self.hand_cursor_dot.hide()
 
     def _update_barcode_guide(self):
-        """Display visual arrow pointing down to physical barcode reader during guest/tutorial."""
-        if not hasattr(self, 'barcode_guide_pill'):
-            return
-        is_guest = (getattr(self, '_last_state', 'idle') == 'guest')
-        is_tutorial = (hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None and self.gesture_demo_overlay.isVisible())
-        
-        if (is_guest or is_tutorial) and getattr(self, '_last_state', 'idle') != 'user':
-            pill_w = 520
-            pill_h = 42
-            x = (self.width() - pill_w) // 2
-            y = self.height() - pill_h - 20
-            self.barcode_guide_pill.setGeometry(x, y, pill_w, pill_h)
-            self.barcode_guide_pill.setText("💳 STUDENT ID BARCODE SCANNER ⬇️  (Slide card into physical slot below)")
-            self.barcode_guide_pill.show()
-            self.barcode_guide_pill.raise_()
-        else:
+        """Keep barcode guide pill hidden per user instruction."""
+        if hasattr(self, 'barcode_guide_pill'):
             self.barcode_guide_pill.hide()
+
+    def _position_guest_scan_callout(self):
+        """Place STUDENT ID SCAN callout at bottom-center of the window."""
+        if not hasattr(self, 'guest_scan_callout'):
+            return
+        sw = self.width()
+        sh = self.height()
+        ch = 220
+        cy = sh - ch - 50
+        self.guest_scan_callout.setGeometry(0, cy, sw, ch)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -526,26 +900,13 @@ class SmartMirrorPro(QMainWindow):
                 )
             lay.addWidget(self.demo_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Variant B explicit anti-touchscreen warning (tackles the false glass-touching habit)
-        self.demo_touchless_hint = QLabel(
-            "❌ DO NOT TOUCH GLASS (Inert Screen)   •   ✔️ MOVE HAND IN AIR (30-40cm Away)",
-            self.gesture_demo_overlay
-        )
-        self.demo_touchless_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.demo_touchless_hint.setStyleSheet("""
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            font-size: 15px;
-            font-weight: 800;
-            color: #ffffff;
-            background: rgba(10, 16, 28, 0.95);
-            border: 2px solid #ef4444;
-            border-radius: 20px;
-            padding: 8px 24px;
-            margin-top: 16px;
-            letter-spacing: 0.5px;
-        """)
-        lay.addWidget(self.demo_touchless_hint, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.demo_touchless_hint = QLabel("", self.gesture_demo_overlay)
         self.demo_touchless_hint.hide()
+
+        # Guest-only: bouncing + pulsing STUDENT ID SCAN callout
+        # Self-contained widget -- no nested QGraphicsOpacityEffect (avoids freeze).
+        self.guest_scan_callout = GuestScanCallout(self.central_widget)
+        self.guest_scan_callout.hide()
 
         self.gesture_demo_overlay.hide()
 
@@ -716,7 +1077,7 @@ class SmartMirrorPro(QMainWindow):
 
         # Information text with increased size and readability
         info_lbl = QLabel(
-            "Visit smartmirror.me to link your student ID barcode, register your face, and customize your timetable.",
+            "Visit smartmirror.me to register your face and customize your timetable.",
             self.guest_register_card
         )
         info_lbl.setWordWrap(True)
@@ -789,6 +1150,12 @@ class SmartMirrorPro(QMainWindow):
 
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.setGeometry(0, 0, w, h)
+            if hasattr(self, 'guest_scan_callout') and self.guest_scan_callout.isVisible():
+                self._position_guest_scan_callout()
+
+        if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
+            self.gesture_trail.setGeometry(0, 0, w, h)
+            self.gesture_trail.raise_()
 
         # getattr: resizeEvent can fire while __init__ is still building.
         if getattr(self, '_peek_visible', False) and self.peek_container is not None:
@@ -905,6 +1272,13 @@ class SmartMirrorPro(QMainWindow):
         except Exception:
             pass
 
+    def _handle_gesture_direct(self, data):
+        """Zero-latency callback triggered immediately when UDP datagram arrives from gesture_engine."""
+        t = data.get("timestamp", 0.0)
+        if t > self.last_gesture_timestamp:
+            self.last_gesture_timestamp = t
+            self._handle_gesture(data)
+
     def _active_notices(self):
         """The notices panel currently on screen, or None."""
         if self._last_state == 'user':
@@ -966,12 +1340,32 @@ class SmartMirrorPro(QMainWindow):
         if is_initial_split:
             self._timetable_full_mode = False
             self.timetable_widget.set_mode('compact')
-            self.timetable_widget.setGeometry(0, 0, cw, split_h)
-            self.kings_widget.setGeometry(0, split_h, cw, ch - split_h)
+            if animate:
+                anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
+                anim_tt.setDuration(TIMETABLE_ANIM_MS)
+                anim_tt.setStartValue(self.timetable_widget.geometry())
+                anim_tt.setEndValue(QRect(0, 0, cw, split_h))
+                anim_tt.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_kw = QPropertyAnimation(self.kings_widget, b"geometry", self)
+                anim_kw.setDuration(TIMETABLE_ANIM_MS)
+                anim_kw.setStartValue(self.kings_widget.geometry())
+                anim_kw.setEndValue(QRect(0, split_h, cw, ch - split_h))
+                anim_kw.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+                anim_tt.start()
+                anim_kw.start()
+                self._timetable_anim = anim_tt
+                self._kings_anim = anim_kw
+            else:
+                self.timetable_widget.setGeometry(0, 0, cw, split_h)
+                self.kings_widget.setGeometry(0, split_h, cw, ch - split_h)
             self.timetable_widget.show()
             self.kings_widget.show()
             self.timetable_widget.raise_()
             self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
+            if self.kings_widget is not None:
+                self.kings_widget.set_half_mode(True)   # split view: focus only
         else:
             self._timetable_full_mode = True
             self.timetable_widget.set_mode('full')
@@ -981,7 +1375,8 @@ class SmartMirrorPro(QMainWindow):
             if animate:
                 anim_tt = QPropertyAnimation(self.timetable_widget, b"geometry", self)
                 anim_tt.setDuration(TIMETABLE_ANIM_MS)
-                anim_tt.setStartValue(QRect(0, -ch, cw, ch))
+                start_geom = self.timetable_widget.geometry() if not self._timetable_slid_away else QRect(0, -ch, cw, ch)
+                anim_tt.setStartValue(start_geom)
                 anim_tt.setEndValue(QRect(0, 0, cw, ch))
                 anim_tt.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -1000,6 +1395,8 @@ class SmartMirrorPro(QMainWindow):
                 self.kings_widget.setGeometry(0, ch, cw, ch)
 
             self.timetable_display_timer.start(TIMETABLE_DISPLAY_MS)
+            if self.kings_widget is not None:
+                self.kings_widget.set_half_mode(False)  # full timetable: KW hidden below
 
         self._update_arrow_indicator()
 
@@ -1010,6 +1407,8 @@ class SmartMirrorPro(QMainWindow):
         self.timetable_display_timer.stop()
         self._timetable_slid_away = True
         self._timetable_full_mode = False
+        if self.kings_widget is not None:
+            self.kings_widget.set_half_mode(False)  # fully expanded: cards are clickable
         cw = self.right_stack_container.width()
         ch = self.right_stack_container.height()
         split_h = int(ch * 0.46)
@@ -1181,14 +1580,14 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.show()
         self.edge_arrow_label.raise_()
 
-        # Variant B: Show proactive dwell hint pill beneath arrow
+        # Variant B: show dwell hint pill beneath arrow (no emoji, black bg)
         if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
             pill_w = 290
             pill_h = 28
             pill_x = content_x + (content_w - pill_w) // 2
             pill_y = arrow_y + 36
             self.dwell_hint_pill.setGeometry(pill_x, pill_y, pill_w, pill_h)
-            self.dwell_hint_pill.setText("✋ Hold hand in top-right for Timetable")
+            self.dwell_hint_pill.setText("Hold hand in top-right for Timetable")
             self.dwell_hint_pill.show()
             self.dwell_hint_pill.raise_()
         elif hasattr(self, 'dwell_hint_pill'):
@@ -1208,13 +1607,23 @@ class SmartMirrorPro(QMainWindow):
         effect.setOpacity(0.0)
 
         # Variant B explicit touchless banner beneath tutorial video
-        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'demo_touchless_hint'):
-            self.demo_touchless_hint.show()
-        elif hasattr(self, 'demo_touchless_hint'):
+        if hasattr(self, 'demo_touchless_hint'):
             self.demo_touchless_hint.hide()
 
         self.gesture_demo_overlay.show()
         self.gesture_demo_overlay.raise_()
+
+        # Show guest barcode callout only in guest state
+        if hasattr(self, 'guest_scan_callout'):
+            if self._last_state == 'guest':
+                self._position_guest_scan_callout()
+                self.guest_scan_callout.show()
+                self.guest_scan_callout.raise_()  # above overlay
+                self.guest_scan_callout.start()
+            else:
+                self.guest_scan_callout.stop()
+                self.guest_scan_callout.hide()
+
         self._update_barcode_guide()
 
         if hasattr(self, 'demo_movie') and self.demo_movie is not None:
@@ -1267,6 +1676,9 @@ class SmartMirrorPro(QMainWindow):
             self.gesture_demo_overlay.hide()
             if hasattr(self, 'demo_touchless_hint'):
                 self.demo_touchless_hint.hide()
+            if hasattr(self, 'guest_scan_callout'):
+                self.guest_scan_callout.stop()
+                self.guest_scan_callout.hide()
             self._scrim_fading_out = False
             self._update_barcode_guide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
@@ -1288,36 +1700,68 @@ class SmartMirrorPro(QMainWindow):
         region      = data.get("region") if present else None
         event       = data.get("event")
         delta       = data.get("scroll_delta", 0)
+
+        # Receiver-side tap gate: the gesture engine has a 0.35s cooldown but
+        # multiple UDP packets with event="tap" can still arrive in the same
+        # Qt event-loop tick.  Drop any tap within 700ms of the last accepted
+        # one to prevent open-close-open flicker on Kings Week cards.
+        if event == "tap":
+            _now = time.time()
+            if _now - getattr(self, '_last_rx_tap_time', 0.0) < 0.70:
+                event = None   # suppress -- treat as a no-op hover packet
+            else:
+                self._last_rx_tap_time = _now
+
         right_dwell = data.get("top_right_dwell_progress", data.get("right_dwell_progress", 0.0))
         dwell_side  = data.get("dwell_side") or ("top_right" if data.get("hand_x", 0.5) >= 0.5 else "left")
         notices     = self._active_notices()
 
         if present:
             self._last_interaction_time = time.time()
-            if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None and self.gesture_demo_overlay.isVisible():
-                self._fade_out_gesture_scrim()
 
-        # Variant B live floating on-screen hand cursor dot
-        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'hand_cursor_dot'):
+        if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             if present:
                 hx = data.get("hand_x", 0.5)
                 hy = data.get("hand_y", 0.5)
-                dot_x = int(hx * self.width()) - 14
-                dot_y = int(hy * self.height()) - 14
-                self.hand_cursor_dot.move(dot_x, dot_y)
-                self.hand_cursor_dot.show()
-                self.hand_cursor_dot.raise_()
+                target_x = hx * self.width()
+                target_y = hy * self.height()
+                # gesture_engine already applies 0.88 EMA smoothing, map position directly
+                self._cur_trail_x = float(target_x)
+                self._cur_trail_y = float(target_y)
+
+                pinched = bool(data.get("pinched", False))
+                self.gesture_trail.add_point(self._cur_trail_x, self._cur_trail_y, pinched)
             else:
-                self.hand_cursor_dot.hide()
-        elif hasattr(self, 'hand_cursor_dot'):
+                self.gesture_trail.fade_out()
+
+        if hasattr(self, 'hand_cursor_dot') and self.hand_cursor_dot is not None:
             self.hand_cursor_dot.hide()
 
         # Telemetry: Record gesture events & dwell progress
+        event_id = data.get("event_id", 0)
+        is_new_event = False
+        if event and event_id != getattr(self, '_last_handled_event_id', -1):
+            self._last_handled_event_id = event_id
+            is_new_event = True
+
         if hasattr(self, 'telemetry') and self.telemetry is not None:
             if event:
                 self.telemetry.record_gesture(event_type=event, region=region)
             if right_dwell > 0:
                 self.telemetry.record_dwell_progress(right_dwell)
+
+            # Mid-air hand movement detection: user gesturing in front of mirror
+            if present:
+                hx = data.get("hand_x")
+                hy = data.get("hand_y")
+                if hx is not None and hy is not None:
+                    last_hx = getattr(self, '_last_telemetry_hx', hx)
+                    last_hy = getattr(self, '_last_telemetry_hy', hy)
+                    dist = ((hx - last_hx)**2 + (hy - last_hy)**2)**0.5
+                    self._last_telemetry_hx = hx
+                    self._last_telemetry_hy = hy
+                    if dist > 0.025:
+                        self.telemetry.record_gesture(event_type="motion", region=region)
 
         # Action gestures: clicking (tap/click), scrolling (scroll/fling with delta != 0)
         is_click_or_scroll = (
@@ -1352,17 +1796,9 @@ class SmartMirrorPro(QMainWindow):
                 self.indicator_bar.show()
                 self.indicator_bar.raise_()
 
-                # In Variant B, display active percentage completion in the dwell pill
-                if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
-                    pct = int(right_dwell * 100)
-                    self.dwell_hint_pill.setText(f"✋ Hold hand in top-right for Timetable ({pct}%)")
-                    pill_w = 290
-                    pill_h = 28
-                    pill_x = content_x + (content_w - pill_w) // 2
-                    pill_y = top + 20 + 36
-                    self.dwell_hint_pill.setGeometry(pill_x, pill_y, pill_w, pill_h)
-                    self.dwell_hint_pill.show()
-                    self.dwell_hint_pill.raise_()
+                # Variant B dwell pill hides during active dwell (progress bar is sufficient feedback)
+                if hasattr(self, 'dwell_hint_pill'):
+                    self.dwell_hint_pill.hide()
             else:
                 self.indicator_bar.hide()
                 self._update_arrow_indicator()
@@ -1395,12 +1831,13 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(self, 'dwell_hint_pill'):
                 self.dwell_hint_pill.hide()
             if hasattr(self, 'telemetry') and self.telemetry is not None:
+                self.telemetry.record_gesture(event_type="dwell", region="top_right")
                 self.telemetry.record_timetable_toggle()
             if self._last_state == 'user':
-                if self._timetable_slid_away:
-                    self._show_timetable(animate=True, is_initial_split=False)
+                if self._timetable_slid_away or getattr(self, '_timetable_full_mode', False):
+                    self._show_timetable(animate=True, is_initial_split=True)
                 else:
-                    self._slide_timetable_out(animate=True)
+                    self._show_timetable(animate=True, is_initial_split=False)
             elif self._last_state == 'guest':
                 if self._guest_card_slid_away:
                     self._show_guest_card(animate=True, is_initial_split=False)
@@ -1410,12 +1847,30 @@ class SmartMirrorPro(QMainWindow):
         elif effective_region == GESTURE_REGION_LEFT and notices is not None:
             if event == "scroll" and delta != 0:
                 self._stop_momentum()
+                if hasattr(notices, 'clear_selection'):
+                    notices.clear_selection()
                 notices.scroll_by_pixels(delta)
             elif event == "fling" and delta != 0:
+                if hasattr(notices, 'clear_selection'):
+                    notices.clear_selection()
                 self._start_momentum(notices, delta)
             elif event == "tap":
                 self._stop_momentum()
-                notices.toggle_scroll_pause()
+                if hasattr(notices, 'modal_open') and notices.modal_open:
+                    notices.close_modal()
+                    if hasattr(self, 'telemetry') and self.telemetry is not None:
+                        self.telemetry.record_modal_close()
+                elif hasattr(notices, 'activate_selected'):
+                    notices.activate_selected()
+                    if hasattr(self, 'telemetry') and self.telemetry is not None:
+                        self.telemetry.record_modal_open()
+                elif hasattr(notices, 'toggle_scroll_pause'):
+                    notices.toggle_scroll_pause()
+            elif event not in ("scroll", "fling"):
+                if hasattr(notices, 'select_at_point'):
+                    hx = data.get("hand_x", 0.25)
+                    hy = data.get("hand_y", 0.5)
+                    notices.select_at_point(hx, hy)
 
         elif effective_region == GESTURE_REGION_RIGHT:
             active_target = None
@@ -1452,10 +1907,21 @@ class SmartMirrorPro(QMainWindow):
                         active_target.close_modal()
                         if hasattr(self, 'telemetry') and self.telemetry is not None:
                             self.telemetry.record_modal_close()
-                    elif hasattr(active_target, 'activate_selected'):
-                        active_target.activate_selected()
-                        if hasattr(self, 'telemetry') and self.telemetry is not None:
-                            self.telemetry.record_modal_open()
+                    else:
+                        # Ensure a card is selected nearest to the hand before activating
+                        if hasattr(active_target, 'focus_at'):
+                            self._focus_kings_target(active_target, data)
+                        if hasattr(active_target, 'activate_selected'):
+                            opened = active_target.activate_selected()
+                            # If a kings-week card just opened, collapse timetable so it has full space
+                            if opened and active_target is self.kings_widget:
+                                if not self._timetable_slid_away:
+                                    self._slide_timetable_out(animate=True)
+                            elif opened and active_target is getattr(self, 'guest_kings_widget', None):
+                                if not self._guest_card_slid_away:
+                                    self._slide_guest_card_out(animate=True)
+                            if hasattr(self, 'telemetry') and self.telemetry is not None:
+                                self.telemetry.record_modal_open()
                 elif event not in ("scroll", "fling"):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
@@ -1633,12 +2099,9 @@ class SmartMirrorPro(QMainWindow):
                 new_state   = 'idle'
                 new_user_id = 'idle'
 
-            # Unsure face recognition alert prompt on guest screen
+            # Unsure face recognition alert prompt on guest screen kept hidden
             if hasattr(self, 'guest_unsure_prompt_lbl'):
-                if (new_state == 'guest' or self._last_state == 'guest') and self.face_detected and not self.face_recognized:
-                    self.guest_unsure_prompt_lbl.show()
-                else:
-                    self.guest_unsure_prompt_lbl.hide()
+                self.guest_unsure_prompt_lbl.hide()
 
             # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
             if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
@@ -1660,11 +2123,15 @@ class SmartMirrorPro(QMainWindow):
                 and new_user_id not in ('', 'idle')
             )
 
-            # ── Guard: Don't interrupt active interactions IF face is actually detected ─────
-            # Gestures alone without a face must never hold the mirror from fading to idle.
+            # ── Guard: Don’t interrupt active interactions ───────────────────
+            # A hand being actively tracked counts as interaction even if face
+            # detection briefly drops (head turn, glare, blink).  We also widen
+            # the grace window so a user isn’t kicked mid-scroll.
+            hand_present = bool(getattr(self, '_cur_trail_x', None) is not None
+                                and (now - self._last_interaction_time < 12.0))
             is_interacting = (
-                self.face_detected and (
-                    (now - self._last_interaction_time < 6.0)
+                (self.face_detected or hand_present) and (
+                    (now - self._last_interaction_time < 12.0)
                     or (self.kings_widget and self.kings_widget.modal_open)
                     or (hasattr(self, 'guest_kings_widget') and self.guest_kings_widget and self.guest_kings_widget.modal_open)
                     or (self.indicator_bar and not self.indicator_bar.isHidden())
@@ -1751,7 +2218,8 @@ class SmartMirrorPro(QMainWindow):
 
         if incoming is not None:
             # Telemetry: Begin tracked session and assign A/B experiment variant
-            auth = getattr(self, '_auth_method', '') or fdata.get('auth_method', '')
+            recent_barcode = (time.time() - getattr(self, '_last_barcode_scan_time', 0) < 60.0)
+            auth = 'barcode' if recent_barcode else (getattr(self, '_auth_method', '') or fdata.get('auth_method', ''))
             if not auth:
                 auth = 'face' if new_state == 'user' else 'presence'
 
@@ -2125,6 +2593,15 @@ def start_gesture_daemon():
 
 
 if __name__ == '__main__':
+    # Set Windows multimedia timer resolution to 1 ms so QTimer intervals
+    # are actually honoured at 8/16 ms instead of the default ~15.6 ms.
+    try:
+        import ctypes
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        _timer_period_set = True
+    except Exception:
+        _timer_period_set = False
+
     app = QApplication(sys.argv)
     face_proc = start_face_daemon()
     gestures = start_gesture_daemon()
@@ -2141,5 +2618,12 @@ if __name__ == '__main__':
                     p.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     p.kill()
+        # Restore Windows timer resolution
+        try:
+            if _timer_period_set:
+                import ctypes
+                ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
     sys.exit(code)
 

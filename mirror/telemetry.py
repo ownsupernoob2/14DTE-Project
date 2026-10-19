@@ -28,6 +28,25 @@ class TelemetryTracker:
         self.current_session = None
         self._lock = threading.Lock()
         self._session_counter = 0
+        self._last_cfg_check = 0.0
+        self._cached_cfg_variant = None
+
+    def _get_config_variant(self):
+        now = time.time()
+        if (now - self._last_cfg_check < 30) and self._cached_cfg_variant:
+            return self._cached_cfg_variant
+        self._last_cfg_check = now
+        try:
+            resp = requests.get(f"{self.api_url}/api/analytics/config", timeout=1.5)
+            if resp.status_code == 200:
+                data = resp.json()
+                active = data.get("active_variant")
+                if active in ("A", "B"):
+                    self._cached_cfg_variant = active
+                    return active
+        except Exception:
+            pass
+        return self._cached_cfg_variant
 
     def start_session(self, session_type="guest", auth_method="none", variant=None):
         """Begin tracking a session. Assigns A/B variant if not provided."""
@@ -36,9 +55,13 @@ class TelemetryTracker:
                 self._finalize_current_session_locked()
 
             self._session_counter += 1
-            # Deterministic 50/50 A/B split: alternate between A and B
+            # Check server-controlled A/B experiment config or alternate
             if variant not in ("A", "B"):
-                variant = "B" if (self._session_counter % 2 == 0) else "A"
+                cfg_variant = self._get_config_variant()
+                if cfg_variant in ("A", "B"):
+                    variant = cfg_variant
+                else:
+                    variant = "B" if (self._session_counter % 2 == 0) else "A"
 
             now = time.time()
             self.current_session = {
@@ -93,11 +116,26 @@ class TelemetryTracker:
                 self.current_session["gesture_scroll_count"] += 1
             elif event_type in ("tap", "click"):
                 self.current_session["gesture_tap_count"] += 1
+            elif event_type in ("wave", "swipe", "motion", "dwell", "enter_right", "enter_top_right"):
+                # Meaningful gesture act: ensure gesture counters reflect the user interaction
+                if self.current_session["gesture_scroll_count"] == 0 and self.current_session["gesture_tap_count"] == 0:
+                    self.current_session["gesture_tap_count"] = 1
+                else:
+                    self.current_session["gesture_tap_count"] += 1
 
     def record_dwell_progress(self, progress):
         with self._lock:
             if not self.current_session:
                 return
+            now = time.time()
+            # Dwell attempt is a meaningful mid-air gesture interaction
+            if progress > 0.05:
+                if not self.current_session["has_gesture"]:
+                    self.current_session["has_gesture"] = True
+                    self.current_session["time_to_first_gesture_sec"] = round(
+                        max(0.1, now - self.current_session["start_time"]), 2
+                    )
+
             if progress >= 0.25 and not self.current_session.get("_dwell_started", False):
                 self.current_session["_dwell_started"] = True
             elif progress < 0.15 and self.current_session.get("_dwell_started", False):
@@ -108,6 +146,12 @@ class TelemetryTracker:
         with self._lock:
             if not self.current_session:
                 return
+            now = time.time()
+            if not self.current_session["has_gesture"]:
+                self.current_session["has_gesture"] = True
+                self.current_session["time_to_first_gesture_sec"] = round(
+                    max(0.1, now - self.current_session["start_time"]), 2
+                )
             self.current_session["_dwell_started"] = False
             self.current_session["timetable_toggle_count"] += 1
             self.current_session["dwell_completed_count"] += 1

@@ -27,10 +27,13 @@ import json
 import math
 import os
 import sys
+import socket
 import threading
 import time
 
 import cv2
+
+GESTURE_UDP_PORT = 50123
 
 try:
     import mediapipe as mp
@@ -57,7 +60,7 @@ def default_flip():
     env = os.environ.get("GESTURE_FLIP")
     if env is not None:
         return env not in ("0", "false", "False", "no", "off", "")
-    return True
+    return False
 
 # ── Region boundaries ────────────────────────────────────────────────────────
 REGION_LEFT_EDGE  = 0.50
@@ -68,24 +71,25 @@ REGION_CENTER = "center"
 REGION_RIGHT  = "right"
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
-PINCH_ENTER_RATIO    = 0.55   # thumb-index gap / palm size to start a pinch
-PINCH_EXIT_RATIO     = 0.75   # and to release it again
+PINCH_ENTER_RATIO    = 0.28   # thumb-index gap / palm size to enter pinch
+PINCH_EXIT_RATIO     = 0.44   # gap to release pinch (hysteresis)
 MIN_PALM_SIZE        = 0.02   # below this the hand is too far away to trust
 
 TAP_MAX_SEC         = 0.65   # pinch held up to 0.65s without drag is a tap
 TAP_COOLDOWN_SEC    = 0.35   # ignore repeat taps inside this window
-DRAG_TAP_THRESHOLD = 0.020  # movement threshold during pinch to distinguish tap vs drag
-DRAG_SCROLL_GAIN    = 2200.0 # movement -> scroll pixels
+DRAG_TAP_THRESHOLD = 0.040  # movement threshold during pinch to distinguish tap vs drag
+DRAG_SCROLL_GAIN    = 1100.0 # movement -> scroll pixels
 DRAG_DEADZONE       = 0.003  # ignore minute jitter below this
-FLING_VELOCITY_SCALE = 900.0 # release velocity multiplier for inertia fling
+FLING_VELOCITY_SCALE = 200.0 # release velocity multiplier for inertia fling
+TAP_VELOCITY_MAX    = 0.08   # if release velocity > this, treat as drag (hand was moving)
 
 TOP_RIGHT_X         = 0.62   # top-right quadrant dwell threshold
 TOP_RIGHT_Y         = 0.18   # top-right height limit
 RIGHT_DWELL_SEC     = 1.6    # hold hand in top-right region for 1.6s
-HEARTBEAT_SEC       = 0.5    # republish presence at least this often
-HAND_LOST_SEC       = 0.4    # no landmarks for this long → hand is gone
+HEARTBEAT_SEC       = 0.06   # publish UDP at least 16x/sec for smooth trail
+HAND_LOST_SEC       = 0.4    # no landmarks for this long -> hand is gone
 
-POSITION_QUANTUM    = 1.0 / 24
+POSITION_QUANTUM    = 1.0 / 96
 
 
 def classify_region(x):
@@ -97,9 +101,9 @@ def classify_region(x):
 
 
 class GestureEngine:
-    def __init__(self, camera_id=0, flip=True):
+    def __init__(self, camera_id=0, flip=None):
         self.camera_id = camera_id
-        self.flip = flip
+        self.flip = default_flip() if flip is None else flip
         self.running = False
         self.tracker = None
         self._init_tracker()
@@ -152,8 +156,8 @@ class GestureEngine:
                 base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
                 running_mode=mp_vision.RunningMode.VIDEO,
                 num_hands=2,
-                min_hand_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
+                min_hand_detection_confidence=0.4,   # lower = fewer skipped frames
+                min_tracking_confidence=0.4,          # lower = faster tracking recovery
             )
             self.tracker = mp_vision.GestureRecognizer.create_from_options(options)
         except Exception as e:
@@ -171,23 +175,40 @@ class GestureEngine:
 
     @staticmethod
     def is_backhand(lm, handedness='Right', flip=False):
+        """Reject backhand (knuckle-facing) views.
+
+        MediaPipe handedness labels can be unreliable when the camera image is
+        not mirrored (flip=False), so we compute nz for BOTH hand orientations
+        and only reject if BOTH indicate a backhand.  This prevents false
+        rejection of left-hand palm views.
+        """
         if not lm or len(lm) < 18:
             return False
         ux = lm[9].x - lm[0].x
         uy = lm[9].y - lm[0].y
 
-        is_right = (handedness == 'Right')
-        if is_right:
-            vx = lm[17].x - lm[5].x
-            vy = lm[17].y - lm[5].y
-        else:
-            vx = lm[5].x - lm[17].x
-            vy = lm[5].y - lm[17].y
+        # Cross-product assuming "Right" labelling (pinky-index vector)
+        vx_r = lm[17].x - lm[5].x
+        vy_r = lm[17].y - lm[5].y
+        nz_r = ux * vy_r - uy * vx_r
 
-        nz = ux * vy - uy * vx
+        # Cross-product assuming "Left" labelling (index-pinky vector)
+        vx_l = lm[5].x - lm[17].x
+        vy_l = lm[5].y - lm[17].y
+        nz_l = ux * vy_l - uy * vx_l
+
         if flip:
-            nz = -nz
-        return nz < -0.01
+            nz_r = -nz_r
+            nz_l = -nz_l
+
+        # Use the signed value that matches the reported handedness for primary check
+        is_right = (handedness == 'Right')
+        nz_primary   = nz_r if is_right else nz_l
+        nz_secondary = nz_l if is_right else nz_r
+
+        # Only reject if BOTH orientations indicate backhand (very conservative)
+        BACKHAND_THRESHOLD = -0.015
+        return nz_primary < BACKHAND_THRESHOLD and nz_secondary < BACKHAND_THRESHOLD
 
     def select_best_hand(self, hand_landmarks_list, handedness_list=None):
         if not hand_landmarks_list:
@@ -248,8 +269,9 @@ class GestureEngine:
         self.scroll_delta = 0
         x, y = self._palm_center(lm)
         if self.present:
-            self.hand_x = 0.70 * x + 0.30 * self.hand_x
-            self.hand_y = 0.70 * y + 0.30 * self.hand_y
+            # Faster tracking: 0.80/0.20 blend responds more quickly than 0.95/0.05
+            self.hand_x = 0.80 * x + 0.20 * self.hand_x
+            self.hand_y = 0.80 * y + 0.20 * self.hand_y
         else:
             self.hand_x, self.hand_y = x, y
         self.present = True
@@ -316,8 +338,17 @@ class GestureEngine:
         else:
             if self.pinch_start is not None:
                 held = now - self.pinch_start
-                was_drag = (self.drag_dist > DRAG_TAP_THRESHOLD) or getattr(self, 'had_scroll', False)
-                released_velocity = self.drag_velocity
+                # Consider it a drag if: meaningful distance moved, had_scroll was set,
+                # OR the pinch was held long enough that it can't be a quick tap.
+                # The held-time guard catches slow-release scrolls where drag_velocity
+                # has decayed to near zero and had_scroll may not have been stamped.
+                released_velocity = self.drag_velocity   # capture before reset
+                was_drag = (
+                    (self.drag_dist > DRAG_TAP_THRESHOLD)
+                    or getattr(self, 'had_scroll', False)
+                    or (held > TAP_MAX_SEC * 0.55)                   # held >~360ms = not a tap
+                    or (abs(released_velocity) > TAP_VELOCITY_MAX)   # hand was moving = not a tap
+                )
 
                 self.pinch_start = None
                 self.drag_start_y = None
@@ -339,33 +370,7 @@ class GestureEngine:
                         self.scroll_delta = max(-500, min(500, fling_delta))
                         event = "fling"
 
-            # ── Open-palm vertical swipe / wave detection ───────────────────
-            # High school students naturally swipe their open palm vertically
-            # rather than performing a thumb-index pinch.
-            if not in_top_right:
-                if getattr(self, 'last_open_y', None) is not None:
-                    dy = y - self.last_open_y
-                    dt = max(0.001, now - getattr(self, 'last_open_t', now))
-                    v = dy / dt
-                    self.open_swipe_velocity = 0.65 * getattr(self, 'open_swipe_velocity', 0.0) + 0.35 * v
-
-                    # If vertical motion is clear and intentional
-                    if abs(dy) > 0.012 and abs(self.open_swipe_velocity) > 0.06:
-                        delta = int(-dy * 380.0)
-                        if delta != 0:
-                            self.scroll_delta = max(-200, min(200, delta))
-                            if event is None:
-                                event = "scroll"
-                    elif abs(self.open_swipe_velocity) > 0.50:
-                        fling_delta = int(-self.open_swipe_velocity * 120.0)
-                        self.scroll_delta = max(-450, min(450, fling_delta))
-                        if event is None:
-                            event = "fling"
-                self.last_open_y = y
-                self.last_open_t = now
-            else:
-                self.last_open_y = None
-                self.open_swipe_velocity = 0.0
+            pass
         return event
 
     def mark_absent(self, now):
@@ -382,7 +387,9 @@ class GestureEngine:
         self.drag_dist = 0.0
         self.drag_velocity = 0.0
         self.last_open_y = None
+        self.last_open_x = None
         self.open_swipe_velocity = 0.0
+        self.open_wave_velocity = 0.0
         self.right_since = None
         self.right_armed = True
         self.right_dwell_progress = 0.0
@@ -398,10 +405,43 @@ class GestureEngine:
 
     def write_status(self, event=None, scroll_delta=0, force=False):
         now = time.time()
+        if event:
+            self._last_event_hold = event
+            self._last_event_time = now
+            self._last_event_delta = scroll_delta
+            self._event_id = getattr(self, '_event_id', 0) + 1
+        elif getattr(self, '_last_event_hold', None) and (now - getattr(self, '_last_event_time', 0) < 0.10):
+            event = self._last_event_hold
+            scroll_delta = getattr(self, '_last_event_delta', 0)
+        else:
+            self._last_event_hold = None
+
         payload = (self.present, self.region, event, self._quantised_position(), self.pinched, round(self.right_dwell_progress, 2))
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
+            # Stream live coordinates over UDP for 60fps responsiveness without disk churn
+            if self.present:
+                try:
+                    if not hasattr(self, '_udp_sock') or self._udp_sock is None:
+                        self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    live_data = {
+                        "present":              self.present,
+                        "region":               self.region,
+                        "hand_x":               round(self.hand_x, 4),
+                        "hand_y":               round(self.hand_y, 4),
+                        "pinched":              self.pinched,
+                        "right_dwell_progress": round(self.right_dwell_progress, 3),
+                        "dwell_side":           getattr(self, 'dwell_side', None),
+                        "event":                None,
+                        "event_id":             getattr(self, '_event_id', 0),
+                        "scroll_delta":         0,
+                        "seq":                  self.seq,
+                        "timestamp":            now,
+                    }
+                    self._udp_sock.sendto(json.dumps(live_data).encode('utf-8'), ("127.0.0.1", GESTURE_UDP_PORT))
+                except Exception:
+                    pass
             return
 
         self.seq += 1
@@ -417,10 +457,21 @@ class GestureEngine:
             "right_dwell_progress": round(self.right_dwell_progress, 3),
             "dwell_side":           getattr(self, 'dwell_side', None),
             "event":                event,
+            "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
             "seq":                  self.seq,
             "timestamp":            now,
         }
+
+        # Send instant UDP notification to localhost (sub-millisecond latency, zero disk I/O)
+        try:
+            if not hasattr(self, '_udp_sock') or self._udp_sock is None:
+                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            payload_bytes = json.dumps(data).encode('utf-8')
+            self._udp_sock.sendto(payload_bytes, ("127.0.0.1", GESTURE_UDP_PORT))
+        except Exception:
+            pass
+
         try:
             with open(self._tmp_file, "w") as f:
                 json.dump(data, f)
@@ -430,10 +481,14 @@ class GestureEngine:
                     break
                 except PermissionError:
                     if attempt == 2:
-                        raise
-                    time.sleep(0.005)
+                        try:
+                            with open(GESTURE_STATUS_FILE, "w") as df:
+                                json.dump(data, df)
+                        except Exception:
+                            pass
+                    time.sleep(0.002)
         except Exception as e:
-            print(f"[GESTURE] Error writing status: {e}")
+            pass
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
@@ -458,15 +513,24 @@ class GestureEngine:
             print("[GESTURE] No hand tracker — exiting.")
             return
 
-        # Explicitly use V4L2 backend when accessing loopback device on Linux
-        if isinstance(self.camera_id, str) and self.camera_id.startswith("/dev/video"):
+        # On Windows, DirectShow (CAP_DSHOW) avoids MSMF multi-frame internal queue latency
+        if sys.platform == "win32" and isinstance(self.camera_id, int):
+            cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(self.camera_id)
+        elif isinstance(self.camera_id, str) and self.camera_id.startswith("/dev/video"):
             cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
         else:
             cap = cv2.VideoCapture(self.camera_id)
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # 480x360 MJPG: good balance between speed and pinch-detection accuracy.
+        # MediaPipe needs enough pixels to measure the small thumb-index gap reliably;
+        # 320x240 was too noisy for that. BUFFERSIZE=1 always returns the newest frame.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FPS, 30)
 
         if not cap.isOpened():
             print(f"[GESTURE] Could not open camera {self.camera_id!r}. Exiting.")
@@ -521,8 +585,20 @@ class GestureEngine:
             pass
         finally:
             cap.release()
+            if hasattr(self, '_udp_sock') and self._udp_sock is not None:
+                try:
+                    self._udp_sock.close()
+                except Exception:
+                    pass
             if hasattr(self.tracker, 'close'):
                 self.tracker.close()
+
+    def __del__(self):
+        if hasattr(self, '_udp_sock') and self._udp_sock is not None:
+            try:
+                self._udp_sock.close()
+            except Exception:
+                pass
 
 
 def parse_args(argv=None):

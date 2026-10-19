@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QWidget, QScrollArea, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QFont
 
 
@@ -85,16 +85,16 @@ def format_fetched_at(iso_str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class NoticeDetailModal(QFrame):
-    """Full expanded notice modal with AI summary, key details, and full text."""
+    """Full expanded notice overlay showing clear large typography and full text."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("NoticeDetailModal")
         self.setStyleSheet("""
             #NoticeDetailModal {
-                background-color: #07090e;
-                border: 2px solid #38bdf8;
-                border-radius: 14px;
+                background-color: #111111;
+                border: none;
+                border-radius: 8px;
             }
         """)
         self.hide()
@@ -102,72 +102,50 @@ class NoticeDetailModal(QFrame):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(12)
+        root.setContentsMargins(28, 28, 28, 28)
+        root.setSpacing(18)
 
         # Header bar
         header = QHBoxLayout()
         self.badge_lbl = QLabel("GENERAL", self)
         self.badge_lbl.setStyleSheet(
-            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 14px; font-weight: 800; "
-            "color: #38bdf8; letter-spacing: 1.5px; background: rgba(56, 189, 248, 0.15); "
-            "border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px; padding: 4px 10px;"
+            "font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 15px; font-weight: 800; "
+            "color: #ffffff; letter-spacing: 1.5px; background: rgba(255, 255, 255, 0.12); "
+            "border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; padding: 6px 14px;"
         )
         header.addWidget(self.badge_lbl)
         header.addStretch(1)
-
-        close_hint = QLabel("TAP ANYWHERE TO CLOSE ✕", self)
-        close_hint.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; font-weight: 800; "
-            "color: #cbd5e1; letter-spacing: 1px; background: transparent;"
-        )
-        header.addWidget(close_hint)
         root.addLayout(header)
 
         # Title
         self.title_lbl = QLabel("", self)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 800; "
-            "color: #ffffff; line-height: 1.25;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 34px; font-weight: 800; "
+            "color: #ffffff; line-height: 1.2;"
         )
         root.addWidget(self.title_lbl)
 
         # Metadata Row (Time, Location, Contact)
         self.meta_box = QWidget(self)
-        self.meta_box.setStyleSheet("background: #0d131f; border-radius: 8px; border: 1px solid #1e293b;")
+        self.meta_box.setStyleSheet("background: #181818; border-radius: 6px; border: 1px solid #2a2a2a;")
         m_lay = QHBoxLayout(self.meta_box)
-        m_lay.setContentsMargins(14, 8, 14, 8)
-        m_lay.setSpacing(18)
+        m_lay.setContentsMargins(16, 10, 16, 10)
+        m_lay.setSpacing(20)
 
         self.loc_lbl = QLabel("", self.meta_box)
-        self.loc_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #38bdf8;")
+        self.loc_lbl.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
         m_lay.addWidget(self.loc_lbl)
 
         self.time_lbl = QLabel("", self.meta_box)
-        self.time_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #cbd5e1;")
+        self.time_lbl.setStyleSheet("font-size: 16px; font-weight: 700; color: #cbd5e1;")
         m_lay.addWidget(self.time_lbl)
 
         self.contact_lbl = QLabel("", self.meta_box)
-        self.contact_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #f59e0b;")
+        self.contact_lbl.setStyleSheet("font-size: 16px; font-weight: 700; color: #cbd5e1;")
         m_lay.addWidget(self.contact_lbl)
         m_lay.addStretch(1)
         root.addWidget(self.meta_box)
-
-        # AI Summary Callout Box
-        self.summary_box = QWidget(self)
-        self.summary_box.setStyleSheet("background: rgba(56, 189, 248, 0.08); border-radius: 8px; border-left: 4px solid #38bdf8;")
-        s_lay = QVBoxLayout(self.summary_box)
-        s_lay.setContentsMargins(14, 10, 14, 10)
-        s_lay.setSpacing(4)
-        s_title = QLabel("⚡ QUICK SUMMARY & ACTION ITEMS", self.summary_box)
-        s_title.setStyleSheet("font-family: 'Consolas', monospace; font-size: 12px; font-weight: 800; color: #38bdf8; letter-spacing: 1px;")
-        s_lay.addWidget(s_title)
-        self.summary_text = QLabel("", self.summary_box)
-        self.summary_text.setWordWrap(True)
-        self.summary_text.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 600; color: #e2e8f0; line-height: 1.4;")
-        s_lay.addWidget(self.summary_text)
-        root.addWidget(self.summary_box)
 
         # Full notice body scroll area
         self.scroll = QScrollArea(self)
@@ -177,7 +155,10 @@ class NoticeDetailModal(QFrame):
 
         self.body_content = QLabel(self.scroll)
         self.body_content.setWordWrap(True)
-        self.body_content.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 17px; font-weight: 500; color: #cbd5e1; line-height: 1.5; padding: 4px 0;")
+        self.body_content.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; font-weight: 500; "
+            "color: #f1f5f9; line-height: 1.5; padding: 12px 0;"
+        )
         self.scroll.setWidget(self.body_content)
         root.addWidget(self.scroll, 1)
 
@@ -199,20 +180,9 @@ class NoticeDetailModal(QFrame):
         date_time = details.get('time') or details.get('date') or 'Today'
         contact = notice.get('contact', '').strip() or 'Staff'
 
-        self.loc_lbl.setText(f"📍 {loc}")
-        self.time_lbl.setText(f"⏰ {date_time}")
-        self.contact_lbl.setText(f"👤 {contact}")
-
-        # Synthesize concise summary
-        sentences = [s.strip() for s in re.split(r'[.!?\n]+', clean_body) if len(s.strip()) > 8]
-        if sentences:
-            summary_preview = sentences[0]
-            if len(sentences) > 1 and len(summary_preview) < 70:
-                summary_preview += f". {sentences[1]}"
-            self.summary_text.setText(f"• {summary_preview}.")
-            self.summary_box.show()
-        else:
-            self.summary_box.hide()
+        self.loc_lbl.setText(f"LOCATION: {loc.upper()}")
+        self.time_lbl.setText(f"TIME: {date_time}")
+        self.contact_lbl.setText(f"CONTACT: {contact.upper()}")
 
         self.body_content.setText(clean_body)
 
@@ -252,25 +222,33 @@ class NoticeCard(QFrame):
             category.lower() in ('room change', 'room changes', 'relocations')
         )
 
-        card_bg = '#0c0c0c'
-        border_main = '#1a1a1a'
+        # Category colors — exact match with website CATEGORY_COLORS palette
+        PALETTE = {
+            'General':        '#94a3b8',   # slate
+            'Sports':         '#22c55e',   # green
+            'Meetings':       '#8b5cf6',   # violet
+            'Academic':       '#3b82f6',   # blue
+            'Careers':        '#fbbf24',   # amber
+            'Arts & Culture': '#f43f5e',   # rose
+        }
+
+        card_bg = '#111111'
+        border_main = '#222222'
 
         if is_urgent:
-            border_color = '#ff4d4d'
-            meta_color = '#ff4d4d'
+            border_color = '#ef4444'   # red  (matches website urgent)
+            meta_color = '#ef4444'
             prefix = 'URGENT'
         elif is_room_change:
-            border_color = '#38bdf8'
+            border_color = '#38bdf8'   # sky
             meta_color = '#38bdf8'
             prefix = 'ROOM CHANGE'
-            card_bg = '#091524'
-            border_main = '#1e3a5f'
-        elif is_medium:
-            border_color = '#ffb020'
-            meta_color = '#ffb020'
+        elif category in PALETTE:
+            border_color = PALETTE[category]
+            meta_color = PALETTE[category]
             prefix = category.upper()
         else:
-            border_color = '#475569'
+            border_color = '#94a3b8'   # slate fallback
             meta_color = '#cbd5e1'
             prefix = category.upper()
 
@@ -282,17 +260,11 @@ class NoticeCard(QFrame):
         loc_str = details.get('location', '')
         loc_part = f" · {loc_str.upper()}" if loc_str and is_room_change else ""
 
-        self.setStyleSheet(f"""
-            #NoticeCard {{
-                background-color: {card_bg};
-                border: 1px solid {border_main};
-                border-left: 4px solid {border_color};
-                border-radius: 4px;
-            }}
-            #NoticeCard:hover {{
-                border-color: #38bdf8;
-            }}
-        """)
+        self.card_bg = card_bg
+        self.border_main = border_main
+        self.border_color = border_color
+        self._selected = False
+        self.set_selected(False)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 16)
@@ -334,13 +306,42 @@ class NoticeCard(QFrame):
         # Subtle tap-to-expand prompt footer
         footer = QHBoxLayout()
         footer.addStretch(1)
-        expand_hint = QLabel("🔎 TAP TO EXPAND & SUMMARIZE", self)
+        expand_hint = QLabel("TAP TO EXPAND FULL NOTICE", self)
         expand_hint.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11px; font-weight: 700; "
-            "color: #64748b; letter-spacing: 0.5px; background: transparent; border: none;"
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 800; "
+            "color: #94a3b8; letter-spacing: 0.5px; background: transparent; border: none;"
         )
         footer.addWidget(expand_hint)
         lay.addLayout(footer)
+
+    def set_selected(self, selected=True):
+        self._selected = selected
+        if selected:
+            self.setStyleSheet(f"""
+                #NoticeCard {{
+                    background-color: {self.card_bg};
+                    border: none;
+                    border-left: 5px solid {self.border_color};
+                    border-radius: 6px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                #NoticeCard {{
+                    background-color: {self.card_bg};
+                    border: none;
+                    border-left: 4px solid {self.border_color};
+                    border-radius: 4px;
+                }}
+            """)
+
+    def enterEvent(self, event):
+        self.set_selected(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.set_selected(False)
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if self.on_click:
@@ -447,10 +448,13 @@ class NoticesWidget(QFrame):
         self.setGeometry(x, y, w, h)
         self.api_url = api_url
         self.keyword_filter = keyword_filter.strip().lower() if keyword_filter else ''
+        self.keyword_boosts = [k.strip() for k in self.keyword_filter.split(',') if k.strip()]
         self.scroll_speed = float(scroll_speed) if scroll_speed else 0.5
         self.year_filter = year_filter
         self.cat_filters = cat_filters
         self.notices = []
+        self.cards = []
+        self.selected_index = -1
         self.fetched_at = None
         self.error_msg = ''
         self._lock = threading.Lock()
@@ -458,6 +462,7 @@ class NoticesWidget(QFrame):
 
         # Auto scroll state
         self._auto_scroll_paused_until = time.time() + 4.0
+        self._last_manual_scroll_time  = 0.0   # tracks last gesture/manual scroll for 10s idle
         self._hold_bottom_until = 0.0
 
         # Gesture state. A tap holds the list still indefinitely (so you can
@@ -553,13 +558,13 @@ class NoticesWidget(QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'modal') and self.modal is not None:
-            self.modal.setGeometry(12, 12, max(100, self.width() - 24), max(100, self.height() - 24))
+            self.modal.setGeometry(0, 0, self.width(), self.height())
 
     def open_modal(self, notice):
-        """Open detailed modal inspection with AI summary for selected notice."""
+        """Open detailed modal inspection expanding across the full notices panel."""
         if hasattr(self, 'modal') and self.modal is not None:
             self.modal.set_notice(notice)
-            self.modal.setGeometry(12, 12, max(100, self.width() - 24), max(100, self.height() - 24))
+            self.modal.setGeometry(0, 0, self.width(), self.height())
             self.modal.show()
             self.modal.raise_()
             self._scroll_paused = True
@@ -571,19 +576,21 @@ class NoticesWidget(QFrame):
 
     @property
     def modal_open(self):
-        return hasattr(self, 'modal') and self.modal is not None and self.modal.isVisible()
+        return hasattr(self, 'modal') and self.modal is not None and not self.modal.isHidden()
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────────────────────────────
 
     def scroll_by_pixels(self, delta_y):
-        """Manual scroll clamping cleanly within scrollbar limits."""
+        """Manual gesture scroll — pauses auto-scroll for 10s from current position."""
         if self.modal_open:
             return
         sb = self.scroll_area.verticalScrollBar()
         cur = sb.value()
-        self._auto_scroll_paused_until = time.time() + 10.0
+        now = time.time()
+        self._last_manual_scroll_time  = now
+        self._auto_scroll_paused_until = now + 10.0   # short gate prevents jitter immediately after
         sb.setValue(cur + int(delta_y))
 
     @property
@@ -605,10 +612,76 @@ class NoticesWidget(QFrame):
         self._apply_frame_style()
         return self._scroll_paused
 
+    def clear_selection(self):
+        self.selected_index = -1
+        for card in getattr(self, 'cards', []):
+            if hasattr(card, 'set_selected'):
+                card.set_selected(False)
+
+    def select_index(self, index):
+        cards = getattr(self, 'cards', [])
+        if not cards:
+            return None
+        index = max(0, min(len(cards) - 1, index))
+        self.selected_index = index
+        selected_card = None
+        for i, card in enumerate(cards):
+            is_sel = (i == index)
+            if hasattr(card, 'set_selected'):
+                card.set_selected(is_sel)
+            if is_sel:
+                selected_card = card
+        return selected_card
+
+    def select_at_point(self, x_frac, y_frac):
+        """Map hand (x_frac, y_frac) into notices cards to highlight."""
+        cards = getattr(self, 'cards', [])
+        if not cards or self.modal_open:
+            return None
+
+        # Resolve viewport y relative to notices scroll area
+        top_y = self.scroll_area.mapToGlobal(QPoint(0, 0)).y()
+        win_h = self.window().height() if self.window() else 1080
+        hand_global_y = int(y_frac * win_h)
+        local_y = hand_global_y - top_y + self.scroll_area.verticalScrollBar().value()
+
+        best_idx, min_dist = -1, float('inf')
+        for idx, card in enumerate(cards):
+            cy = card.y() + card.height() / 2
+            dist = abs(cy - local_y)
+            if dist < min_dist:
+                min_dist = dist
+                best_idx = idx
+
+        if best_idx >= 0:
+            return self.select_index(best_idx)
+        return None
+
+    def activate_selected(self):
+        """Pinch or tap handler: open the selected card into NoticeDetailModal."""
+        if self.modal_open:
+            self.close_modal()
+            return True
+
+        cards = getattr(self, 'cards', [])
+        if 0 <= self.selected_index < len(cards):
+            card = cards[self.selected_index]
+            if hasattr(card, 'notice') and card.notice:
+                self.open_modal(card.notice)
+                return True
+        elif cards:
+            card = cards[0]
+            if hasattr(card, 'notice') and card.notice:
+                self.open_modal(card.notice)
+                return True
+        return False
+
     def set_gesture_active(self, active, variant='A'):
         """Show/hide the 'your hand is controlling this panel' affordance."""
         active = bool(active)
         self._variant = variant
+        if not active:
+            self.clear_selection()
         if active == self._gesture_active:
             return
         self._gesture_active = active
@@ -624,27 +697,13 @@ class NoticesWidget(QFrame):
         self._apply_frame_style()
 
     def _apply_frame_style(self):
-        """The panel's border is the whole gesture affordance.
-
-        Variant A: Bold, thick high-contrast highlight border (4px solid #38bdf8).
-        Variant B: Crisp minimal border (2px solid rgba(255,255,255,0.8)) since on-screen cursor dot gives primary continuous feedback.
-        """
-        variant = getattr(self, '_variant', 'A')
-        if self._scroll_paused or self._gesture_active:
-            if variant == 'A':
-                border = '4px solid #38bdf8'
-            else:
-                border = '2px solid rgba(255, 255, 255, 0.85)'
-        else:
-            border = '4px solid transparent' if variant == 'A' else '2px solid transparent'
-
-        self.setStyleSheet(f"""
-            #NoticesWidget {{
+        """No frame outline -- border removed per user request."""
+        self.setStyleSheet("""
+            #NoticesWidget {
                 background-color: #000000;
-                border: {border};
-                border-right: 1px solid #1c1c1c;
+                border: none;
                 border-radius: 6px;
-            }}
+            }
         """)
 
     def apply_theme(self, primary_color, secondary_color, font_family):
@@ -660,7 +719,8 @@ class NoticesWidget(QFrame):
     def _fetch_notices(self):
         try:
             res = requests.get(f'{self.api_url}/api/notices', timeout=10)
-            res.raise_for_status()
+            if hasattr(res, 'raise_for_status'):
+                res.raise_for_status()
             data = res.json()
             if isinstance(data, list):
                 notices = data
@@ -686,9 +746,11 @@ class NoticesWidget(QFrame):
                         if 'keywordFilter' in cfg:
                             kf = cfg['keywordFilter']
                             if isinstance(kf, list):
+                                self.keyword_boosts = [str(x).strip().lower() for x in kf if str(x).strip()]
                                 self.keyword_filter = ','.join(kf)
                             else:
                                 self.keyword_filter = str(kf or '').strip().lower()
+                                self.keyword_boosts = [k.strip() for k in self.keyword_filter.split(',') if k.strip()]
             except Exception:
                 pass
 
@@ -722,15 +784,8 @@ class NoticesWidget(QFrame):
             if notice.get('category', 'General') not in self.cat_filters:
                 return False
 
-        if not self.keyword_filter:
-            return True
-        haystack = ' '.join([
-            notice.get('title', ''),
-            notice.get('category', ''),
-            notice.get('contact', ''),
-            strip_html(notice.get('notice', '')),
-        ]).lower()
-        return self.keyword_filter in haystack
+        # Keywords are boost priorities, not an exclusionary filter
+        return True
 
     # ──────────────────────────────────────────────────────────────────────
     # UI update
@@ -747,6 +802,7 @@ class NoticesWidget(QFrame):
             filtered = [n for n in self.notices if self._passes_filter(n)]
             cat_order_list = getattr(self, 'cat_order', [])
             user_cls = getattr(self, 'class_name', '').lower()
+            kw_boosts = getattr(self, 'keyword_boosts', [])
 
             def _priority(n):
                 t_and_b = f"{n.get('title', '')} {strip_html(n.get('notice', ''))} {n.get('category', '')}".lower()
@@ -763,12 +819,16 @@ class NoticesWidget(QFrame):
                 if is_urg:
                     return (2, 0)
 
+                for kw_idx, kw in enumerate(kw_boosts):
+                    if kw and kw in t_and_b:
+                        return (3, kw_idx)
+
                 cat = n.get('category', 'General')
                 if cat_order_list and cat in cat_order_list:
-                    return (3, cat_order_list.index(cat))
+                    return (4, cat_order_list.index(cat))
                 if cat in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']:
-                    return (4, 0)
-                return (5, 0)
+                    return (5, 0)
+                return (6, 0)
 
             filtered.sort(key=_priority)
             error_msg = self.error_msg
@@ -815,8 +875,10 @@ class NoticesWidget(QFrame):
             return
 
         # Add cards
+        self.cards = []
         for notice in filtered:
             card = _make_notice_card(notice, on_click=self.open_modal)
+            self.cards.append(card)
             self.cards_lay.addWidget(card)
 
         self.cards_lay.addStretch(1)
@@ -828,8 +890,19 @@ class NoticesWidget(QFrame):
 
     def _auto_scroll_tick(self):
         now = time.time()
-        if self._scroll_paused or self._gesture_active or now < self._auto_scroll_paused_until:
-            return
+
+        # Resume auto-scroll from current position if no manual scroll for 10s.
+        # We never reset position here — just let the continuous ticker keep going
+        # from wherever the user left it.
+        idle_10s = (now - self._last_manual_scroll_time) >= 10.0
+        if not idle_10s:
+            return   # still within 10s of last manual scroll — stay paused
+
+        if self._scroll_paused or self._gesture_active:
+            return   # tap-paused or hand actively in region
+
+        if now < self._auto_scroll_paused_until:
+            return   # short post-scroll jitter gate
 
         sb = self.scroll_area.verticalScrollBar()
         max_val = sb.maximum()

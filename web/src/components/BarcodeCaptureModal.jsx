@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import BarcodeScannerComponent from 'react-qr-barcode-scanner'
+import step1Img from '../assets/barcode/1.png'
+import step2Img from '../assets/barcode/2.png'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
-// Mirrors validateBarcode/normalizeBarcode in server/handlers_barcode.go so the
-// student sees the same verdict here that the server would give.
+// ── Validation (mirrors server/handlers_barcode.go) ─────────────────────────
 const ID_MIN = 4
 const ID_MAX = 32
 const ID_SHAPE = /^[A-Z0-9][A-Z0-9-]*$/
@@ -22,6 +23,7 @@ export function validateStudentID(code) {
   return null
 }
 
+// ── Audio feedback ───────────────────────────────────────────────────────────
 function beep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -33,26 +35,48 @@ function beep() {
     gain.gain.setValueAtTime(0.08, ctx.currentTime)
     osc.start()
     osc.stop(ctx.currentTime + 0.1)
-  } catch {
-    // Audio feedback is a nicety; a blocked AudioContext must not break the scan.
-  }
+  } catch { /* audio is a nicety; a blocked AudioContext must not break the scan */ }
 }
 
+// ── Slides definition ─────────────────────────────────────────────────────────
+const SLIDES = [
+  {
+    step: 1,
+    title: 'FIND THE BARCODE ON YOUR STUDENT ID CARD',
+    desc: 'Locate the barcode printed on your student ID card. It is usually on the back or bottom of the front face.',
+    img: step1Img,
+  },
+  {
+    step: 2,
+    title: 'HOLD BARCODE IN FRONT OF THE CAMERA',
+    desc: 'Use the "Scan Barcode" tab below. Hold your card flat so the barcode sits inside the dashed targeting frame.',
+    img: step2Img,
+  },
+  {
+    step: 3,
+    title: 'NO CARD? TYPE YOUR ID NUMBER INSTEAD',
+    desc: 'Switch to the "Type ID" tab below and enter your student number. You can find it printed on the card or in KAMAR.',
+    isArrow: true,
+  },
+]
+
+// ── Main modal ────────────────────────────────────────────────────────────────
 export default function BarcodeCaptureModal({ isOpen, onClose, onBarcodeSaved }) {
   const { getAccessTokenSilently } = useAuth0()
 
-  const [phase, setPhase] = useState('input')   // 'input' | 'saving' | 'success' | 'error'
-  const [mode, setMode] = useState('scan')      // 'scan' | 'manual'
-  const [errorMsg, setErrorMsg] = useState('')
-  const [savedCode, setSavedCode] = useState('')
+  const [slide, setSlide]           = useState(0)
+  const [phase, setPhase]           = useState('input')
+  const [mode, setMode]             = useState('scan')
+  const [errorMsg, setErrorMsg]     = useState('')
+  const [savedCode, setSavedCode]   = useState('')
   const [manualCode, setManualCode] = useState('')
   const [stopStream, setStopStream] = useState(false)
 
-  // Guards the camera path: onUpdate fires per frame and would double-submit.
   const handledRef = useRef(false)
 
   useEffect(() => {
     if (isOpen) {
+      setSlide(0)
       setPhase('input')
       setMode('scan')
       setSavedCode('')
@@ -65,8 +89,6 @@ export default function BarcodeCaptureModal({ isOpen, onClose, onBarcodeSaved })
     }
   }, [isOpen])
 
-  // Releasing the camera when the student switches to typing avoids holding the
-  // webcam open behind a form they are no longer looking at.
   const switchMode = (next) => {
     setMode(next)
     setStopStream(next !== 'scan')
@@ -77,25 +99,17 @@ export default function BarcodeCaptureModal({ isOpen, onClose, onBarcodeSaved })
   const linkStudentID = async (rawCode) => {
     const code = normalizeStudentID(rawCode)
     const invalid = validateStudentID(code)
-    if (invalid) {
-      setErrorMsg(invalid)
-      setPhase('error')
-      return
-    }
+    if (invalid) { setErrorMsg(invalid); setPhase('error'); return }
 
     setPhase('saving')
     try {
       const token = await getAccessTokenSilently()
       const res = await fetch(`${API_URL}/api/users/me/barcode`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ barcode: code }),
       })
       const body = await res.json().catch(() => ({}))
-
       if (res.ok) {
         setSavedCode(body.barcode || code)
         setPhase('success')
@@ -118,10 +132,7 @@ export default function BarcodeCaptureModal({ isOpen, onClose, onBarcodeSaved })
     linkStudentID(result.text)
   }
 
-  const handleClose = () => {
-    setStopStream(true)
-    onClose()
-  }
+  const handleClose = () => { setStopStream(true); onClose() }
 
   const retry = () => {
     handledRef.current = false
@@ -135,216 +146,306 @@ export default function BarcodeCaptureModal({ isOpen, onClose, onBarcodeSaved })
   const manualNormalized = normalizeStudentID(manualCode)
   const manualError = manualNormalized ? validateStudentID(manualNormalized) : null
   const canSubmitManual = manualNormalized.length > 0 && !manualError
+  const currentSlide = SLIDES[slide]
 
-  const tabStyle = (active) => ({
-    flex: 1,
-    padding: '9px 12px',
-    fontSize: '0.8rem',
-    fontWeight: 600,
-    letterSpacing: '0.04em',
-    borderRadius: '8px',
-    border: `1px solid ${active ? 'var(--accent, #60a5fa)' : 'rgba(255,255,255,0.12)'}`,
-    background: active ? 'rgba(96,165,250,0.14)' : 'transparent',
-    color: active ? 'var(--accent, #60a5fa)' : 'rgba(255,255,255,0.6)',
-    cursor: 'pointer',
-    transition: 'all 0.18s ease',
-  })
+  const tabCls = (active) =>
+    'flex-1 py-2.5 px-3 text-xs font-bold font-mono uppercase tracking-widest border transition-all cursor-pointer rounded-none ' +
+    (active
+      ? 'bg-white text-black border-white'
+      : 'bg-black text-[#888888] border-[#222222] hover:border-[#555555] hover:text-white')
 
   return (
-    <AnimatePresence>
-      <motion.div
-        className="fc-backdrop"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={(e) => e.target === e.currentTarget && phase !== 'saving' && handleClose()}
-      >
-        <motion.div
-          className="fc-modal"
-          initial={{ opacity: 0, scale: 0.95, y: 16 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 16 }}
-          transition={{ duration: 0.25 }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {phase !== 'saving' && (
-            <button className="fc-close" onClick={handleClose} aria-label="Close">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+      <AnimatePresence mode="wait">
 
-          <AnimatePresence mode="wait">
-
-            {/* ── INPUT: scan or type ─────────────────────────────────────── */}
-            {phase === 'input' && (
-              <motion.div
-                key="input"
-                className="fc-phase fc-phase-capture"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
+        {/* INPUT phase */}
+        {phase === 'input' && (
+          <motion.div
+            key="input"
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            transition={{ duration: 0.2 }}
+            className="bg-[#0a0a0a] border border-[#222222] rounded-none w-full max-w-xl p-6 flex flex-col gap-5 text-white font-mono shadow-2xl select-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-white">
+                LINK STUDENT ID CARD
+              </span>
+              <button
+                onClick={handleClose}
+                className="text-[#888888] hover:text-white text-xs font-mono uppercase cursor-pointer transition-colors"
               >
-                <p className="fc-overline">Mirror Sign-In</p>
-                <h2 className="fc-title">Link Your Student ID</h2>
-                <p className="fc-sub" style={{ marginBottom: '14px' }}>
-                  Scan the barcode on your student ID card, or type the number by hand.
-                </p>
+                X
+              </button>
+            </div>
 
-                <div role="tablist" style={{ display: 'flex', gap: '8px', width: '100%', marginBottom: '14px' }}>
-                  <button
-                    role="tab"
-                    aria-selected={mode === 'scan'}
-                    style={tabStyle(mode === 'scan')}
-                    onClick={() => switchMode('scan')}
-                  >
-                    Scan barcode
-                  </button>
-                  <button
-                    role="tab"
-                    aria-selected={mode === 'manual'}
-                    style={tabStyle(mode === 'manual')}
-                    onClick={() => switchMode('manual')}
-                  >
-                    Type ID
-                  </button>
+            {/* Slideshow */}
+            <div className="bg-[#0e0e0e] p-5 flex flex-col gap-3 border border-[#1a1a1a]">
+
+              {/* Step counter + dot nav */}
+              <div className="flex items-center justify-between text-[11px] text-[#888888]">
+                <span className="uppercase font-bold tracking-widest text-white">
+                  STEP {currentSlide.step} / {SLIDES.length}
+                </span>
+                <div className="flex gap-1.5">
+                  {SLIDES.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSlide(idx)}
+                      className={`w-6 h-1 transition-colors cursor-pointer ${
+                        idx === slide ? 'bg-white' : 'bg-[#2a2a2a] hover:bg-[#444444]'
+                      }`}
+                    />
+                  ))}
                 </div>
+              </div>
 
+              {/* Title + description */}
+              <div className="flex flex-col gap-1">
+                <h3 className="text-xs font-bold text-white uppercase tracking-tight">
+                  {currentSlide.title}
+                </h3>
+                <p className="text-xs text-[#aaaaaa] leading-relaxed">
+                  {currentSlide.desc}
+                </p>
+              </div>
+
+              {/* Visual area */}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={slide}
+                  initial={{ opacity: 0, x: 14 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -14 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  <div className="py-2 flex flex-col items-center justify-center min-h-[140px] bg-[#000000] border border-[#1c1c1c] p-2">
+                    {currentSlide.img && (
+                      <img
+                        src={currentSlide.img}
+                        alt={currentSlide.title}
+                        className="w-full max-h-52 object-contain"
+                      />
+                    )}
+                    {currentSlide.isArrow && (
+                      <div className="flex flex-col items-center gap-2 py-4">
+                        <span className="text-xs text-[#aaaaaa]">USE THE TYPE ID TAB BELOW:</span>
+                        <span className="text-3xl text-white animate-bounce">v</span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+
+              {/* Prev / Next */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => setSlide(s => Math.max(0, s - 1))}
+                  disabled={slide === 0}
+                  className="px-6 py-3 border border-[#333333] disabled:opacity-20 text-xs font-mono font-bold uppercase hover:border-[#666666] text-[#aaaaaa] hover:text-white transition-colors cursor-pointer rounded-none"
+                >
+                  &larr; PREV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSlide(s => Math.min(SLIDES.length - 1, s + 1))}
+                  disabled={slide === SLIDES.length - 1}
+                  className="px-10 py-3.5 bg-white disabled:opacity-20 text-black hover:bg-[#e0e0e0] text-sm font-mono font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none shadow-md"
+                >
+                  NEXT &rarr;
+                </button>
+              </div>
+            </div>
+
+            {/* Scan / Type area -- always visible below the slides */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] text-[#888888] uppercase tracking-wider font-bold">
+                  SCAN OR ENTER YOUR STUDENT ID
+                </label>
+              </div>
+
+              {/* Mode tabs */}
+              <div className="flex gap-2 w-full">
+                <button className={tabCls(mode === 'scan')}   onClick={() => switchMode('scan')}>
+                  SCAN BARCODE
+                </button>
+                <button className={tabCls(mode === 'manual')} onClick={() => switchMode('manual')}>
+                  TYPE ID
+                </button>
+              </div>
+
+              <AnimatePresence mode="wait">
                 {mode === 'scan' ? (
-                  <>
+                  <motion.div
+                    key="scan"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex flex-col items-center gap-2"
+                  >
                     <div style={{
-                      width: '320px', height: '240px', borderRadius: '16px',
-                      overflow: 'hidden', position: 'relative', background: '#000',
+                      width: '100%', maxWidth: 340, height: 200,
+                      overflow: 'hidden', position: 'relative',
+                      background: '#000', border: '1px solid #1c1c1c',
                     }}>
                       <BarcodeScannerComponent
-                        width={320}
-                        height={240}
+                        width={340}
+                        height={200}
                         onUpdate={handleScan}
                         stopStream={stopStream}
                       />
+                      {/* Targeting frame overlay */}
                       <div style={{
                         position: 'absolute', top: '50%', left: '50%',
                         transform: 'translate(-50%, -50%)',
-                        width: '260px', height: '100px',
-                        border: '2px dashed var(--accent, #60a5fa)',
-                        boxShadow: '0 0 0 9999px rgba(0,0,0,0.4)',
-                        borderRadius: '8px', pointerEvents: 'none',
+                        width: '72%', height: '52%',
+                        border: '1.5px dashed rgba(255,255,255,0.4)',
+                        boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
+                        pointerEvents: 'none',
                       }} />
                     </div>
-                    <p className="fc-sub" style={{ fontSize: '0.78rem', marginTop: '10px', opacity: 0.6 }}>
-                      Hold the barcode flat inside the frame. Camera not working? Use “Type ID”.
+                    <p className="text-[11px] text-[#555555] font-mono text-center">
+                      Hold barcode flat inside the frame. Camera not working? Use TYPE ID.
                     </p>
-                  </>
+                  </motion.div>
                 ) : (
-                  <form
-                    style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}
-                    onSubmit={(e) => { e.preventDefault(); if (canSubmitManual) linkStudentID(manualCode) }}
+                  <motion.div
+                    key="manual"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
                   >
-                    <label
-                      htmlFor="student-id-input"
-                      style={{ fontSize: '0.75rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)' }}
+                    <form
+                      className="flex flex-col gap-2"
+                      onSubmit={(e) => { e.preventDefault(); if (canSubmitManual) linkStudentID(manualCode) }}
                     >
-                      Student ID number
-                    </label>
-                    <input
-                      id="student-id-input"
-                      type="text"
-                      inputMode="text"
-                      autoComplete="off"
-                      autoFocus
-                      value={manualCode}
-                      maxLength={ID_MAX + 8}
-                      onChange={(e) => setManualCode(e.target.value)}
-                      placeholder="e.g. 18234"
-                      style={{
-                        width: '100%', padding: '12px 14px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${manualError ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.12)'}`,
-                        borderRadius: '10px', color: '#fff',
-                        fontSize: '1.05rem', letterSpacing: '0.14em',
-                        fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-                        outline: 'none',
-                      }}
-                    />
-                    <div style={{ minHeight: '18px', fontSize: '0.76rem' }}>
-                      {manualError
-                        ? <span style={{ color: '#f87171' }}>{manualError}</span>
-                        : manualNormalized
-                          ? <span style={{ color: 'rgba(255,255,255,0.45)' }}>Will be saved as <strong>{manualNormalized}</strong></span>
-                          : null}
-                    </div>
-                    <button
-                      type="submit"
-                      className="fc-btn"
-                      disabled={!canSubmitManual}
-                      style={{ opacity: canSubmitManual ? 1 : 0.45, cursor: canSubmitManual ? 'pointer' : 'not-allowed' }}
-                    >
-                      Link this ID
-                    </button>
-                  </form>
+                      <label htmlFor="student-id-input" className="text-[10px] text-[#666666] uppercase tracking-wider font-bold">
+                        STUDENT ID NUMBER
+                      </label>
+                      <input
+                        id="student-id-input"
+                        type="text"
+                        inputMode="text"
+                        autoComplete="off"
+                        autoFocus
+                        value={manualCode}
+                        maxLength={ID_MAX + 8}
+                        onChange={(e) => setManualCode(e.target.value)}
+                        placeholder="e.g. 18234"
+                        className="w-full bg-[#0e0e0e] border border-[#262626] focus:border-white text-white px-3.5 py-3 text-sm font-mono rounded-none outline-none transition-colors tracking-widest"
+                        style={{ borderColor: manualError ? 'rgba(239,68,68,0.5)' : undefined }}
+                      />
+                      <div className="min-h-[16px] text-xs font-mono">
+                        {manualError
+                          ? <span className="text-red-400">{manualError}</span>
+                          : manualNormalized
+                            ? <span className="text-[#555555]">Will save as <strong className="text-white">{manualNormalized}</strong></span>
+                            : null}
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={!canSubmitManual}
+                        className="w-full py-3 bg-white text-black text-xs font-bold font-mono uppercase tracking-wider rounded-none hover:bg-[#e0e0e0] disabled:opacity-40 transition-colors cursor-pointer"
+                      >
+                        LINK THIS ID
+                      </button>
+                    </form>
+                  </motion.div>
                 )}
+              </AnimatePresence>
 
-                <div className="fc-row-btns" style={{ marginTop: '14px' }}>
-                  <motion.button
-                    className="fc-btn fc-btn-outline"
-                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                    onClick={handleClose}
-                  >
-                    Cancel
-                  </motion.button>
-                </div>
-              </motion.div>
-            )}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  onClick={handleClose}
+                  className="px-4 py-2 border border-[#222222] text-[#888888] hover:text-white text-xs uppercase font-bold rounded-none cursor-pointer transition-colors"
+                >
+                  CLOSE
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
-            {/* ── SAVING ──────────────────────────────────────────────────── */}
-            {phase === 'saving' && (
-              <motion.div key="saving" className="fc-phase fc-phase-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-                <div className="fc-pulse-ring" />
-                <h2 className="fc-title">Linking Student ID</h2>
-                <p className="fc-sub">Attaching this ID to your mirror layout…</p>
-              </motion.div>
-            )}
+        {/* SAVING */}
+        {phase === 'saving' && (
+          <motion.div
+            key="saving"
+            initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+            className="bg-[#0a0a0a] border border-[#222222] rounded-none w-full max-w-sm p-10 flex flex-col items-center gap-5 text-white font-mono shadow-2xl"
+          >
+            <div className="fc-pulse-ring" />
+            <h2 className="text-sm font-bold uppercase tracking-widest">LINKING STUDENT ID</h2>
+            <p className="text-xs text-[#888888] text-center">Attaching this ID to your mirror layout...</p>
+          </motion.div>
+        )}
 
-            {/* ── SUCCESS ─────────────────────────────────────────────────── */}
-            {phase === 'success' && (
-              <motion.div key="success" className="fc-phase fc-phase-center" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
-                <div className="fc-status-ring fc-status-ok">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <path d="M7 16l7 7 11-11" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <h2 className="fc-title">Student ID Linked</h2>
-                <p className="fc-sub">
-                  <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', letterSpacing: '0.12em' }}>{savedCode}</strong>
-                  <br />Scan this card at the mirror and it will sign you in.
-                </p>
-                <motion.button className="fc-btn" style={{ marginTop: '16px' }} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}>
-                  Done
-                </motion.button>
-              </motion.div>
-            )}
+        {/* SUCCESS */}
+        {phase === 'success' && (
+          <motion.div
+            key="success"
+            initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+            className="bg-[#0a0a0a] border border-[#222222] rounded-none w-full max-w-sm p-10 flex flex-col items-center gap-5 text-white font-mono shadow-2xl"
+          >
+            <div style={{
+              width: 64, height: 64, border: '1px solid #2a2a2a', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0e0e0e',
+            }}>
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+                <path d="M7 16l7 7 11-11" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <h2 className="text-sm font-bold uppercase tracking-widest">STUDENT ID LINKED</h2>
+            <p className="text-xs text-[#888888] text-center leading-relaxed">
+              <strong style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: '0.14em', color: '#fff' }}>{savedCode}</strong>
+              <br />Scan this card at the mirror to sign in automatically.
+            </p>
+            <button
+              onClick={handleClose}
+              className="mt-2 px-8 py-3 bg-white text-black text-xs font-bold font-mono uppercase tracking-widest rounded-none hover:bg-[#e0e0e0] transition-colors cursor-pointer"
+            >
+              DONE
+            </button>
+          </motion.div>
+        )}
 
-            {/* ── ERROR ───────────────────────────────────────────────────── */}
-            {phase === 'error' && (
-              <motion.div key="error" className="fc-phase fc-phase-center" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
-                <div className="fc-status-ring fc-status-err">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <path d="M10 10l12 12M22 10L10 22" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <h2 className="fc-title">Could Not Link ID</h2>
-                <p className="fc-sub" style={{ color: 'rgba(255,255,255,0.5)' }}>{errorMsg}</p>
-                <div className="fc-row-btns" style={{ marginTop: '24px' }}>
-                  <motion.button className="fc-btn fc-btn-outline" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}>Cancel</motion.button>
-                  <motion.button className="fc-btn" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={retry}>Try Again</motion.button>
-                </div>
-              </motion.div>
-            )}
+        {/* ERROR */}
+        {phase === 'error' && (
+          <motion.div
+            key="error"
+            initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+            className="bg-[#0a0a0a] border border-[#222222] rounded-none w-full max-w-sm p-10 flex flex-col items-center gap-5 text-white font-mono shadow-2xl"
+          >
+            <div style={{
+              width: 64, height: 64, border: '1px solid #2a2a2a', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0e0e0e',
+            }}>
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+                <path d="M10 10l12 12M22 10L10 22" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <h2 className="text-sm font-bold uppercase tracking-widest">COULD NOT LINK ID</h2>
+            <p className="text-xs text-[#888888] text-center">{errorMsg}</p>
+            <div className="flex gap-3 mt-2">
+              <button
+                onClick={handleClose}
+                className="px-5 py-2.5 border border-[#333333] text-[#888888] hover:text-white text-xs font-bold font-mono uppercase rounded-none cursor-pointer transition-colors"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={retry}
+                className="px-5 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold font-mono uppercase rounded-none cursor-pointer transition-colors"
+              >
+                TRY AGAIN
+              </button>
+            </div>
+          </motion.div>
+        )}
 
-          </AnimatePresence>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+      </AnimatePresence>
+    </div>
   )
 }

@@ -133,6 +133,13 @@ class ArticleCard(QFrame):
         self._scaled = None
         self._selected = False
 
+        # Animated border: lerps 0 -> 3.0 on select, 3.0 -> 0 on deselect
+        self._bw = 0.0
+        self._bw_timer = QTimer(self)
+        self._bw_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._bw_timer.setInterval(12)   # ~83fps border animation
+        self._bw_timer.timeout.connect(self._tick_border)
+
         self.setMinimumHeight(FEATURE_MIN_HEIGHT if feature else CARD_MIN_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._build_ui()
@@ -205,6 +212,15 @@ class ArticleCard(QFrame):
         if selected == self._selected:
             return
         self._selected = selected
+        self._bw_timer.start()   # start lerp toward new target
+        self.update()
+
+    def _tick_border(self):
+        target = 3.0 if self._selected else 0.0
+        self._bw += 0.28 * (target - self._bw)   # exponential lerp
+        if abs(self._bw - target) < 0.08:
+            self._bw = target
+            self._bw_timer.stop()
         self.update()
 
     @property
@@ -258,14 +274,17 @@ class ArticleCard(QFrame):
         scrim.setColorAt(1.0, QColor(3, 3, 8, 240))
         painter.fillPath(shape, QBrush(scrim))
 
-        painter.setClipping(False)
-        painter.setPen(QPen(QColor(ACCENT) if self._selected else QColor(255, 255, 255, 26),
-                            2 if self._selected else 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        inset = 1.0 if self._selected else 0.5
-        painter.drawRoundedRect(
-            QRectF(rect).adjusted(inset, inset, -inset, -inset), CARD_RADIUS, CARD_RADIUS
-        )
+        # Animated border: draw only if meaningfully wide
+        if self._bw > 0.15:
+            painter.setClipping(False)
+            inset = self._bw * 0.5
+            alpha = int(255 * min(1.0, self._bw / 3.0))
+            painter.setPen(QPen(QColor(255, 255, 255, alpha), self._bw))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(
+                QRectF(rect).adjusted(inset, inset, -inset, -inset),
+                CARD_RADIUS, CARD_RADIUS
+            )
         painter.end()
 
 
@@ -279,12 +298,12 @@ class ArticleModal(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("KWModal")
-        self.setStyleSheet(f"""
-            #KWModal {{
+        self.setStyleSheet("""
+            #KWModal {
                 background-color: #07070c;
-                border-radius: 16px;
-                border: 1px solid {ACCENT};
-            }}
+                border-radius: 12px;
+                border: none;
+            }
         """)
         self._anim = None
 
@@ -504,13 +523,14 @@ class KingsWeekWidget(QFrame):
         self.fetch_error.connect(self._on_fetch_error)
 
         self.setObjectName("KingsWeekWidget")
+        self._gesture_active = False
+        self._half_mode = False  # True when timetable is co-visible (split view)
         self._apply_frame_style()
 
         self.cards = []
         self.selected_index = -1
         self.edition = {}
         self.articles = []
-        self._gesture_active = False
         self._scroll_anim = None
 
         self.images = _ImageStore(self)
@@ -536,10 +556,12 @@ class KingsWeekWidget(QFrame):
     # ── Build ────────────────────────────────────────────────────────────────
 
     def _apply_frame_style(self):
+        """No outline on KingsWeekWidget frame."""
         self.setStyleSheet("""
             #KingsWeekWidget {
                 background-color: #000000;
                 border: none;
+                border-radius: 6px;
             }
         """)
 
@@ -779,7 +801,10 @@ class KingsWeekWidget(QFrame):
 
     def scroll_by_pixels(self, delta):
         """Same open-palm scroll the notices column uses."""
-        self._last_scroll_time = time.time()
+        # Only stamp scroll time for meaningful movement so a tiny
+        # end-of-drag jitter doesn't poison the subsequent tap.
+        if abs(delta) >= 3:
+            self._last_scroll_time = time.time()
         if self._modal_open:
             self.modal.scroll_by_pixels(delta)
             return
@@ -815,10 +840,11 @@ class KingsWeekWidget(QFrame):
         return self._modal_open
 
     def activate_selected(self):
-        """Tap handler: open the selected story. True if a modal opened."""
-        import time as _t
-        if _t.time() - getattr(self, '_last_scroll_time', 0.0) < 0.35:
-            return False
+        """Tap handler: open the selected story. No-op in half-mode (timetable co-visible)."""
+        # NOTE: No scroll-time guard here -- the gesture engine already
+        # separates drag-scrolls from taps via TAP_MAX_SEC / DRAG_TAP_THRESHOLD.
+        if getattr(self, '_half_mode', False):
+            return False  # cards focus only; taps don't open modals in split view
 
         card = self._selected_card()
         if card is None or self._modal_open:
@@ -867,7 +893,12 @@ class KingsWeekWidget(QFrame):
 
     # ── Gesture affordance ───────────────────────────────────────────────────
 
-    def set_gesture_active(self, active):
+    def set_half_mode(self, half):
+        """half=True: timetable is sharing the panel. Cards focus but don't open."""
+        self._half_mode = bool(half)
+
+    def set_gesture_active(self, active, variant='A'):
+        self.current_variant = variant
         if not active:
             self.clear_selection()
         if active == self._gesture_active:

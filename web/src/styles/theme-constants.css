@@ -1,4 +1,5 @@
-:root {
+:root,
+[data-theme='oled-black'] {
   /* Fonts */
   --font-display: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-mono: 'Consolas', 'SFMono-Regular', 'JetBrains Mono', monospace;
@@ -6,24 +7,79 @@
 
   /* Theme Backgrounds and Text */
   --bg-color: #000000;
-  --panel-bg: #0a0a0a;
+  --panel-bg: #0c0c0c;
+  --card-bg: #0e0e0e;
+  --card-hover: #161616;
   --line-color: #1c1c1c;
   --text-primary: #ffffff;
-  --text-secondary: #d0d0d0;
-  --text-muted: #8f8f8f;
+  --text-secondary: #aaaaaa;
+  --text-muted: #666666;
 
   /* Accents */
   --urgent: #ff4d4d;
   --warn: #ffb020;
   --ok: #35d07f;
-  --now: #4fc3ff;
-  --accent: #4fc3ff;
-  --accent-hover: #38bdf8;
-  --accent-glow: rgba(79, 195, 255, 0.25);
+  --now: #ffffff;
+  --accent: #ffffff;
+  --accent-hover: #e0e0e0;
+  --accent-glow: rgba(255, 255, 255, 0.15);
 
-  /* Helper accent styles */
-  --glass-bg: #0a0a0a;
-  --glass-border: #1c1c1c;
-  --glass-hover: #141414;
+  --btn-bg: #ffffff;
+  --btn-text: #000000;
+  --btn-border: #ffffff;
 }
 
+[data-theme='high-contrast'] {
+  --font-display: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Consolas', 'SFMono-Regular', 'JetBrains Mono', monospace;
+  --font-family: var(--font-display);
+
+  --bg-color: #000000;
+  --panel-bg: #000000;
+  --card-bg: #000000;
+  --card-hover: #1a1a1a;
+  --line-color: #666666;
+  --text-primary: #ffffff;
+  --text-secondary: #f0f0f0;
+  --text-muted: #aaaaaa;
+
+  --urgent: #ff4d4d;
+  --warn: #ffb020;
+  --ok: #35d07f;
+  --now: #ffffff;
+  --accent: #ffffff;
+  --accent-hover: #e0e0e0;
+  --accent-glow: rgba(255, 255, 255, 0.35);
+
+  --btn-bg: #ffffff;
+  --btn-text: #000000;
+  --btn-border: #ffffff;
+}
+
+[data-theme='minimal-gray'],
+[data-theme='mono-slate'] {
+  --font-display: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Consolas', 'SFMono-Regular', 'JetBrains Mono', monospace;
+  --font-family: var(--font-display);
+
+  --bg-color: #12151a;
+  --panel-bg: #1a1e25;
+  --card-bg: #212731;
+  --card-hover: #2a323f;
+  --line-color: #323b49;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+
+  --urgent: #f87171;
+  --warn: #fbbf24;
+  --ok: #34d399;
+  --now: #f8fafc;
+  --accent: #f8fafc;
+  --accent-hover: #e2e8f0;
+  --accent-glow: rgba(248, 250, 252, 0.2);
+
+  --btn-bg: #f8fafc;
+  --btn-text: #0f172a;
+  --btn-border: #f8fafc;
+}

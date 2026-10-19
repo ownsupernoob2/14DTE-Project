@@ -1,41 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, Reorder, AnimatePresence } from 'framer-motion';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
-// Category colour palette
-const CATEGORY_COLORS = {
-  'General':       { bg: 'rgba(148,163,184,0.15)', accent: '#94a3b8', text: '#cbd5e1' },
-  'Sports':        { bg: 'rgba(34,197,94,0.12)',   accent: '#22c55e', text: '#86efac' },
-  'Meetings':      { bg: 'rgba(139,92,246,0.12)',  accent: '#8b5cf6', text: '#c4b5fd' },
-  'Academic':      { bg: 'rgba(59,130,246,0.12)',  accent: '#3b82f6', text: '#93c5fd' },
-  'Careers':       { bg: 'rgba(251,191,36,0.12)',  accent: '#fbbf24', text: '#fde68a' },
-  'Arts & Culture':{ bg: 'rgba(244,63,94,0.12)',   accent: '#f43f5e', text: '#fda4af' },
-  'Service':       { bg: 'rgba(20,184,166,0.12)',  accent: '#14b8a6', text: '#5eead4' },
-};
-
-// Category text labels (no emojis)
-const CATEGORY_LABELS = {
-  'General':       'General',
-  'Sports':        'Sports',
-  'Meetings':      'Meetings',
-  'Academic':      'Academic',
-  'Careers':       'Careers',
-  'Arts & Culture':'Arts & Culture',
-  'Service':       'Service',
+// Category colour palette (exact match for both badges, left borders, and filter settings)
+export const CATEGORY_COLORS = {
+  'General':        { bg: 'rgba(148,163,184,0.15)', accent: '#94a3b8', text: '#cbd5e1' },
+  'Sports':         { bg: 'rgba(34,197,94,0.15)',   accent: '#22c55e', text: '#86efac' },
+  'Meetings':       { bg: 'rgba(139,92,246,0.15)',  accent: '#8b5cf6', text: '#c4b5fd' },
+  'Academic':       { bg: 'rgba(59,130,246,0.15)',  accent: '#3b82f6', text: '#93c5fd' },
+  'Careers':        { bg: 'rgba(251,191,36,0.15)',  accent: '#fbbf24', text: '#fde68a' },
+  'Arts & Culture': { bg: 'rgba(244,63,94,0.15)',   accent: '#f43f5e', text: '#fda4af' },
+  'Service':        { bg: 'rgba(20,184,166,0.15)',  accent: '#14b8a6', text: '#5eead4' },
 };
 
 const ALL_CATEGORIES = ['General', 'Sports', 'Meetings', 'Academic', 'Careers', 'Arts & Culture', 'Service'];
 const YEAR_TABS = ['All', '9', '10', '11', '12', '13'];
 
-// Speed presets: px per tick (tick = 25ms)
 const SPEED_PRESETS = [
-  { label: 'Slow',   value: 0.25 },
-  { label: 'Normal', value: 0.5  },
-  { label: 'Fast',   value: 1.0  },
+  { labelKey: 'slow',   value: 0.25 },
+  { labelKey: 'normal', value: 0.5  },
+  { labelKey: 'fast',   value: 1.0  },
 ];
 
-/** Extract key details (date, time, location, contact) from raw HTML */
+/** Extract key details from HTML */
 function extractDetails(html) {
   const details = {};
   if (!html) return details;
@@ -47,24 +36,80 @@ function extractDetails(html) {
                     text.match(/\b\d{1,2}:\d{2}\b/);
   const roomMatch = text.match(/\b(Room|Rm|Classroom)\s+([A-Za-z0-9-]+)\b/i) ||
                     text.match(/\b(Library|Auditorium|Hall|Gymnasium|Gym|Main Field|Pool|Music Suite|Performing Arts Centre|PAC)\b/i);
-  const deadlineMatch = text.match(/\b(by|before|deadline[:\s]+)\s*([A-Za-z0-9\s,]+?\d{4}|\d{1,2}\s+\w+)\b/i);
 
   if (dateMatch) details.date = dateMatch[0].trim();
   if (timeMatch) details.time = timeMatch[0].trim();
   if (roomMatch) details.location = roomMatch[0].trim();
-  if (deadlineMatch) details.deadline = deadlineMatch[0].trim();
   return details;
 }
 
-/** Build a clean text preview from HTML */
-function buildPreview(html, maxLen = 120) {
+/** Build a preview snippet */
+function buildPreview(html, maxLen = 130) {
   if (!html) return '';
   const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + '…' : text;
 }
 
-/** Interactive Notice Detail Modal with Quick Brief / AI Summary */
-function NoticeDetailModal({ notice, onClose }) {
+/** Notice Card with Left Color Outline Accent */
+function NoticeCard({ n, onClick }) {
+  const { t, translateNoticeText } = useLanguage();
+  const isUrgent = n.importance === 'high';
+  const cat = n.category || 'General';
+  const catColors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
+
+  const previewText = translateNoticeText(buildPreview(n.notice, 130));
+  const translatedTitle = translateNoticeText(n.title);
+  const dateStr = n.details?.date ? ` · ${n.details.date}` : ` · ${t('today')}`;
+
+  return (
+    <article
+      onClick={onClick}
+      style={{ borderLeft: `4px solid ${isUrgent ? '#ef4444' : catColors.accent}` }}
+      className="bg-[#0e0e0e] hover:bg-[#161616] p-4 flex flex-col gap-2 transition-all cursor-pointer group rounded-none select-none relative"
+    >
+      <div className="text-[11px] font-bold tracking-wider uppercase font-mono flex items-center justify-between">
+        <span
+          className="px-2 py-0.5 rounded-none text-[10px] font-mono font-bold"
+          style={{
+            backgroundColor: isUrgent ? 'rgba(239,68,68,0.2)' : catColors.bg,
+            color: isUrgent ? '#ef4444' : catColors.accent,
+          }}
+        >
+          {isUrgent ? t('urgent') : cat.toUpperCase()}{dateStr}
+        </span>
+        <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-mono text-[#888888] group-hover:text-white uppercase font-bold">
+          {t('read')}
+        </span>
+      </div>
+
+      <h4 className="text-[18px] font-bold text-white leading-snug group-hover:text-[#ffffff] transition-colors">
+        {translatedTitle}
+      </h4>
+
+      <p className="text-[14px] text-[#b0b0b0] leading-relaxed line-clamp-3 font-sans">
+        {previewText}
+      </p>
+
+      {n.contact && (
+        <div className="text-[10px] text-[#777777] font-mono mt-0.5 uppercase">
+          {t('see')} {n.contact}
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** In-Place Expanded Notice View (Fills notices panel, clicking closes it) */
+function ExpandedNoticeView({ notice, onClose }) {
+  const { t, translateNoticeText } = useLanguage();
+  const isUrgent = notice.importance === 'high';
+  const cat = notice.category || 'General';
+  const catColors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
+
+  const rawBody = (notice.notice || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const translatedBody = translateNoticeText(rawBody);
+  const translatedTitle = translateNoticeText(notice.title);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();
@@ -73,185 +118,81 @@ function NoticeDetailModal({ notice, onClose }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  if (!notice) return null;
-
-  const isUrgent = notice.importance === 'high';
-  const cat = notice.category || 'General';
-  const dateStr = notice.details?.date || 'Today';
-  const rawBody = (notice.notice || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-
-  // Structured key details
-  const keyPoints = [];
-  if (notice.details?.time) keyPoints.push({ label: 'Time', value: notice.details.time, icon: 'schedule' });
-  if (notice.details?.location) keyPoints.push({ label: 'Location', value: notice.details.location, icon: 'location_on' });
-  if (notice.contact) keyPoints.push({ label: 'Contact', value: notice.contact, icon: 'person' });
-  if (notice.details?.deadline) keyPoints.push({ label: 'Deadline', value: notice.details.deadline, icon: 'event' });
-  if (notice.targetYears && !notice.targetYears.includes('All')) {
-    keyPoints.push({ label: 'Target Years', value: `Year ${notice.targetYears.join(', ')}`, icon: 'groups' });
-  }
-
-  // Summary sentences from body
-  const sentences = rawBody.split(/(?<=[.?!])\s+/).filter(Boolean);
-  const summarySentences = sentences.slice(0, 3).join(' ');
-
   return (
-    <div
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md"
+      style={{ borderLeft: `5px solid ${isUrgent ? '#ef4444' : catColors.accent}` }}
+      className="flex-1 flex flex-col p-6 bg-[#0c0c0c] overflow-y-auto custom-scrollbar cursor-pointer select-none rounded-none"
     >
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ duration: 0.2 }}
-        className="bg-[#0a0a0a] border border-[#1e2f47] rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden font-sans text-white relative"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1c1c1c] bg-[#0c121e]">
-          <div className="flex items-center gap-2">
-            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider ${
-              isUrgent ? 'bg-red-950/80 text-red-400 border border-red-500/30' : 'bg-[#4fc3ff]/15 text-[#4fc3ff] border border-[#4fc3ff]/30'
-            }`}>
-              {isUrgent ? '🚨 URGENT NOTICE' : cat}
-            </span>
-            <span className="text-xs text-[#8f8f8f] font-mono">
-              · {dateStr}
-            </span>
-          </div>
-
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-[#a0a0a0] hover:text-white flex items-center justify-center transition-colors cursor-pointer text-sm"
+      {/* Top Bar */}
+      <div className="flex items-center justify-between pb-4 border-b border-[#222222] shrink-0">
+        <div className="flex items-center gap-3">
+          <span
+            className="px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider rounded-none font-mono"
+            style={{
+              backgroundColor: isUrgent ? 'rgba(239,68,68,0.2)' : catColors.bg,
+              color: isUrgent ? '#ef4444' : catColors.accent,
+            }}
           >
-            ✕
-          </button>
+            {isUrgent ? t('urgent') : cat.toUpperCase()}
+          </span>
+          <span className="text-xs text-[#888888] font-mono">
+            {notice.details?.date || t('today')}
+          </span>
         </div>
-
-        {/* Content Scroll Area */}
-        <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-5">
-          <div>
-            <h2 className="text-2xl font-bold text-white tracking-tight leading-snug">
-              {notice.title}
-            </h2>
-          </div>
-
-          {/* Quick Brief / Summary Box */}
-          <div className="bg-gradient-to-r from-[#0d1624] via-[#0b101b] to-[#0a0a0a] border border-[#1e2f47] rounded-xl p-4 flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#4fc3ff] uppercase tracking-wider">
-              <span className="material-symbols-outlined text-base">auto_awesome</span>
-              Quick Brief &amp; Key Details
-            </div>
-
-            {summarySentences && (
-              <p className="text-xs text-[#9bb0c9] leading-relaxed">
-                {summarySentences}
-              </p>
-            )}
-
-            {keyPoints.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[#1e2f47]/60">
-                {keyPoints.map((pt, idx) => (
-                  <div key={idx} className="bg-[#000000]/60 border border-white/5 rounded-lg p-2.5 flex flex-col gap-0.5">
-                    <span className="text-[10px] uppercase font-mono text-[#71859e] flex items-center gap-1">
-                      <span className="material-symbols-outlined text-xs text-[#4fc3ff]">{pt.icon}</span>
-                      {pt.label}
-                    </span>
-                    <span className="text-xs font-semibold text-white truncate" title={pt.value}>
-                      {pt.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Full Notice Content */}
-          <div className="flex flex-col gap-2">
-            <span className="text-[11px] font-mono uppercase tracking-wider text-[#888888]">
-              Full Notice Text
-            </span>
-            <div
-              className="text-sm text-[#d0d0d0] leading-relaxed bg-[#000000] border border-[#1c1c1c] rounded-xl p-4 whitespace-pre-line"
-              dangerouslySetInnerHTML={{ __html: notice.notice || rawBody }}
-            />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-[#1c1c1c] bg-[#0c121e]/40 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-5 py-2 bg-[#1c1c1c] hover:bg-[#262626] text-white text-xs font-mono uppercase font-bold rounded-xl transition-colors cursor-pointer"
-          >
-            Close (ESC)
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-/** Reusable notice card matching new-style.html */
-function NoticeCard({ n, urgent = false, onClick }) {
-  const isUrgent = urgent || n.importance === 'high';
-  const cat = n.category || 'General';
-  const isMedium = ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings'].includes(cat);
-
-  let borderClass = 'border-l-[#3a3a3a]';
-  let metaColor = '#8f8f8f';
-  if (isUrgent) {
-    borderClass = 'border-l-[#ff4d4d]';
-    metaColor = '#ff4d4d';
-  } else if (isMedium) {
-    borderClass = 'border-l-[#ffb020]';
-    metaColor = '#ffb020';
-  }
-
-  const previewText = buildPreview(n.notice, 140);
-  const dateStr = n.details?.date ? ` · ${n.details.date}` : ' · Today';
-
-  return (
-    <motion.article 
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      onClick={onClick}
-      className={`bg-[#0a0a0a] rounded-r p-4 border-l-[4px] ${borderClass} flex flex-col gap-1.5 shadow-sm hover:bg-[#141414] hover:border-l-[#4fc3ff] transition-all cursor-pointer group relative`}
-    >
-      <div className="text-[12px] font-semibold tracking-wider uppercase font-mono flex items-center justify-between" style={{ color: metaColor }}>
-        <span>{isUrgent ? `URGENT${dateStr}` : `${cat.toUpperCase()}${dateStr}`}</span>
-        <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-mono text-[#4fc3ff] flex items-center gap-1">
-          Inspect &amp; Summary →
-        </span>
       </div>
-      
-      <h4 className="text-[19px] font-bold text-white leading-tight group-hover:text-[#4fc3ff] transition-colors">
-        {n.title}
-      </h4>
 
-      <p className="text-[15px] text-[#d0d0d0] leading-relaxed line-clamp-3">
-        {previewText}
-      </p>
+      {/* Big Clear Title */}
+      <div className="py-5">
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-snug">
+          {translatedTitle}
+        </h2>
+      </div>
 
-      {n.contact && (
-        <div className="text-[11px] text-[#8f8f8f] font-mono mt-1">
-          See {n.contact}
+      {/* Key Details Strip (If present) */}
+      {(notice.details?.time || notice.details?.location || notice.contact) && (
+        <div className="flex flex-wrap gap-4 py-3 border-y border-[#1c1c1c] text-xs font-mono text-[#888888] shrink-0">
+          {notice.details?.time && (
+            <span>TIME: <strong className="text-white">{notice.details.time}</strong></span>
+          )}
+          {notice.details?.location && (
+            <span>LOCATION: <strong className="text-white">{translateNoticeText(notice.details.location)}</strong></span>
+          )}
+          {notice.contact && (
+            <span>CONTACT: <strong className="text-white">{notice.contact}</strong></span>
+          )}
         </div>
       )}
-    </motion.article>
+
+      {/* Clear Big Full Notice Text (No quick brief box) */}
+      <div className="py-6 flex-1">
+        <div className="text-base sm:text-lg text-[#e0e0e0] leading-relaxed whitespace-pre-line font-sans">
+          {translatedBody}
+        </div>
+      </div>
+
+      {/* Bottom Close Cue */}
+      <div className="pt-4 border-t border-[#1c1c1c] text-center text-xs font-mono text-[#777777] uppercase tracking-wider shrink-0">
+        [ {t('click_anywhere_close')} ]
+      </div>
+    </motion.div>
   );
 }
 
-export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly = false }) {
+export default function DailyNoticesWidget({ widget = {}, onUpdateData }) {
+  const { t } = useLanguage();
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [selectedNotice, setSelectedNotice] = useState(null);
-  const [isWide, setIsWide] = useState(false);
-  const containerRef = useRef(null);
-  
+  const [showFilters, setShowFilters] = useState(false);
+
   const getCachedConfig = () => {
     try {
       const saved = localStorage.getItem('notices_widget_config');
@@ -260,42 +201,42 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   };
   const cachedConfig = getCachedConfig();
 
-  // Edit mode controls
+  // Search query & filter controls state
   const [searchQuery, setSearchQuery] = useState('');
-  const [yearFilter, setYearFilter] = useState(() => widget.data?.yearFilter || cachedConfig.yearFilter || 'All');
-  const [catFilters, setCatFilters] = useState(() => widget.data?.catFilters ?? cachedConfig.catFilters ?? ALL_CATEGORIES);
-  const [catOrder, setCatOrder] = useState(() => widget.data?.catOrder ?? cachedConfig.catOrder ?? ALL_CATEGORIES);
-  const [keywords, setKeywords] = useState(() => {
+
+  // Applied filter & display settings (governs notices list, active filtering, and auto-scroll)
+  const [appliedYearFilter, setAppliedYearFilter] = useState(() => widget.data?.yearFilter || cachedConfig.yearFilter || 'All');
+  const [appliedCatFilters, setAppliedCatFilters] = useState(() => widget.data?.catFilters ?? cachedConfig.catFilters ?? ALL_CATEGORIES);
+  const [appliedCatOrder, setAppliedCatOrder] = useState(() => widget.data?.catOrder ?? cachedConfig.catOrder ?? ALL_CATEGORIES);
+  const [appliedKeywords, setAppliedKeywords] = useState(() => {
     const kf = widget.data?.keywordFilter ?? cachedConfig.keywordFilter;
     if (Array.isArray(kf)) return kf;
     if (typeof kf === 'string' && kf.trim()) return kf.split(',').map(k => k.trim()).filter(Boolean);
     return [];
   });
-  const [keywordInput, setKeywordInput] = useState('');
-  const [className, setClassName] = useState(() => widget.data?.className || cachedConfig.className || '');
-  const [scrollSpeed, setScrollSpeed] = useState(() => widget.data?.scrollSpeed ?? cachedConfig.scrollSpeed ?? 0.5);
-  const [showSettings, setShowSettings] = useState(false);
-  const [expandedIds, setExpandedIds] = useState(new Set());
+  const [appliedClassName, setAppliedClassName] = useState(() => widget.data?.className || cachedConfig.className || '');
+  const [appliedScrollSpeed, setAppliedScrollSpeed] = useState(() => widget.data?.scrollSpeed ?? cachedConfig.scrollSpeed ?? 0.5);
 
-  // Mirror auto-scroll (for edit mode)
+  // Draft filter & display settings (isolated to the settings panel; only committed when user clicks "APPLY CHANGES")
+  const [draftYearFilter, setDraftYearFilter] = useState(appliedYearFilter);
+  const [draftCatFilters, setDraftCatFilters] = useState(appliedCatFilters);
+  const [draftCatOrder, setDraftCatOrder] = useState(appliedCatOrder);
+  const [draftKeywords, setDraftKeywords] = useState(appliedKeywords);
+  const [draftKeywordInput, setDraftKeywordInput] = useState('');
+  const [draftClassName, setDraftClassName] = useState(appliedClassName);
+  const [draftScrollSpeed, setDraftScrollSpeed] = useState(appliedScrollSpeed);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Auto-scroll ref and timer management
   const scrollRef = useRef(null);
-  const scrollState = useRef({ scrollInterval: null, holdTimer: null });
+  const isProgrammaticScroll = useRef(false);
+  const scrollState = useRef({
+    scrollInterval: null,
+    holdTimer: null,
+    resumeTimer: null,
+  });
 
-  // Mirror paginated mode state (for readonly/dashboard mode)
-  const [mirrorPage, setMirrorPage] = useState(0);
-
-  // ─── ResizeObserver: detect wide layout for 2-col ────────────────────────────
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setIsWide(entry.contentRect.width >= 560);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // ─── Load notices ───────────────────────────────────────────────────────────
+  // ── Load notices ───────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     const fetchNotices = async () => {
@@ -316,7 +257,6 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         if (!res.ok) throw new Error('Failed to load notices');
         const data = await res.json();
         if (!cancelled) {
-          // Handle both {fetchedAt, notices:[]} wrapper and legacy bare array
           const noticeList = Array.isArray(data) ? data : (data.notices || []);
           const fetchedAtVal = data.fetchedAtHuman || data.fetchedAt || null;
           if (noticeList.length >= 0) {
@@ -338,7 +278,7 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return () => { cancelled = true; };
   }, []);
 
-  // ─── Fetch remote config from server on load ─────────────────────────────
+  // ── Load config from server ────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     const fetchConfig = async () => {
@@ -347,15 +287,32 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
         if (res.ok) {
           const cfg = await res.json();
           if (!cancelled && cfg) {
-            if (cfg.yearFilter) setYearFilter(cfg.yearFilter);
-            if (cfg.catFilters) setCatFilters(cfg.catFilters);
-            if (cfg.catOrder) setCatOrder(cfg.catOrder);
+            if (cfg.yearFilter) {
+              setAppliedYearFilter(cfg.yearFilter);
+              setDraftYearFilter(cfg.yearFilter);
+            }
+            if (cfg.catFilters) {
+              setAppliedCatFilters(cfg.catFilters);
+              setDraftCatFilters(cfg.catFilters);
+            }
+            if (cfg.catOrder) {
+              setAppliedCatOrder(cfg.catOrder);
+              setDraftCatOrder(cfg.catOrder);
+            }
             if (cfg.keywordFilter) {
               const kf = cfg.keywordFilter;
-              if (Array.isArray(kf)) setKeywords(kf);
-              else if (typeof kf === 'string' && kf.trim()) setKeywords(kf.split(',').map(k => k.trim()).filter(Boolean));
+              const parsed = Array.isArray(kf) ? kf : (typeof kf === 'string' && kf.trim() ? kf.split(',').map(k => k.trim()).filter(Boolean) : []);
+              setAppliedKeywords(parsed);
+              setDraftKeywords(parsed);
             }
-            if (cfg.scrollSpeed !== undefined) setScrollSpeed(cfg.scrollSpeed);
+            if (cfg.className !== undefined) {
+              setAppliedClassName(cfg.className);
+              setDraftClassName(cfg.className);
+            }
+            if (cfg.scrollSpeed !== undefined) {
+              setAppliedScrollSpeed(cfg.scrollSpeed);
+              setDraftScrollSpeed(cfg.scrollSpeed);
+            }
             try { localStorage.setItem('notices_widget_config', JSON.stringify(cfg)); } catch {}
           }
         }
@@ -365,39 +322,20 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return () => { cancelled = true; };
   }, []);
 
-  // ─── Sync widget.data ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (widget.data?.yearFilter !== undefined) setYearFilter(widget.data.yearFilter);
-    if (widget.data?.catFilters !== undefined) setCatFilters(widget.data.catFilters);
-    if (widget.data?.catOrder !== undefined) setCatOrder(widget.data.catOrder);
-    if (widget.data?.keywordFilter !== undefined) {
-      const kf = widget.data.keywordFilter;
-      if (Array.isArray(kf)) setKeywords(kf);
-      else if (typeof kf === 'string' && kf.trim()) setKeywords(kf.split(',').map(k => k.trim()).filter(Boolean));
-      else setKeywords([]);
-    }
-    if (widget.data?.className !== undefined) setClassName(widget.data.className);
-    if (widget.data?.scrollSpeed !== undefined) setScrollSpeed(widget.data.scrollSpeed);
-  }, [widget.data]);
-
-  const [activeTab, setActiveTab] = useState('browse'); // 'browse' | 'settings'
-  const [saveSuccess, setSaveSuccess] = useState(false);
-
-  // ─── Persist settings (local storage + server API) ───────────────────────────
+  // ── Persist settings ───────────────────────────────────────────────────────
   const saveSettings = async (updates) => {
     try {
       const current = getCachedConfig();
       const next = { ...current, ...updates };
       localStorage.setItem('notices_widget_config', JSON.stringify(next));
 
-      // Push to backend server
       const payload = {
-        yearFilter: next.yearFilter ?? yearFilter,
-        className: next.className ?? className,
-        catFilters: next.catFilters ?? catFilters,
-        catOrder: next.catOrder ?? catOrder,
-        keywordFilter: next.keywordFilter ?? next.keywords ?? keywords,
-        scrollSpeed: next.scrollSpeed ?? scrollSpeed,
+        yearFilter: next.yearFilter ?? appliedYearFilter,
+        className: next.className ?? appliedClassName,
+        catFilters: next.catFilters ?? appliedCatFilters,
+        catOrder: next.catOrder ?? appliedCatOrder,
+        keywordFilter: next.keywordFilter ?? next.keywords ?? appliedKeywords,
+        scrollSpeed: next.scrollSpeed ?? appliedScrollSpeed,
       };
       await fetch(`${API_URL}/api/notices/config`, {
         method: 'POST',
@@ -406,12 +344,91 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
       }).catch(() => {});
 
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      setTimeout(() => setSaveSuccess(false), 2500);
     } catch { /* silent */ }
     if (onUpdateData) onUpdateData({ ...widget.data, ...updates });
   };
 
-  // ─── Enrich notices ──────────────────────────────────────────────────────────
+  // ── Compare arrays for equality ────────────────────────────────────────────
+  const areArraysEqual = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  };
+
+  // ── Check if draft settings differ from applied configuration ─────────────
+  const hasChanges = (
+    draftYearFilter !== appliedYearFilter ||
+    draftClassName !== appliedClassName ||
+    Math.abs(draftScrollSpeed - appliedScrollSpeed) > 0.001 ||
+    !areArraysEqual(draftKeywords, appliedKeywords) ||
+    !areArraysEqual(draftCatFilters, appliedCatFilters) ||
+    !areArraysEqual(draftCatOrder, appliedCatOrder)
+  );
+
+  // ── Apply changes explicitly ──────────────────────────────────────────────
+  const handleApplyChanges = async () => {
+    if (!hasChanges) return;
+
+    const updates = {
+      yearFilter: draftYearFilter,
+      className: draftClassName,
+      catFilters: draftCatFilters,
+      catOrder: draftCatOrder,
+      keywordFilter: draftKeywords,
+      scrollSpeed: draftScrollSpeed,
+    };
+
+    // Commit to applied state so notices view updates
+    setAppliedYearFilter(draftYearFilter);
+    setAppliedClassName(draftClassName);
+    setAppliedCatFilters(draftCatFilters);
+    setAppliedCatOrder(draftCatOrder);
+    setAppliedKeywords(draftKeywords);
+    setAppliedScrollSpeed(draftScrollSpeed);
+
+    await saveSettings(updates);
+  };
+
+  // ── Settings navigation handlers ──────────────────────────────────────────
+  const handleOpenSettings = () => {
+    setSelectedNotice(null);
+    // Reset draft buffer to match current applied values
+    setDraftYearFilter(appliedYearFilter);
+    setDraftClassName(appliedClassName);
+    setDraftCatFilters(appliedCatFilters);
+    setDraftCatOrder(appliedCatOrder);
+    setDraftKeywords(appliedKeywords);
+    setDraftKeywordInput('');
+    setDraftScrollSpeed(appliedScrollSpeed);
+    setShowFilters(true);
+  };
+
+  const handleCloseSettings = () => {
+    // Discard any unapplied draft changes
+    setDraftYearFilter(appliedYearFilter);
+    setDraftClassName(appliedClassName);
+    setDraftCatFilters(appliedCatFilters);
+    setDraftCatOrder(appliedCatOrder);
+    setDraftKeywords(appliedKeywords);
+    setDraftKeywordInput('');
+    setDraftScrollSpeed(appliedScrollSpeed);
+    setShowFilters(false);
+  };
+
+  const handleToggleSettings = () => {
+    if (showFilters) {
+      handleCloseSettings();
+    } else {
+      handleOpenSettings();
+    }
+  };
+
+  // ── Enrich notices ─────────────────────────────────────────────────────────
   const enriched = notices.map((n, idx) => {
     const id = n.id || `n-${idx}-${(n.title || '').substring(0, 8)}`;
     const category = ALL_CATEGORIES.includes(n.category) ? n.category : 'General';
@@ -423,13 +440,13 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return { ...n, id, category, importance, targetYears, contact, title, details };
   });
 
-  // ─── Filter ──────────────────────────────────────────────────────────────────
+  // ── Filter notices (uses APPLIED settings only) ───────────────────────────
   const filtered = enriched.filter(n => {
-    if (yearFilter !== 'All') {
-      const matchesYear = n.targetYears.includes('All') || n.targetYears.includes(yearFilter);
+    if (appliedYearFilter !== 'All') {
+      const matchesYear = n.targetYears.includes('All') || n.targetYears.includes(appliedYearFilter);
       if (!matchesYear) return false;
     }
-    if (!catFilters.includes(n.category)) return false;
+    if (!appliedCatFilters.includes(n.category)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
@@ -438,137 +455,110 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
     return true;
   });
 
-  // Sort: urgent first, then keyword-boosted matches float up, then category order
-  const keywordTerms = keywords.map(k => k.toLowerCase());
-
+  // ── Sort: Urgent first, then Keyword match score, then Category priority ──
+  const keywordTerms = appliedKeywords.map(k => k.toLowerCase());
   const getKeywordScore = (n) => {
     if (keywordTerms.length === 0) return 0;
     const haystack = `${n.title} ${n.category} ${n.contact} ${(n.notice || '').replace(/<[^>]*>/g, ' ')}`.toLowerCase();
     return keywordTerms.filter(kw => haystack.includes(kw)).length;
   };
-
   const getCatOrderScore = (n) => {
-    const idx = catOrder.indexOf(n.category);
-    return idx === -1 ? catOrder.length : idx;
+    const idx = appliedCatOrder.indexOf(n.category);
+    return idx === -1 ? appliedCatOrder.length : idx;
   };
 
   const sorted = [...filtered].sort((a, b) => {
-    // 1. Urgent notices first
     if (a.importance === 'high' && b.importance !== 'high') return -1;
     if (b.importance === 'high' && a.importance !== 'high') return 1;
-    // 2. Keyword matches float to top (more matches = higher)
     const scoreA = getKeywordScore(a);
     const scoreB = getKeywordScore(b);
     if (scoreB !== scoreA) return scoreB - scoreA;
-    // 3. Category order from drag list
     return getCatOrderScore(a) - getCatOrderScore(b);
   });
 
-  // ─── Mirror auto-scroll ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const { current: state } = scrollState;
-    const cleanup = () => {
-      if (state.scrollInterval) { clearInterval(state.scrollInterval); state.scrollInterval = null; }
-      if (state.holdTimer) { clearTimeout(state.holdTimer); state.holdTimer = null; }
-    };
+  // ── Auto-scroll with 3-second pause on user interaction ────────────────────
+  const startScroll = useCallback(() => {
+    const state = scrollState.current;
+    if (state.scrollInterval) {
+      clearInterval(state.scrollInterval);
+      state.scrollInterval = null;
+    }
+    if (state.holdTimer) {
+      clearTimeout(state.holdTimer);
+      state.holdTimer = null;
+    }
 
-    if (!readonly || loading || error || sorted.length === 0) { cleanup(); return; }
+    if (showFilters || selectedNotice || loading || error || sorted.length === 0) return;
 
-    const SPEED = scrollSpeed;  // px per tick (persisted)
-    const INTERVAL = 25;        // ms
-    const HOLD_TOP = 4000;      // ms pause at top
-    const HOLD_BTM = 2000;      // ms pause at bottom
+    const SPEED = appliedScrollSpeed;
+    const INTERVAL = 25;
+    const HOLD_TOP = 4000;
+    const HOLD_BTM = 2000;
 
-    const startScroll = () => {
-      cleanup();
-      state.holdTimer = setTimeout(() => {
-        state.scrollInterval = setInterval(() => {
-          const el = scrollRef.current;
-          if (!el) return;
-          const max = el.scrollHeight - el.clientHeight;
-          if (max <= 0) { cleanup(); return; }
-          if (el.scrollTop >= max - 1) {
-            cleanup();
-            state.holdTimer = setTimeout(() => {
-              if (scrollRef.current) scrollRef.current.scrollTop = 0;
-              startScroll();
-            }, HOLD_BTM);
-          } else {
-            el.scrollTop += SPEED;
+    state.holdTimer = setTimeout(() => {
+      state.scrollInterval = setInterval(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const max = el.scrollHeight - el.clientHeight;
+        if (max <= 0) {
+          if (state.scrollInterval) clearInterval(state.scrollInterval);
+          return;
+        }
+        if (el.scrollTop >= max - 1) {
+          if (state.scrollInterval) {
+            clearInterval(state.scrollInterval);
+            state.scrollInterval = null;
           }
-        }, INTERVAL);
-      }, HOLD_TOP);
-    };
+          state.holdTimer = setTimeout(() => {
+            if (scrollRef.current) {
+              isProgrammaticScroll.current = true;
+              scrollRef.current.scrollTop = 0;
+              setTimeout(() => { isProgrammaticScroll.current = false; }, 50);
+            }
+            startScroll();
+          }, HOLD_BTM);
+        } else {
+          isProgrammaticScroll.current = true;
+          el.scrollTop += SPEED;
+          setTimeout(() => { isProgrammaticScroll.current = false; }, 10);
+        }
+      }, INTERVAL);
+    }, HOLD_TOP);
+  }, [showFilters, selectedNotice, loading, error, sorted.length, appliedScrollSpeed]);
 
-    const init = setTimeout(startScroll, 300);
-    return () => { clearTimeout(init); cleanup(); };
-  }, [readonly, loading, error, sorted.length, scrollSpeed]);
-
-  // ─── Mirror page auto-advance (paginated mode) ────────────────────────────────
   useEffect(() => {
-    if (!readonly || sorted.length === 0) return;
-    const id = setInterval(() => {
-      setMirrorPage(p => (p + 1) % sorted.length);
-    }, 8000);
-    return () => clearInterval(id);
-  }, [readonly, sorted.length]);
+    startScroll();
+    return () => {
+      const state = scrollState.current;
+      if (state.scrollInterval) clearInterval(state.scrollInterval);
+      if (state.holdTimer) clearTimeout(state.holdTimer);
+      if (state.resumeTimer) clearTimeout(state.resumeTimer);
+    };
+  }, [startScroll]);
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
-  const toggleExpand = (id) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  // Handle user scroll interaction: pause immediately, wait 3 seconds after scrolling stops
+  const handleUserInteraction = () => {
+    if (isProgrammaticScroll.current) return;
+    const state = scrollState.current;
+    if (state.scrollInterval) {
+      clearInterval(state.scrollInterval);
+      state.scrollInterval = null;
+    }
+    if (state.holdTimer) {
+      clearTimeout(state.holdTimer);
+      state.holdTimer = null;
+    }
+    if (state.resumeTimer) {
+      clearTimeout(state.resumeTimer);
+    }
+
+    // Set 3 seconds (3000ms) timer before resuming auto-scroll
+    state.resumeTimer = setTimeout(() => {
+      startScroll();
+    }, 3000);
   };
 
-  const toggleCat = (cat) => {
-    const next = catFilters.includes(cat)
-      ? catFilters.filter(c => c !== cat)
-      : [...catFilters, cat];
-    setCatFilters(next);
-    saveSettings({ catFilters: next });
-  };
-
-  // ─── States ──────────────────────────────────────────────────────────────────
-  if (loading || (error && notices.length === 0)) {
-    return (
-      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
-        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
-          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
-          <span className="text-[12px] font-mono text-[#8f8f8f]">
-            {error ? 'Offline' : 'Loading notices...'}
-          </span>
-        </div>
-        <div className="flex flex-col gap-3 overflow-hidden">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-[#0a0a0a] rounded-r p-4 border-l-[4px] border-l-[#222222] flex flex-col gap-2.5 animate-pulse">
-              <div className="h-3 w-20 bg-[#1c1c1c] rounded"></div>
-              <div className="h-5 w-3/4 bg-[#262626] rounded"></div>
-              <div className="h-3.5 w-full bg-[#161616] rounded"></div>
-              <div className="h-3.5 w-4/5 bg-[#161616] rounded"></div>
-            </div>
-          ))}
-        </div>
-      </section>
-    );
-  }
-
-  if (notices.length === 0) {
-    return (
-      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
-        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
-          <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
-          <span className="text-[12px] font-mono text-[#8f8f8f]">0 today</span>
-        </div>
-        <div className="py-12 text-center text-[#8f8f8f] text-sm italic">
-          No notices available today.
-        </div>
-      </section>
-    );
-  }
-
-  // ─── Helper: format fetchedAt for display ───────────────────────────────────
+  // Format fetched timestamp
   const formatFetchedAt = (val) => {
     if (!val) return null;
     if (typeof val === 'string' && (val.includes(',') || val.includes('AM') || val.includes('PM'))) {
@@ -583,462 +573,312 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData, readonly
   };
   const fetchedAtLabel = formatFetchedAt(fetchedAt);
 
-  // ─── MIRROR / READONLY MODE ───────────────────────────────────────────────
-  if (readonly) {
-    return (
-      <section className="h-full flex flex-col p-5 border-r border-[#1c1c1c] select-none min-h-0 bg-[#000000]">
-        {/* Header */}
-        <div className="flex items-baseline justify-between mb-4 pb-2 border-b border-[#1c1c1c]">
-          <div className="flex items-baseline gap-3">
-            <h2 className="text-[22px] font-bold text-white tracking-wide">Notices</h2>
-            {fetchedAtLabel && (
-              <span className="text-[11px] text-[#8f8f8f] font-mono">Fetched {fetchedAtLabel}</span>
-            )}
-          </div>
-          <span className="text-[13px] text-[#d0d0d0] font-mono">{sorted.length} today</span>
-        </div>
-
-        {/* Notice list with auto-scroll */}
-        <div ref={scrollRef} className="flex-1 flex flex-col gap-3 overflow-y-auto custom-scrollbar min-h-0 pr-1">
-          {sorted.length === 0 ? (
-            <div className="py-8 text-center text-[#8f8f8f] text-sm italic">
-              No notices available today.
-            </div>
-          ) : (
-            sorted.map((n, idx) => (
-              <NoticeCard
-                key={n.id || idx}
-                n={n}
-                urgent={n.importance === 'high'}
-                onClick={() => setSelectedNotice(n)}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Interactive Notice Details Modal */}
-        <AnimatePresence>
-          {selectedNotice && (
-            <NoticeDetailModal
-              notice={selectedNotice}
-              onClose={() => setSelectedNotice(null)}
-            />
-          )}
-        </AnimatePresence>
-      </section>
-    );
-  }
-
-  // ─── EDIT MODE ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full bg-[#000000] text-white p-6 font-sans overflow-y-auto custom-scrollbar select-none">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#1c1c1c] mb-6 shrink-0 gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight uppercase font-mono flex items-center gap-2">
-            Notices &amp; Alerts
-          </h1>
-          <p className="text-xs text-[#8f8f8f] font-mono mt-1">
-            Configure visual flow, year level targeting, and category filters for the digital signage display.
-          </p>
+    <section className="h-full flex flex-col p-5 select-none min-h-0 bg-[#000000] font-mono">
+      {/* HEADER: Highly Obvious Button to Toggle Settings */}
+      <div className="flex items-center justify-between mb-3 pb-3 border-b border-[#222222] shrink-0">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-white uppercase tracking-wider">
+            {t('notices')}
+          </h2>
+          <span className="text-xs text-[#888888]">
+            ({sorted.length} {t('today')})
+          </span>
         </div>
-        <div className="flex items-center gap-3 font-mono text-[11px] text-[#8f8f8f]">
-          <span>{sorted.length} ACTIVE NOTICES</span>
-          {fetchedAtLabel && <span className="text-[#4fc3ff]">· FETCHED {fetchedAtLabel.toUpperCase()}</span>}
-        </div>
-      </div>
 
-      {/* Tab Switcher: Browse Notices vs Display Preferences */}
-      <div className="flex items-center gap-3 border-b border-[#1c1c1c] pb-3 mb-6 shrink-0">
+        {/* PROMINENT SETTINGS TOGGLE BUTTON */}
         <button
-          onClick={() => setActiveTab('browse')}
-          className={`px-4 py-2 text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer ${
-            activeTab === 'browse'
-              ? 'bg-[#4fc3ff] text-black border border-[#4fc3ff] shadow-md shadow-[#4fc3ff]/10'
-              : 'bg-[#0a0a0a] text-[#8f8f8f] border border-[#1c1c1c] hover:text-white hover:border-[#333]'
+          type="button"
+          onClick={handleToggleSettings}
+          className={`px-3.5 py-1.5 border font-mono text-xs font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none flex items-center gap-2 ${
+            showFilters
+              ? 'bg-white text-black border-white'
+              : 'bg-[#141414] text-white border-[#333333] hover:border-white hover:bg-[#202020]'
           }`}
+          title="Click to configure display and filters"
         >
-          📰 Browse Notices ({sorted.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer ${
-            activeTab === 'settings'
-              ? 'bg-[#4fc3ff] text-black border border-[#4fc3ff] shadow-md shadow-[#4fc3ff]/10'
-              : 'bg-[#0a0a0a] text-[#8f8f8f] border border-[#1c1c1c] hover:text-white hover:border-[#333]'
-          }`}
-        >
-          ⚙️ Display &amp; Filter Settings
+          <span className="material-symbols-outlined text-sm">tune</span>
+          <span>{showFilters ? t('back_to_notices') : t('filter_settings')}</span>
         </button>
       </div>
 
-      {activeTab === 'browse' ? (
-        /* BROWSE NOTICES VIEW */
-        <div className="flex-1 flex flex-col gap-4 min-h-0">
-          {/* Filter Bar in Browse Mode */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0a0a0a] border border-[#1c1c1c] p-3.5">
-            <div className="flex items-center gap-2 flex-1">
-              <input
-                type="text"
-                placeholder="Search notices by keyword, teacher, sport, room..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#000000] border border-[#222222] focus:border-[#4fc3ff] px-3 py-2 text-xs text-white placeholder-[#555] font-mono outline-none"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="px-2 py-1 text-xs font-mono text-[#8f8f8f] hover:text-white"
-                >
-                  Clear
-                </button>
-              )}
+      {/* VIEW 1: EXPANDED NOTICE VIEW (In-place expansion, NO modal) */}
+      <AnimatePresence mode="wait">
+        {selectedNotice ? (
+          <ExpandedNoticeView
+            key={selectedNotice.id}
+            notice={selectedNotice}
+            onClose={() => setSelectedNotice(null)}
+          />
+        ) : showFilters ? (
+          /* VIEW 2: FILTER & DISPLAY SETTINGS (Edits draft values only) */
+          <div key="filters-panel" className="flex-1 flex flex-col gap-5 overflow-y-auto custom-scrollbar pr-1">
+            <div className="flex items-center justify-between pb-2 border-b border-[#1c1c1c]">
+              <span className="text-xs font-bold uppercase tracking-wider text-white">
+                {t('filter_settings')}
+              </span>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              <span className="text-[10px] font-mono uppercase text-[#666] mr-1">Year:</span>
-              {YEAR_TABS.map(yr => (
-                <button
-                  key={yr}
-                  onClick={() => { setYearFilter(yr); saveSettings({ yearFilter: yr }); }}
-                  className={`px-2 py-1 text-[11px] font-mono font-bold uppercase transition-colors cursor-pointer ${
-                    yearFilter === yr ? 'bg-[#4fc3ff] text-black' : 'bg-[#000000] text-[#8f8f8f] hover:text-white border border-[#222]'
-                  }`}
-                >
-                  {yr === 'All' ? 'All' : `Y${yr}`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto custom-scrollbar flex-1 pr-1">
-            {sorted.length === 0 ? (
-              <div className="col-span-full py-16 text-center text-[#8f8f8f] font-mono text-sm">
-                No notices match your current filters.
-              </div>
-            ) : (
-              sorted.map((n) => (
-                <NoticeCard
-                  key={n.id}
-                  n={n}
-                  urgent={n.importance === 'high'}
-                  onClick={() => setSelectedNotice(n)}
-                />
-              ))
-            )}
-          </div>
-        </div>
-      ) : (
-        /* SETTINGS & CONFIGURATION VIEW */
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-          {/* Left Column: Controls & Filters (7 cols) */}
-          <div className="lg:col-span-7 flex flex-col gap-6">
-            {/* Motion & Sequencing Section */}
-            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            {/* Motion & Speed */}
+            <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
-                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                  MOTION &amp; SEQUENCING
+                <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase">
+                  {t('motion_speed')}
                 </span>
-                <span className="text-[11px] font-mono font-bold text-[#4fc3ff] uppercase">
-                  SPEED: {scrollSpeed <= 0.3 ? 'SLOW' : scrollSpeed <= 0.7 ? 'NORMAL' : 'FAST'} ({scrollSpeed.toFixed(2)}x)
+                <span className="text-[11px] font-bold text-white uppercase">
+                  {t('speed')}: {draftScrollSpeed <= 0.3 ? t('slow') : draftScrollSpeed <= 0.7 ? t('normal') : t('fast')} ({draftScrollSpeed.toFixed(2)}x)
                 </span>
               </div>
 
-              {/* Slider */}
               <div className="py-2 flex items-center">
                 <input
                   type="range"
                   min="0.1"
                   max="2.5"
                   step="0.05"
-                  value={scrollSpeed}
+                  value={draftScrollSpeed}
                   onChange={e => {
                     const v = parseFloat(e.target.value);
-                    setScrollSpeed(v);
-                    saveSettings({ scrollSpeed: v });
+                    setDraftScrollSpeed(v);
                   }}
-                  className="w-full h-1 bg-[#1c1c1c] appearance-none cursor-pointer accent-[#4fc3ff]"
+                  className="w-full h-1 bg-[#222222] appearance-none cursor-pointer accent-white"
                 />
               </div>
 
-              {/* Presets */}
               <div className="grid grid-cols-3 gap-2">
                 {SPEED_PRESETS.map((p) => (
                   <button
-                    key={p.label}
-                    onClick={() => { setScrollSpeed(p.value); saveSettings({ scrollSpeed: p.value }); }}
-                    className={`py-2 px-3 border font-mono text-xs font-bold rounded-none uppercase transition-colors cursor-pointer ${
-                      scrollSpeed === p.value
-                        ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                        : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
+                    key={p.labelKey}
+                    type="button"
+                    onClick={() => setDraftScrollSpeed(p.value)}
+                    className={`py-2 px-3 font-mono text-xs font-bold uppercase transition-colors cursor-pointer rounded-none border ${
+                      draftScrollSpeed === p.value
+                        ? 'bg-white text-black border-white'
+                        : 'bg-[#000000] text-[#888888] border-[#222222] hover:text-white hover:border-[#444444]'
                     }`}
                   >
-                    {p.label}
+                    {t(p.labelKey)}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Audience & Content Section */}
-            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-4">
-              <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase border-b border-[#1c1c1c] pb-2">
-                AUDIENCE &amp; CONTENT
+            {/* Year Level Targeting */}
+            <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
+              <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase border-b border-[#1c1c1c] pb-2">
+                {t('year')}
               </span>
-
-              {/* Year Level Buttons */}
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
-                  YEAR LEVEL TARGETING
-                </label>
-                <div className="grid grid-cols-6 gap-2">
-                  {YEAR_TABS.map(yr => {
-                    const active = yearFilter === yr;
-                    return (
-                      <button
-                        key={yr}
-                        onClick={() => {
-                          setYearFilter(yr);
-                          saveSettings({ yearFilter: yr });
-                        }}
-                        className={`py-2 px-1 border font-mono text-xs font-bold rounded-none uppercase transition-colors text-center cursor-pointer ${
-                          active
-                            ? 'bg-[#4fc3ff] text-black border-[#4fc3ff]'
-                            : 'bg-[#000000] text-[#8f8f8f] border-[#1c1c1c] hover:text-white hover:border-[#333333]'
-                        }`}
-                      >
-                        {yr === 'All' ? 'ALL' : `Y${yr}`}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Class Name Input for Year 9 or Year 10 */}
-                {(yearFilter === '9' || yearFilter === '10') && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="flex flex-col gap-1.5 pt-2 border-t border-[#1c1c1c] mt-1"
+              <div className="grid grid-cols-6 gap-2">
+                {YEAR_TABS.map(yr => (
+                  <button
+                    key={yr}
+                    type="button"
+                    onClick={() => setDraftYearFilter(yr)}
+                    className={`py-2 px-1 font-mono text-xs font-bold uppercase transition-colors text-center cursor-pointer rounded-none border ${
+                      draftYearFilter === yr
+                        ? 'bg-white text-black border-white'
+                        : 'bg-[#000000] text-[#888888] border-[#222222] hover:text-white hover:border-[#444444]'
+                    }`}
                   >
-                    <label className="text-[10px] font-mono text-[#4fc3ff] uppercase tracking-wider flex items-center justify-between">
-                      <span>CLASS NAME / FORM CLASS</span>
-                      <span className="text-[9px] text-[#8f8f8f]">e.g. {yearFilter === '9' ? '9SR, 9ST, 9CR, 9EA' : '10TE, 10ST, 10FE'}</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={`e.g. ${yearFilter === '9' ? '9SR' : '10TE'}`}
-                      value={className}
-                      onChange={e => {
-                        const val = e.target.value.toUpperCase().trim();
-                        setClassName(val);
-                        
-                        let nextKeywords = keywords;
-                        if (val && !keywords.includes(val.toLowerCase())) {
-                          nextKeywords = [...keywords, val.toLowerCase()];
-                          setKeywords(nextKeywords);
-                        }
-                        
-                        saveSettings({ className: val, keywordFilter: nextKeywords });
-                      }}
-                      className="w-full bg-[#000000] border border-[#4fc3ff]/50 rounded-none px-3 py-2 text-xs text-white uppercase placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
-                    />
-                    <p className="text-[10px] text-[#8f8f8f] font-mono italic">
-                      Entering your class code enables automatic room change alerts and keyword matching for Year {yearFilter} notices.
-                    </p>
-                  </motion.div>
-                )}
+                    {yr === 'All' ? t('all') : `Y${yr}`}
+                  </button>
+                ))}
               </div>
 
-              {/* Keyword Boost Tag Input */}
-              <div className="flex flex-col gap-2 pt-2 border-t border-[#1c1c1c]">
-                <label className="text-[10px] font-mono text-[#8f8f8f] uppercase tracking-wider">
-                  KEYWORD BOOST
-                </label>
-
-                {/* Tag pills */}
-                {keywords.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {keywords.map((kw) => (
-                      <motion.span
-                        key={kw}
-                        layout
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        className="group relative inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1a26] border border-[#4fc3ff]/30 text-[#4fc3ff] font-mono text-[10px] uppercase font-bold select-none"
-                      >
-                        {kw}
-                        <button
-                          onClick={() => {
-                            const next = keywords.filter(k => k !== kw);
-                            setKeywords(next);
-                            saveSettings({ keywordFilter: next });
-                          }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 text-[#4fc3ff] hover:text-white leading-none cursor-pointer"
-                          aria-label={`Remove ${kw}`}
-                        >
-                          ✕
-                        </button>
-                      </motion.span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Input */}
-                <input
-                  type="text"
-                  placeholder="Type a keyword and press Enter"
-                  value={keywordInput}
-                  onChange={e => setKeywordInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const tag = keywordInput.trim().toLowerCase();
-                      if (tag && !keywords.includes(tag)) {
-                        const next = [...keywords, tag];
-                        setKeywords(next);
-                        saveSettings({ keywordFilter: next });
+              {/* Form Class / Class Name */}
+              {(draftYearFilter === '9' || draftYearFilter === '10') && (
+                <div className="flex flex-col gap-1.5 pt-2 border-t border-[#1c1c1c] mt-1">
+                  <label className="text-[10px] text-white uppercase tracking-wider flex items-center justify-between">
+                    <span>{t('form_class')}</span>
+                    <span className="text-[9px] text-[#777777]">e.g. {draftYearFilter === '9' ? '9SR, 9ST, 9CR' : '10TE, 10ST'}</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={`e.g. ${draftYearFilter === '9' ? '9SR' : '10TE'}`}
+                    value={draftClassName}
+                    onChange={e => {
+                      const val = e.target.value.toUpperCase().trim();
+                      setDraftClassName(val);
+                      if (val && !draftKeywords.includes(val.toLowerCase())) {
+                        setDraftKeywords([...draftKeywords, val.toLowerCase()]);
                       }
-                      setKeywordInput('');
-                    } else if (e.key === 'Backspace' && keywordInput === '' && keywords.length > 0) {
-                      const next = keywords.slice(0, -1);
-                      setKeywords(next);
-                      saveSettings({ keywordFilter: next });
-                    }
-                  }}
-                  className="w-full bg-[#000000] border border-[#1c1c1c] rounded-none px-3 py-2.5 text-xs text-white placeholder-[#555] font-mono focus:outline-none focus:border-[#4fc3ff]"
-                />
-                <p className="text-[11px] text-[#666] font-mono italic">
-                  Notices matching these keywords float to the top of the list.
-                </p>
-              </div>
+                    }}
+                    className="w-full bg-[#000000] border border-[#333333] px-3 py-2 text-xs text-white uppercase font-mono focus:outline-none focus:border-white rounded-none"
+                  />
+                </div>
+              )}
             </div>
-          </div>
 
-          {/* Right Column: Category Order (5 cols) */}
-          <div className="lg:col-span-5 flex flex-col gap-6">
-            <div className="bg-[#0a0a0a] border border-[#1c1c1c] rounded-none p-4 flex flex-col gap-3">
+            {/* Keyword Boost (DRAGGABLE REORDERING) */}
+            <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
-                <span className="text-[11px] font-mono font-bold tracking-widest text-[#8f8f8f] uppercase">
-                  CATEGORY ORDER
+                <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase">
+                  {t('keyword_boost')}
                 </span>
-                <span className="text-[10px] font-mono text-[#555] uppercase">DRAG TO REORDER</span>
+                <span className="text-[10px] text-[#666666] uppercase">{t('drag_to_reorder')}</span>
+              </div>
+
+              {draftKeywords.length > 0 && (
+                <Reorder.Group
+                  axis="x"
+                  values={draftKeywords}
+                  onReorder={setDraftKeywords}
+                  className="flex flex-wrap gap-2"
+                >
+                  {draftKeywords.map((kw) => (
+                    <Reorder.Item
+                      key={kw}
+                      value={kw}
+                      className="cursor-grab active:cursor-grabbing inline-flex items-center gap-1.5 px-3 py-1 bg-[#141414] text-white font-mono text-[11px] uppercase font-bold border border-[#333333] rounded-none hover:border-white"
+                      whileDrag={{ scale: 1.05, backgroundColor: '#222222' }}
+                    >
+                      <span className="text-[#666666] text-xs">⋮⋮</span>
+                      <span>{kw}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDraftKeywords(draftKeywords.filter(k => k !== kw));
+                        }}
+                        className="text-[#888888] hover:text-white cursor-pointer ml-1"
+                      >
+                        ✕
+                      </button>
+                    </Reorder.Item>
+                  ))}
+                </Reorder.Group>
+              )}
+
+              <input
+                type="text"
+                placeholder={t('keyword_placeholder')}
+                value={draftKeywordInput}
+                onChange={e => setDraftKeywordInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const tag = draftKeywordInput.trim().toLowerCase();
+                    if (tag && !draftKeywords.includes(tag)) {
+                      setDraftKeywords([...draftKeywords, tag]);
+                    }
+                    setDraftKeywordInput('');
+                  }
+                }}
+                className="w-full bg-[#000000] border border-[#333333] px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white rounded-none"
+              />
+            </div>
+
+            {/* Category Priority Order */}
+            <div className="bg-[#0c0c0c] p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-2">
+                <span className="text-[11px] font-bold tracking-widest text-[#888888] uppercase">
+                  {t('category_order')}
+                </span>
+                <span className="text-[10px] text-[#666666] uppercase">{t('drag_to_reorder')}</span>
               </div>
 
               <Reorder.Group
                 axis="y"
-                values={catOrder}
-                onReorder={(newOrder) => {
-                  setCatOrder(newOrder);
-                  saveSettings({ catOrder: newOrder });
-                }}
+                values={draftCatOrder}
+                onReorder={setDraftCatOrder}
                 className="flex flex-col gap-1.5"
               >
-                {catOrder.map((cat) => {
+                {draftCatOrder.map((cat) => {
                   const colors = CATEGORY_COLORS[cat] || CATEGORY_COLORS['General'];
                   return (
                     <Reorder.Item
                       key={cat}
                       value={cat}
-                      className="flex items-center justify-between px-3 py-2.5 border bg-[#000000] border-[#1c1c1c] cursor-grab active:cursor-grabbing border-l-4 group"
-                      style={{ borderLeftColor: colors.accent }}
-                      whileDrag={{
-                        scale: 1.02,
-                        backgroundColor: '#141414',
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                        zIndex: 50,
-                      }}
+                      className="flex items-center justify-between px-3 py-2 bg-[#000000] border border-[#222222] cursor-grab active:cursor-grabbing rounded-none"
+                      whileDrag={{ scale: 1.01, backgroundColor: '#141414' }}
                     >
                       <div className="flex items-center gap-2.5">
-                        <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="text-[#555] group-hover:text-[#8f8f8f] transition-colors shrink-0">
-                          <circle cx="2" cy="2" r="1.5" fill="currentColor"/>
-                          <circle cx="8" cy="2" r="1.5" fill="currentColor"/>
-                          <circle cx="2" cy="7" r="1.5" fill="currentColor"/>
-                          <circle cx="8" cy="7" r="1.5" fill="currentColor"/>
-                          <circle cx="2" cy="12" r="1.5" fill="currentColor"/>
-                          <circle cx="8" cy="12" r="1.5" fill="currentColor"/>
-                        </svg>
+                        <span
+                          className="w-2.5 h-2.5 rounded-none shrink-0"
+                          style={{ backgroundColor: colors.accent }}
+                        />
                         <span className="text-xs font-mono font-bold uppercase text-white">{cat}</span>
                       </div>
                       <span
                         className="text-[10px] font-mono uppercase"
-                        style={{ color: colors.accent, opacity: 0.7 }}
+                        style={{ color: colors.accent }}
                       >
-                        {catOrder.indexOf(cat) + 1}
+                        {draftCatOrder.indexOf(cat) + 1}
                       </span>
                     </Reorder.Item>
                   );
                 })}
               </Reorder.Group>
+            </div>
 
-              <p className="text-[11px] font-mono text-[#555] italic border-t border-[#1c1c1c] pt-2">
-                Order determines priority on the mirror display. Drag rows to reorder.
-              </p>
+            {/* Actions: Apply changes only when user clicks, disabled if no changes */}
+            <div className="flex items-center justify-between pt-3 border-t border-[#1c1c1c] shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftCatFilters(ALL_CATEGORIES);
+                  setDraftCatOrder(ALL_CATEGORIES);
+                  setDraftYearFilter('All');
+                  setDraftClassName('');
+                  setDraftKeywords([]);
+                  setDraftKeywordInput('');
+                  setDraftScrollSpeed(0.5);
+                }}
+                className="px-4 py-2 border border-[#222222] hover:border-[#444444] text-[#888888] hover:text-white font-mono text-xs font-bold uppercase transition-colors cursor-pointer rounded-none"
+              >
+                {t('reset')}
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyChanges}
+                disabled={!hasChanges}
+                className={`px-6 py-2.5 font-mono text-xs font-bold uppercase transition-all rounded-none border ${
+                  hasChanges
+                    ? 'bg-white text-black border-white hover:bg-[#e0e0e0] cursor-pointer'
+                    : 'bg-[#141414] text-[#555555] border-[#222222] cursor-not-allowed opacity-40 select-none'
+                }`}
+                title={hasChanges ? 'Apply changes to notices' : 'No changes to apply'}
+              >
+                {saveSuccess ? (t('changes_applied') || 'CHANGES APPLIED') : (t('apply_changes') || 'APPLY CHANGES')}
+              </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Bottom Actions Bar */}
-      <div className="flex items-center justify-between pt-4 border-t border-[#1c1c1c] mt-6 shrink-0">
-        <span className="text-xs font-mono text-[#666]">
-          CHANGES AUTO-SAVED TO LOCAL CONFIG
-        </span>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              setCatFilters(ALL_CATEGORIES);
-              setCatOrder(ALL_CATEGORIES);
-              setYearFilter('All');
-              setClassName('');
-              setKeywords([]);
-              setKeywordInput('');
-              setScrollSpeed(0.5);
-              saveSettings({ catFilters: ALL_CATEGORIES, catOrder: ALL_CATEGORIES, yearFilter: 'All', className: '', keywordFilter: [], scrollSpeed: 0.5 });
-            }}
-            className="px-4 py-2 border border-[#1c1c1c] hover:border-[#333] text-[#8f8f8f] hover:text-white font-mono text-xs font-bold rounded-none uppercase transition-colors cursor-pointer"
+        ) : (
+          /* VIEW 3: ACTIVE NOTICES LIST (Default view with reliable auto-scroll) */
+          <div
+            key="notices-list"
+            ref={scrollRef}
+            onWheel={handleUserInteraction}
+            onTouchMove={handleUserInteraction}
+            onPointerDown={handleUserInteraction}
+            className="flex-1 flex flex-col gap-2.5 overflow-y-auto custom-scrollbar min-h-0 pr-1"
           >
-            RESET
-          </button>
-          <button
-            onClick={() => saveSettings({ catFilters, catOrder, yearFilter, className, keywordFilter: keywords, scrollSpeed })}
-            className={`px-6 py-2.5 font-mono text-xs font-bold rounded-none uppercase transition-all cursor-pointer ${
-              saveSuccess
-                ? 'bg-[#10b981] text-black shadow-lg shadow-[#10b981]/25 font-extrabold'
-                : 'bg-[#4fc3ff] text-black hover:bg-[#7dd3fc]'
-            }`}
-          >
-            {saveSuccess ? '✓ APPLIED & SYNCED' : 'APPLY'}
-          </button>
-        </div>
-      </div>
-
-      {/* Floating Save Success Toast */}
-      <AnimatePresence>
-        {saveSuccess && (
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 15 }}
-            className="fixed bottom-6 right-6 bg-[#041d15] border border-[#10b981] text-[#34d399] px-4 py-2.5 rounded shadow-2xl font-mono text-xs flex items-center gap-2 z-50 select-none"
-          >
-            <span>✓</span>
-            <span>Notices configuration applied &amp; synchronized to Smart Mirror</span>
-          </motion.div>
+            {loading ? (
+              <div className="flex flex-col gap-2.5 overflow-hidden">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-[#0e0e0e] p-4 flex flex-col gap-2 animate-pulse rounded-none">
+                    <div className="h-3 w-20 bg-[#1c1c1c]"></div>
+                    <div className="h-5 w-3/4 bg-[#262626]"></div>
+                    <div className="h-3.5 w-full bg-[#161616]"></div>
+                  </div>
+                ))}
+              </div>
+            ) : sorted.length === 0 ? (
+              <div className="py-12 text-center text-[#777777] text-xs uppercase font-mono">
+                {t('no_notices')}
+              </div>
+            ) : (
+              sorted.map((n, idx) => (
+                <NoticeCard
+                  key={n.id || idx}
+                  n={n}
+                  onClick={() => setSelectedNotice(n)}
+                />
+              ))
+            )}
+          </div>
         )}
       </AnimatePresence>
-
-      {/* Interactive Notice Details Modal */}
-      <AnimatePresence>
-        {selectedNotice && (
-          <NoticeDetailModal
-            notice={selectedNotice}
-            onClose={() => setSelectedNotice(null)}
-          />
-        )}
-      </AnimatePresence>
-    </div>
+    </section>
   );
 }

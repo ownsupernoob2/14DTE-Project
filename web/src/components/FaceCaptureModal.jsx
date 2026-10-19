@@ -154,7 +154,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
 
     canvas.width = 80
     canvas.height = 80
-    const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
     ctx.drawImage(video, 0, 0, 80, 80)
     const data = ctx.getImageData(0, 0, 80, 80).data
     let sum = 0
@@ -339,7 +339,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                     <br />
                     To prevent misidentification and protect your student profile, a physical Student ID barcode must be linked to your account before enrolling facial biometrics.
                     <br /><br />
-                    If the mirror's camera encounters backlight, sun glare, or is unsure of your identity, it will prompt: <em>"We might be getting the wrong person — scan your Student ID barcode below to make sure!"</em>
+                    If the mirror's camera encounters backlight, sun glare, or is unsure of your identity, it will prompt: <em>"We might be getting the wrong person - scan your Student ID barcode below to make sure!"</em>
                   </p>
                 </div>
 
@@ -406,17 +406,8 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 <p className="fc-overline">Step 2 of 3: Face Registration</p>
                 <h2 className="fc-title">Set Up Mirror Recognition</h2>
                 
-                <div className="glass-panel" style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.09)', padding: '12px 14px', borderRadius: '10px', marginBottom: '4px' }}>
-                  <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem', margin: '0 0 2px 0', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    Participation is entirely voluntary
-                  </p>
-                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem', lineHeight: 1.4, margin: 0 }}>
-                    "Using the mirror/personalising it by signing up is entirely optional."
-                  </p>
-                </div>
-
                 <p className="fc-sub" style={{ marginBottom: '14px', fontSize: '0.85rem' }}>
-                  We will take 20 photos to train the mirror to recognise you. Raw images are deleted immediately after training — only a mathematical encoding is kept.
+                  We will take 20 photos to train the mirror to recognise you. Raw images are deleted immediately after training, and only a mathematical encoding is kept.
                 </p>
                 <ul className="fc-list" style={{ fontSize: '0.8rem', marginBottom: '20px' }}>
                   <li>Sit in a well-lit area</li>
@@ -500,7 +491,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                 <AnimatePresence>
                   {isTooDark && (
                     <motion.div className="fc-dark-warn" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                      Too dark — move to a brighter area
+                      Too dark - move to a brighter area
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -554,7 +545,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                   </motion.button>
                 )}
 
-                {/* Progress bar only — no photo count */}
+                {/* Progress bar only - no photo count */}
                 <div className="fc-bar-track">
                   <motion.div
                     className="fc-bar-fill"
