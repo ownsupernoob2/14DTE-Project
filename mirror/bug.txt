@@ -1,4 +1,38 @@
-uname -r; lsmod | grep v4l2loopback; dkms status
+raspi@raspi:~/14DTE-Project/mirror $ ./start_smart_mirror.sh 
+[START] Checking for updates from GitHub...
+Already up to date.
+[START] Using Python: Python 3.10.7
+[START] Camera pipeline started. Waiting 5s...
+[ERROR] Camera pipeline died. ffmpeg.log / rpicam.log:
+==> /home/raspi/14DTE-Project/mirror/ffmpeg.log <==
+[video4linux2,v4l2 @ 0x555653463840] ioctl(VIDIOC_G_FMT): Invalid argument
+[out#0/video4linux2,v4l2 @ 0x555653463770] Could not write header (incorrect codec parameters ?): Invalid argument
+[vf#0:0 @ 0x5556534642c0] Error sending frames to consumers: Invalid argument
+[vf#0:0 @ 0x5556534642c0] Task finished with error code: -22 (Invalid argument)
+[vf#0:0 @ 0x5556534642c0] Terminating thread with return code -22 (Invalid argument)
+[out#0/video4linux2,v4l2 @ 0x555653463770] Nothing was written into output file, because at least one of its streams received no packets.
+
+==> /home/raspi/14DTE-Project/mirror/rpicam.log <==
+[0:37:52.135248209] [9112]  INFO Camera camera_manager.cpp:340 libcamera v0.7.2+rpt20261009
+[0:37:52.149314537] [9121]  INFO RPI pisp.cpp:725 libpisp version v1.7.0 07-08-2026 (09:22:13)
+[0:37:52.162457510] [9121]  INFO IPAProxy ipa_proxy.cpp:184 Using tuning file /usr/share/libcamera/ipa/rpi/pisp/imx708.json
+[0:37:52.170007444] [9121]  INFO Camera camera_manager.cpp:223 Adding camera '/base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a' for pipeline handler rpi/pisp
+[0:37:52.170046019] [9121]  INFO RPI pisp.cpp:1186 Registered camera /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a to CFE device /dev/media0 and ISP device /dev/media1 using PiSP variant BCM2712_D0
+[0:37:52.203487842] [9121]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc30
+[0:37:52.203522842] [9121]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc12
+Mode selection for 640:480:12:P(30)
+    SRGGB10_CSI2P,1536x864/120.135 - Score: 1486.67
+    SRGGB10_CSI2P,2304x1296/56.0255 - Score: 1786.67
+    SRGGB10_CSI2P,4608x2592/14.3536 - Score: 33979.5
+Stream configuration adjusted
+[0:37:52.203657435] [9112]  INFO Camera camera.cpp:1216 configuring streams: (0) 640x480-YUV420/sYCC (1) 1536x864-BGGR_PISP_COMP1/RAW
+[0:37:52.203711954] [9121]  INFO RPI pisp.cpp:1502 Sensor: /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a - Selected sensor format: 1536x864-SBGGR10_1X10/RAW - Selected CFE format: 1536x864-PC1B/RAW
+Received signal 13
+Received signal 13
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  failed to write output bytes
+raspi@raspi:~/14DTE-Project/mirror $ 
+SXuname -r; lsmod | grep v4l2loopback; dkms status
 ls -l /dev/video*
 v4l2-ctl --list-devices
 sudo dmesg | tail -30
