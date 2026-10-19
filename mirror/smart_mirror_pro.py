@@ -47,36 +47,60 @@ INDICATOR_BAR_HEIGHT = 100
 
 KINGS_IDLE_MS        = 20_000
 
+PINCH_EXIT_HOLD_SEC = 1.5    # how long to hold pinch to dismiss the tutorial
+PINCH_DROPOUT_SEC   = 0.25   # tolerate brief tracking drops without resetting
+SCAN_TEASE_HOLD_SEC = 4.0    # how long STUDENT ID SCAN stays up after a brief sighting
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Video player for gesture demo MP4 (QMediaPlayer with OpenCV fallback)
 # ─────────────────────────────────────────────────────────────────────────────
 class GestureVideoPlayer:
-    """Video player for gesture_demo.mp4 rendering to QLabel so it fades smoothly with QGraphicsOpacityEffect."""
+    """Video player for gesture_demo.mp4 rendering to QLabel so it fades smoothly with QGraphicsOpacityEffect.
+
+    target_size is a MAX bounding box; the video is scaled to fit inside it
+    while keeping its native aspect ratio.
+    """
 
     def __init__(self, mp4_path, parent_widget, layout, target_size=(480, 480), speed_factor=None):
         self.mp4_path = mp4_path
         self.parent_widget = parent_widget
         self.layout = layout
-        self.target_size = target_size
+        self.max_size = target_size
         self.player_type = 'cv'
         self.speed_factor = float(speed_factor) if speed_factor is not None else float(GESTURE_TUTORIAL_SPEED_FACTOR)
+
+        self.cap = None
+        self.fps = 30.0
+        self.total_frames = 218
+        self.video_w = 0
+        self.video_h = 0
+        self._detect_video_info()
+
+        # Final on-screen size, aspect-ratio preserved
+        self.target_size = self._fit_size(self.video_w, self.video_h, self.max_size)
 
         # Render onto a transparent QLabel so QGraphicsOpacityEffect fades both background & video
         self.label = QLabel(parent_widget)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("background: transparent; border: none;")
-        self.label.setFixedSize(target_size[0], target_size[1])
+        self.label.setFixedSize(self.target_size[0], self.target_size[1])
         layout.addWidget(self.label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.widget = self.label
 
-        self.cap = None
         self.cv_timer = QTimer(parent_widget)
         self.cv_timer.timeout.connect(self._cv_tick)
-        self.fps = 30.0
-        self.total_frames = 218
-        self._detect_video_info()
         self._render_first_frame()
+
+    @staticmethod
+    def _fit_size(vw, vh, max_size):
+        """Scale (vw, vh) to fit inside max_size, preserving aspect ratio."""
+        max_w, max_h = max_size
+        if vw <= 0 or vh <= 0:
+            return (max_w, max_h)
+        scale = min(max_w / vw, max_h / vh)
+        # even dimensions keep OpenCV/Qt happy
+        return (max(2, int(vw * scale) // 2 * 2), max(2, int(vh * scale) // 2 * 2))
 
     def _detect_video_info(self):
         try:
@@ -84,6 +108,8 @@ class GestureVideoPlayer:
             cap = cv2.VideoCapture(self.mp4_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            self.video_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.video_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.release()
             if fps > 0:
                 self.fps = fps
@@ -463,6 +489,11 @@ class GuestScanCallout(QWidget):
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(16)   # 60 fps
         self._timer.timeout.connect(self.update)
+        self._fade = 1.0
+
+    def set_fade(self, f):
+        self._fade = max(0.0, min(1.0, float(f)))
+        self.update()
 
     def start(self):
         self._timer.start()
@@ -481,7 +512,7 @@ class GuestScanCallout(QWidget):
         # Bounce: arrow moves up/down 12px at ~1.2 Hz
         bounce = 12.0 * _math.sin(t * _math.pi * 2.4)
 
-        alpha = int(255 * pulse)
+        alpha = int(255 * pulse * self._fade)
         w, h = self.width(), self.height()
         half = h // 2
 
@@ -628,6 +659,9 @@ class SmartMirrorPro(QMainWindow):
         self._demo_anim = None
         self._scrim_timer = None
         self._scrim_fading_out = False
+        self._demo_pinch_start = None
+        self._demo_pinch_last = 0.0
+        self._scan_tease_until = 0.0
 
         # ── Telemetry & A/B Testing Tracker ───────────────────────────────
         self.telemetry = TelemetryTracker(api_url=API_URL)
@@ -887,7 +921,7 @@ class SmartMirrorPro(QMainWindow):
         self.demo_img_label = None
 
         if os.path.exists(mp4_path):
-            self.demo_movie = GestureVideoPlayer(mp4_path, self.gesture_demo_overlay, lay, target_size=(480, 480))
+            self.demo_movie = GestureVideoPlayer(mp4_path, self.gesture_demo_overlay, lay, target_size=(800, 480))
             self.demo_img_label = self.demo_movie.widget
         elif os.path.exists(png_path):
             self.demo_img_label = QLabel(self.gesture_demo_overlay)
@@ -899,6 +933,18 @@ class SmartMirrorPro(QMainWindow):
                     pix.scaled(480, 480, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 )
             lay.addWidget(self.demo_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Pinch-and-hold progress bar beneath the video
+        bar_w = self.demo_movie.target_size[0] if self.demo_movie is not None else 480
+
+        lay.addSpacing(24)
+        self.demo_hold_bar = QFrame(self.gesture_demo_overlay)
+        self.demo_hold_bar.setFixedSize(bar_w, 6)
+        self.demo_hold_bar.setStyleSheet("background: rgba(255,255,255,0.16); border: none; border-radius: 3px;")
+        self.demo_hold_fill = QFrame(self.demo_hold_bar)
+        self.demo_hold_fill.setStyleSheet("background: #ffffff; border: none; border-radius: 3px;")
+        self.demo_hold_fill.setGeometry(0, 0, 0, 6)
+        lay.addWidget(self.demo_hold_bar, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.demo_touchless_hint = QLabel("", self.gesture_demo_overlay)
         self.demo_touchless_hint.hide()
@@ -1593,6 +1639,56 @@ class SmartMirrorPro(QMainWindow):
         elif hasattr(self, 'dwell_hint_pill'):
             self.dwell_hint_pill.hide()
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Gesture tutorial: pinch-and-hold to dismiss
+    # ─────────────────────────────────────────────────────────────────────
+    def _show_scan_callout(self):
+        if not hasattr(self, 'guest_scan_callout'):
+            return
+        self._position_guest_scan_callout()
+        self.guest_scan_callout.set_fade(1.0)
+        if not self.guest_scan_callout.isVisible():
+            self.guest_scan_callout.show()
+            self.guest_scan_callout.start()
+        self.guest_scan_callout.raise_()
+
+    def _hide_scan_callout(self):
+        if hasattr(self, 'guest_scan_callout'):
+            self.guest_scan_callout.stop()
+            self.guest_scan_callout.hide()
+        self._scan_tease_until = 0.0
+
+    def _demo_overlay_active(self):
+        return (getattr(self, 'gesture_demo_overlay', None) is not None
+                and self.gesture_demo_overlay.isVisible()
+                and not self._scrim_fading_out)
+
+    def _set_demo_hold_progress(self, p):
+        if not hasattr(self, 'demo_hold_bar') or self.demo_hold_bar is None:
+            return
+        p = max(0.0, min(1.0, p))
+        self.demo_hold_fill.setGeometry(0, 0, int(self.demo_hold_bar.width() * p), self.demo_hold_bar.height())
+
+    def _update_demo_hold(self, pinched):
+        now = time.time()
+        if pinched:
+            self._demo_pinch_last = now
+            if self._demo_pinch_start is None:
+                self._demo_pinch_start = now
+        elif self._demo_pinch_start is not None and now - self._demo_pinch_last > PINCH_DROPOUT_SEC:
+            self._demo_pinch_start = None
+
+        if self._demo_pinch_start is None:
+            self._set_demo_hold_progress(0.0)
+            return
+
+        progress = (now - self._demo_pinch_start) / PINCH_EXIT_HOLD_SEC
+        self._set_demo_hold_progress(progress)
+        if progress >= 1.0:
+            self._demo_pinch_start = None
+            self._last_activity_time = now      # so the idle timer doesn't instantly re-show it
+            self._fade_out_gesture_scrim()
+
     def _show_gesture_scrim(self):
         """Darken the screen background slightly for the duration of the tutorial video and play demo MP4."""
         if self.gesture_demo_overlay is None:
@@ -1613,16 +1709,19 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_demo_overlay.show()
         self.gesture_demo_overlay.raise_()
 
+        self._demo_pinch_start = None
+        self._set_demo_hold_progress(0.0)
+
         # Show guest barcode callout only in guest state
         if hasattr(self, 'guest_scan_callout'):
             if self._last_state == 'guest':
+                self.guest_scan_callout.set_fade(0.0)
                 self._position_guest_scan_callout()
                 self.guest_scan_callout.show()
                 self.guest_scan_callout.raise_()  # above overlay
                 self.guest_scan_callout.start()
             else:
-                self.guest_scan_callout.stop()
-                self.guest_scan_callout.hide()
+                self._hide_scan_callout()
 
         self._update_barcode_guide()
 
@@ -1633,22 +1732,13 @@ class SmartMirrorPro(QMainWindow):
         anim_in.setDuration(450)
         anim_in.setStartValue(0.0)
         anim_in.setEndValue(1.0)
+        anim_in.valueChanged.connect(lambda v: self.guest_scan_callout.set_fade(v))
         anim_in.start()
         self._demo_anim = anim_in
 
-        # Show for the length of the video (approx 7.27 seconds) or configured timing
-        duration_ms = int(getattr(self, '_gesture_tutorial_duration_sec', GESTURE_TUTORIAL_DURATION_SEC) * 1000)
-        if hasattr(self, 'demo_movie') and self.demo_movie is not None:
-            d = self.demo_movie.get_duration_ms()
-            if d > 0:
-                duration_ms = d
-
+        # No auto-dismiss timer: the video loops until the user pinch-holds to exit.
         if hasattr(self, '_scrim_timer') and self._scrim_timer is not None:
             self._scrim_timer.stop()
-        self._scrim_timer = QTimer(self)
-        self._scrim_timer.setSingleShot(True)
-        self._scrim_timer.timeout.connect(self._fade_out_gesture_scrim)
-        self._scrim_timer.start(duration_ms)
 
     def _fade_out_gesture_scrim(self):
         """Smoothly fade out the tutorial overlay (background + video) to 0.0 opacity."""
@@ -1671,15 +1761,16 @@ class SmartMirrorPro(QMainWindow):
         anim_out.setDuration(int(450 * max(0.1, current_opacity)))
         anim_out.setStartValue(current_opacity)
         anim_out.setEndValue(0.0)
+        anim_out.valueChanged.connect(lambda v: self.guest_scan_callout.set_fade(v))
 
         def on_done():
             self.gesture_demo_overlay.hide()
             if hasattr(self, 'demo_touchless_hint'):
                 self.demo_touchless_hint.hide()
-            if hasattr(self, 'guest_scan_callout'):
-                self.guest_scan_callout.stop()
-                self.guest_scan_callout.hide()
+            self._hide_scan_callout()
             self._scrim_fading_out = False
+            self._demo_pinch_start = None
+            self._set_demo_hold_progress(0.0)
             self._update_barcode_guide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
@@ -1736,6 +1827,12 @@ class SmartMirrorPro(QMainWindow):
 
         if hasattr(self, 'hand_cursor_dot') and self.hand_cursor_dot is not None:
             self.hand_cursor_dot.hide()
+
+        # While the tutorial video is up, the only thing that does anything is
+        # a held pinch (fills the bar under the video, exits at 100%).
+        if self._demo_overlay_active():
+            self._update_demo_hold(present and bool(data.get("pinched", False)))
+            return
 
         # Telemetry: Record gesture events & dwell progress
         event_id = data.get("event_id", 0)
@@ -2158,7 +2255,18 @@ class SmartMirrorPro(QMainWindow):
                 self._last_activity_time = now
                 self._trigger_transition(new_state, new_user_id, fdata)
 
+        # ── STUDENT ID SCAN teaser: someone was seen, but not long enough for guest/user ──
+        if self._last_state not in ('guest', 'user') and not self._transitioning:
+            if self.face_detected:
+                self._scan_tease_until = now + SCAN_TEASE_HOLD_SEC
+                self._show_scan_callout()
+            elif self._scan_tease_until and now >= self._scan_tease_until:
+                self._hide_scan_callout()
+
         # ── Gesture Inactivity Tutorial Overlay ───────────────────────────
+        if self._demo_overlay_active():
+            self._update_demo_hold(False)   # resets the bar if pinch packets stop arriving
+
         if self._last_state in ('guest', 'user') and not self._transitioning:
             idle_threshold = getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
             if time.time() - self._last_activity_time >= idle_threshold:
@@ -2234,6 +2342,7 @@ class SmartMirrorPro(QMainWindow):
                 self._show_gesture_scrim()
 
         elif visible is not None:
+            self._hide_scan_callout()
             self._fade_out(visible, on_done=self._on_fade_to_idle_done)
 
         else:
@@ -2242,6 +2351,7 @@ class SmartMirrorPro(QMainWindow):
     def _prepare(self, container, new_state, new_user_id, fdata):
         """Fill in and lay out a container before it is displayed."""
         if container is self.user_container:
+            self._hide_scan_callout()
             self.timetable_widget.set_user_id(new_user_id)
             self._apply_user_theme(fdata.get('config', {}))
             self._apply_user_layout(self.width(), self.height())
@@ -2265,6 +2375,7 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'telemetry') and self.telemetry is not None:
             self.telemetry.end_session()
         self._auth_method = ""
+        self._hide_scan_callout()
         self.user_container.hide()
         self.guest_container.hide()
         self.user_container.setGraphicsEffect(None)
@@ -2273,6 +2384,8 @@ class SmartMirrorPro(QMainWindow):
             self.dwell_hint_pill.hide()
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.hide()
+            self._demo_pinch_start = None
+            self._set_demo_hold_progress(0.0)
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
         if self.kings_widget is not None:
@@ -2626,4 +2739,3 @@ if __name__ == '__main__':
         except Exception:
             pass
     sys.exit(code)
-
