@@ -16,6 +16,46 @@ raspi@raspi:~/14DTE-Project/mirror $ tail -f face_daemon.log gesture_daemon.log 
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+raspi@raspi:~/14DTE-Project/mirror $ tail -f face_daemon.log gesture_daemon.log camera_pipeline.log mirror.log
+==> face_daemon.log <==
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=3, req=-2140645888
+[ WARN:0@11.068] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.069] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[ERROR] Could not open camera /dev/video20 after 10 attempts.
+[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding /dev/video20.
+
+==> gesture_daemon.log <==
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
+[ WARN:0@11.014] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
+[ERROR:0@11.015] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[GESTURE] Could not open camera '/dev/video20'. Exiting.
+
+==> camera_pipeline.log <==
+[vf#0:0 @ 0x5555ef6322d0] Error sending frames to consumers: Invalid argument
+[vf#0:0 @ 0x5555ef6322d0] Task finished with error code: -22 (Invalid argument)
+[vf#0:0 @ 0x5555ef6322d0] Terminating thread with return code -22 (Invalid argument)
+[out#0/video4linux2,v4l2 @ 0x5555ef631780] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A    
+Conversion failed!
+Received signal 13
+Received signal 13
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  failed to write output bytes
+
+==> mirror.log <==
+[MIRROR] Face recognition daemon started (pid 3058, --rpi --exit-with-parent).
+[MIRROR] Gesture daemon started (pid 3059, --rpi --exit-with-parent). Logs: /home/raspi/14DTE-Project/mirror/gesture_daemon.log
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:138 queryUvcDeviceInfoList ioctl error return: 25
 [ WARN:0@11.315] global obsensor_stream_channel_v4l2.cpp:82 xioctl ioctl: fd=4, req=-2140645888
