@@ -34,27 +34,33 @@ In human-computer interaction (HCI), physical glass displays carry a powerful **
      ┌───────────────────────┐                       ┌───────────────────────┐
      │  Variant A (Control)  │                       │ Variant B (Treatment) │
      ├───────────────────────┤                       ├───────────────────────┤
-     │ - Implicit Tutorial   │                       │ - "Touchless / In Air"│
-     │ - Hidden Dwell Cue    │                       │ - Proactive Dwell Bar │
-     │ - Standard AutoScroll │                       │ - Corner Visual Nudge │
+     │ - Implicit Tutorial   │                       │ - Anti-Touch Graphic  │
+     │ - Hidden Dwell Cue    │                       │   (❌ Touch, ✔️ Air)   │
+     │ - Pinch-Only Drag     │                       │ - Live Cursor Dot     │
+     │ - No Cursor Dot       │                       │ - Open-Palm Swipe     │
+     │                       │                       │ - Proactive Dwell Bar │
      └───────────────────────┘                       └───────────────────────┘
 ```
 
 ### Variant A: Control (Current Implicit Design)
-* **Onboarding:** Standard gesture demo video plays on idle/guest arrival with generic "CLICK" / "SCROLL" graphics.
-* **Timetable Discovery:** No visual guide indicating how to reopen the timetable. The top-right dwell bar only appears *after* the hand has already entered the top-right zone and stayed for $> 0.2\text{s}$.
-* **Affordances:** Standard border highlights when a hand is over a column.
+* **Onboarding:** Standard gesture demo video plays on idle/guest arrival with generic "CLICK" / "SCROLL" graphics without anti-touchscreen warnings.
+* **Hand Feedback:** No visible on-screen cursor dot; user receives zero continuous feedback on whether their hand is detected or where it is mapped.
+* **Scrolling:** Requires strict pinch-and-drag (thumb + index finger pressed together).
+* **Timetable Discovery:** No visual guide indicating how to reopen the timetable. Top-right dwell bar only appears *after* the hand has already entered the top-right zone and stayed for $> 0.2\text{s}$.
 
-### Variant B: Treatment (Explicit Touchless Affordances & Proactive Dwell Nudge)
-* **Onboarding ("Touchless / In-Air" Callout):**
-  * Clear visual banner beneath tutorial and in header:  
-    `"🖐️ Touchless Controls — Move your hand in the air (no screen touching needed)"`
-  * Clarifies that camera vision tracks hand movements at arm's length.
+### Variant B: Treatment (Explicit Multimodal Touchless Affordances)
+* **Onboarding & Anti-Touchscreen Tutorial Graphic:**
+  * Animated visual overlay at video start showing:
+    * Hand physically touching the glass with a glowing red **❌ ("DO NOT TOUCH GLASS — INERT SCREEN")**.
+    * Hand moving 30 cm away in the air with a glowing green **✔️ ("TOUCHLESS AIR GESTURES — MOVE IN AIR")**.
+  * Immediate gesture bypass: any gesture during the tutorial immediately fades it out and executes the action.
+* **Closed-Loop Feedback (Live On-Screen Cursor Dot):**
+  * Displays a glowing 24px circular indicator tracking the user's hand position $(x, y)$ in real-time.
+  * Transitions to green when active/pinching, providing immediate visual confirmation that the mirror's computer vision sees their hand.
+* **Intuitive Open-Palm Wave / Swipe Scrolling:**
+  * In addition to pinch-and-drag, accepts broad natural open-palm vertical swipes (flicking hand up/down) to scroll without requiring a fine-motor pinch.
 * **Timetable Discovery (Proactive Corner Affordance):**
-  * Subtle, clean pill in the top-right header: `"✋ Hold hand here to toggle Timetable"`
-  * When a user raises their hand into the upper-right quadrant, the progress bar activates proactively with immediate feedback: `"Holding for Timetable... [██████░░]"`
-* **Proactive Micro-Nudge:**
-  * When a visitor first arrives, a subtle 32px animated icon appears in the bottom corner of the active panel indicating *"Pinch & Drag to Scroll"*.
+  * Subtle, clean pill in top-right header: `"✋ Hold hand in top-right for Timetable"` with live percentage progress `(15%... 60%... 100%)`.
 
 ---
 

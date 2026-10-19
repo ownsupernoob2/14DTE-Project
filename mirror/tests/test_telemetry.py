@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from mirror.telemetry import TelemetryTracker
+try:
+    from telemetry import TelemetryTracker
+except ImportError:
+    from mirror.telemetry import TelemetryTracker
 
 
 class TestTelemetry(unittest.TestCase):

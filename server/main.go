@@ -72,6 +72,12 @@ func main() {
 	protected.GET("/users/me/barcode", getBarcode)
 	protected.DELETE("/users/me/barcode", deleteBarcode)
 
+	// User language preferences
+	protected.PUT("/users/me/language", saveUserLanguage)
+	protected.POST("/users/me/language", saveUserLanguage)
+	protected.GET("/users/me/language", getUserLanguage)
+	e.GET("/api/users/language", getPublicUserLanguage)
+
 	// Dashboard/Widget routes
 	protected.GET("/dashboard", getDashboard)
 	protected.POST("/dashboard/widgets", addWidget)
@@ -96,17 +102,19 @@ func main() {
 	// Analytics & A/B Testing Telemetry routes
 	e.POST("/api/analytics/events", recordAnalyticsEvent)
 	e.GET("/api/analytics/config", getAnalyticsConfig)
+	e.POST("/api/analytics/config", updateAnalyticsConfig)
 	e.GET("/api/admin/analytics", getAdminAnalytics, OptionalEnsureValidToken())
+	e.GET("/api/admin/face-audit", getFaceAuditLog, OptionalEnsureValidToken())
 
 	// Timetable routes
-	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken())          // public – also accepts JWT
+	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken()) // public – also accepts JWT
 	protected.POST("/timetable/ics", setTimetableURL)
 	protected.GET("/timetable/ics", getMyTimetableURL)
 
 	// Health check and version
 	e.GET("/health", health)
+	e.GET("/api/health", health)
 	e.GET("/api/version", version)
-
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -118,7 +126,7 @@ func main() {
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-const AppVersion = "v1.2.1"
+const AppVersion = "v2.0.1"
 
 func health(c echo.Context) error {
 	return c.JSON(200, map[string]interface{}{
@@ -135,6 +143,29 @@ func version(c echo.Context) error {
 }
 
 func getPythonCmd() string {
+	if envPy := os.Getenv("PYTHON_CMD"); envPy != "" {
+		if _, err := exec.LookPath(envPy); err == nil {
+			return envPy
+		}
+		if _, err := os.Stat(envPy); err == nil {
+			return envPy
+		}
+	}
+
+	venvCandidates := []string{
+		"venv/bin/python",
+		"venv/Scripts/python.exe",
+		"../venv/bin/python",
+		"../venv/Scripts/python.exe",
+		"../mirror/venv/bin/python",
+		"../mirror/venv/Scripts/python.exe",
+	}
+	for _, venv := range venvCandidates {
+		if _, err := os.Stat(venv); err == nil {
+			return venv
+		}
+	}
+
 	if _, err := exec.LookPath("python3"); err == nil {
 		return "python3"
 	}

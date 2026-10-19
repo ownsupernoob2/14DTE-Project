@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -148,8 +149,21 @@ func trainFace(c echo.Context) error {
 	cmd.Stderr = &errOut
 
 	if err := cmd.Run(); err != nil {
+		errStr := strings.TrimSpace(errOut.String())
+		if errStr == "" {
+			errStr = strings.TrimSpace(out.String())
+		}
+		if errStr == "" {
+			errStr = err.Error()
+		}
 		log.Printf("train.py error: %v, stderr: %s", err, errOut.String())
-		return c.JSON(500, map[string]string{"error": "Training failed: " + strings.TrimSpace(out.String())})
+
+		if strings.Contains(errStr, "COLLISION") {
+			return c.JSON(409, map[string]string{
+				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
+			})
+		}
+		return c.JSON(500, map[string]string{"error": "Training failed: " + errStr})
 	}
 
 	output := strings.TrimSpace(out.String())
@@ -158,6 +172,11 @@ func trainFace(c echo.Context) error {
 	lastLine := strings.TrimSpace(lines[len(lines)-1])
 
 	if !strings.HasPrefix(lastLine, "OK:") {
+		if strings.Contains(output, "COLLISION") {
+			return c.JSON(409, map[string]string{
+				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
+			})
+		}
 		return c.JSON(500, map[string]string{
 			"error": "Training failed: " + output,
 		})
@@ -339,4 +358,35 @@ func downloadIndex(c echo.Context) error {
 	}
 
 	return c.JSON(200, payload)
+}
+
+// GET /api/admin/face-audit
+// Allows admin (marminamina3@gmail.com) to trace enrolled faces and collision logs.
+func getFaceAuditLog(c echo.Context) error {
+	if !verifyAdminAccess(c) {
+		return c.JSON(403, map[string]string{
+			"error": "Forbidden: Admin access restricted to " + DefaultAdminEmail,
+		})
+	}
+
+	collisionPath := filepath.Join(dataDir, "face_collisions.json")
+	var collisions []map[string]interface{}
+	if data, err := os.ReadFile(collisionPath); err == nil {
+		json.Unmarshal(data, &collisions)
+	}
+
+	var enrolledUsers []string
+	if files, err := os.ReadDir("encodings"); err == nil {
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".pickle") {
+				enrolledUsers = append(enrolledUsers, strings.TrimSuffix(f.Name(), ".pickle"))
+			}
+		}
+	}
+
+	return c.JSON(200, map[string]interface{}{
+		"total_enrolled": len(enrolledUsers),
+		"enrolled_users": enrolledUsers,
+		"collisions":     collisions,
+	})
 }

@@ -1,35 +1,24 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
-import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
 import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
-
-// ── Inline style constants (change here to restyle globally) ──────────────────
-const S = {
-  dangerBg:        'rgba(239, 68, 68, 0.08)',
-  dangerBorder:    'rgba(239, 68, 68, 0.22)',
-  dangerText:      '#f87171',
-  dangerActiveBg:  'rgba(239, 68, 68, 0.18)',
-  infoBoxBg:       'rgba(255, 255, 255, 0.03)',
-  infoBoxBorder:   'rgba(255, 255, 255, 0.07)',
-  mutedText:       'rgba(255,255,255,0.55)',
-  subText:         'rgba(255,255,255,0.35)',
-}
+const AUTHORIZED_ADMIN_EMAIL = 'marminamina3@gmail.com'
 
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
   const [showFaceModal, setShowFaceModal] = useState(false)
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false)
+  const [isWiping, setIsWiping] = useState(false)
   const { isServerUp } = useServerStatus()
   const [isDeleting, setIsDeleting] = useState(false)
 
-  // Linked student ID: null while loading, '' when none is linked.
   const [studentID, setStudentID] = useState(null)
   const [isUnlinking, setIsUnlinking] = useState(false)
 
@@ -40,6 +29,19 @@ export default function Settings() {
   const hoursUntilUpdate = isScanRecent
     ? Math.ceil((24 * 60 * 60 * 1000 - (Date.now() - scanTime)) / (60 * 60 * 1000))
     : 0
+
+  // 1-Year Face Re-Scan Expiry Notification:
+  // Only triggers if user previously enrolled their face and > 365 days elapsed
+  const oneYearMs = 365 * 24 * 60 * 60 * 1000
+  const isScanExpired = Boolean(lastScan && (Date.now() - scanTime > oneYearMs))
+  const [showYearExpiredModal, setShowYearExpiredModal] = useState(() => {
+    return isScanExpired && !sessionStorage.getItem('year_rescan_dismissed')
+  })
+
+  const userEmail = (user?.email || '').toLowerCase().trim()
+  const isAdmin = userEmail === AUTHORIZED_ADMIN_EMAIL
+  const hasBarcode = Boolean(studentID && studentID.trim())
+  const hasFace = Boolean(lastScan)
 
   useEffect(() => {
     let cancelled = false
@@ -54,13 +56,13 @@ export default function Settings() {
         const body = await res.json()
         if (!cancelled) setStudentID(body.barcode || '')
       } catch {
-        // Treat an unreachable server as "nothing linked yet" rather than
-        // blocking the whole settings page on one optional field.
         if (!cancelled) setStudentID('')
       }
     }
 
-    if (isServerUp) loadStudentID()
+    if (isServerUp) {
+      loadStudentID()
+    }
     return () => { cancelled = true }
   }, [isServerUp, getAccessTokenSilently])
 
@@ -106,343 +108,412 @@ export default function Settings() {
     }
   }
 
+  const handleWipeAccountData = async () => {
+    setIsWiping(true)
+    try {
+      const token = await getAccessTokenSilently().catch(() => '')
+      if (token) {
+        await Promise.allSettled([
+          fetch(`${API_URL}/api/faces/me`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          fetch(`${API_URL}/api/users/me/barcode`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          fetch(`${API_URL}/api/timetable/ics`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+        ])
+      }
+    } catch { /* proceed with local storage wipe */ }
+
+    // Clear all client cached preferences and data
+    localStorage.removeItem('lastFaceScan')
+    localStorage.removeItem('timetable_ics_url')
+    localStorage.removeItem('timetable_cache_date')
+    localStorage.removeItem('timetable_cache_data')
+    localStorage.removeItem('notices_date')
+    localStorage.removeItem('notices_data')
+    localStorage.removeItem('notices_fetchedAt')
+    localStorage.removeItem('notices_widget_config')
+    localStorage.removeItem('mirror_theme')
+    sessionStorage.clear()
+
+    // Sign out to complete wipe
+    logout({ logoutParams: { returnTo: window.location.origin } })
+  }
+
   return (
-    <div className="preferences-container">
+    <div className="min-h-screen bg-[#000000] text-white flex flex-col font-mono select-none">
       <Navbar />
-      <div className="preferences-content">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="glass-panel preferences-card"
-        >
-          <h1 className="text-title">Settings</h1>
 
-          {user && (
-            <section className="pref-section user-profile">
-              <img src={user.picture} alt={user.name} className="profile-img" />
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col gap-8">
+        {/* Header */}
+        <header className="border-b border-[#1c1c1c] pb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#888888]">
+              KING&apos;S HIGH SMART MIRROR · ACCOUNT SETTINGS
+            </span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight uppercase">
+            ACCOUNT MANAGEMENT
+          </h1>
+          <p className="text-xs text-[#888888] mt-1.5 uppercase tracking-wider">
+            CONFIGURE BIOMETRIC PROFILES, STUDENT BARCODES, AND TERMINAL ACCESS.
+          </p>
+        </header>
+
+        {/* User Profile Info (No 'authenticated' badge) */}
+        {user && (
+          <div className="bg-[#0c0c0c] p-5 flex items-center justify-between gap-4 rounded-none border border-[#1a1a1a]">
+            <div className="flex items-center gap-4">
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-12 h-12 rounded-none object-cover grayscale"
+              />
               <div>
-                <h3 className="profile-name">{user.name}</h3>
-                <p className="profile-email">{user.email}</p>
+                <h3 className="text-sm font-bold text-white uppercase">{user.name}</h3>
+                <p className="text-xs text-[#888888]">{user.email}</p>
               </div>
-            </section>
-          )}
+            </div>
+          </div>
+        )}
 
-          <section className="pref-section pref-section-block">
-            <h2 className="text-overline">Mirror Sign-In</h2>
-            <p className="text-subtitle" style={{ fontSize: '0.85rem', marginBottom: '16px' }}>
-              Register your face so the mirror can recognise you automatically, or link
-              your student ID card to sign in by scanning it.
-            </p>
+        {/* Section: Student ID Barcode Link */}
+        <section className="bg-[#0c0c0c] p-6 flex flex-col gap-4 rounded-none border border-[#1a1a1a]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1c1c1c] pb-4">
+            <div>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                STUDENT ID BARCODE
+              </h2>
+              <p className="text-xs text-[#888888] mt-1">
+                Link your physical ID card barcode for rapid scan login and identity verification.
+              </p>
+            </div>
 
-            {/* Face registration */}
-            {isScanRecent ? (
-              <div style={{ background: S.infoBoxBg, padding: '14px 16px', borderRadius: '10px', border: `1px solid ${S.infoBoxBorder}`, marginBottom: '10px' }}>
-                <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--text-primary)', fontSize: '0.88rem' }}>Face scan registered</strong>
-                <span style={{ fontSize: '0.82rem', lineHeight: 1.6, color: S.mutedText }}>
-                  Can be updated in {hoursUntilUpdate} hour{hoursUntilUpdate !== 1 ? 's' : ''}. Delete your data below to re-scan immediately.
-                </span>
-              </div>
-            ) : (
-              <button
-                className="modern-btn"
-                onClick={() => setShowFaceModal(true)}
-                disabled={!isServerUp}
-                style={{ opacity: isServerUp ? 1 : 0.45, cursor: isServerUp ? 'pointer' : 'not-allowed', marginBottom: '10px' }}
-              >
-                {isServerUp ? 'Register Face Scan' : 'Server Offline'}
-              </button>
+            {hasBarcode && (
+              <span className="px-2.5 py-1 text-[10px] font-bold uppercase bg-[#15803d] text-white border border-[#22c55e] shrink-0">
+                ✓ ACTIVE
+              </span>
             )}
+          </div>
 
-            {/* Student ID / barcode */}
-            {studentID ? (
-              <div style={{ background: S.infoBoxBg, padding: '14px 16px', borderRadius: '10px', border: `1px solid ${S.infoBoxBorder}` }}>
-                <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--text-primary)', fontSize: '0.88rem' }}>
-                  Student ID linked
-                </strong>
-                <span style={{
-                  display: 'block', marginBottom: '10px',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-                  letterSpacing: '0.14em', fontSize: '0.95rem', color: 'var(--text-primary)',
-                }}>
+          {hasBarcode ? (
+            <div className="bg-[#000000] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-[#1a1a1a]">
+              <div>
+                <span className="text-[10px] text-[#888888] uppercase block">
+                  ACTIVE STUDENT ID
+                </span>
+                <span className="text-base font-bold text-white tracking-widest mt-0.5 block">
                   {studentID}
                 </span>
-                <span style={{ display: 'block', fontSize: '0.82rem', lineHeight: 1.6, color: S.mutedText, marginBottom: '12px' }}>
-                  Scan this card at the mirror to sign in without a face scan.
-                </span>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button
-                    className="modern-btn modern-btn-outline"
-                    onClick={() => setShowBarcodeModal(true)}
-                    disabled={!isServerUp}
-                    style={{ opacity: isServerUp ? 1 : 0.45, cursor: isServerUp ? 'pointer' : 'not-allowed' }}
-                  >
-                    Change ID
-                  </button>
-                  <button
-                    className="modern-btn modern-btn-outline"
-                    onClick={unlinkStudentID}
-                    disabled={isUnlinking || !isServerUp}
-                    style={{
-                      borderColor: S.dangerBorder,
-                      color: S.dangerText,
-                      background: S.dangerBg,
-                      opacity: (isUnlinking || !isServerUp) ? 0.5 : 1,
-                      cursor: (isUnlinking || !isServerUp) ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isUnlinking ? 'Unlinking…' : 'Unlink'}
-                  </button>
-                </div>
               </div>
-            ) : (
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeModal(true)}
+                  disabled={!isServerUp}
+                  className="px-4 py-2 text-xs font-bold uppercase bg-[#141414] hover:bg-[#202020] border border-[#2e2e2e] text-white transition-colors cursor-pointer rounded-none"
+                >
+                  CHANGE ID
+                </button>
+                <button
+                  type="button"
+                  onClick={unlinkStudentID}
+                  disabled={isUnlinking || !isServerUp}
+                  className="px-4 py-2 text-xs font-bold uppercase bg-[#1c0808] hover:bg-[#2c0e0e] text-[#f87171] border border-[#4a1212] transition-colors cursor-pointer disabled:opacity-50 rounded-none"
+                >
+                  {isUnlinking ? '...' : 'UNLINK'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#000000] p-4 border border-[#1a1a1a]">
+              <div>
+                <h4 className="text-xs font-bold text-white uppercase">
+                  NO BARCODE LINKED YET
+                </h4>
+                <p className="text-xs text-[#888888] mt-1 leading-relaxed">
+                  Scan the barcode on the back of your student ID card using your device webcam.
+                </p>
+              </div>
+
               <button
-                className="modern-btn modern-btn-outline"
+                type="button"
                 onClick={() => setShowBarcodeModal(true)}
                 disabled={!isServerUp || studentID === null}
-                style={{
-                  opacity: (isServerUp && studentID !== null) ? 1 : 0.45,
-                  cursor: (isServerUp && studentID !== null) ? 'pointer' : 'not-allowed',
-                }}
+                className="px-5 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase transition-all cursor-pointer disabled:opacity-50 shrink-0 rounded-none"
               >
-                {studentID === null ? 'Checking…' : 'Link Student ID'}
+                {studentID === null ? 'CHECKING...' : 'LINK BARCODE'}
               </button>
+            </div>
+          )}
+        </section>
+
+        {/* Section: Biometric Face Recognition (Optional mentioned only once, no redundant how-it-works essay) */}
+        <section className="bg-[#0c0c0c] p-6 flex flex-col gap-4 rounded-none border border-[#1a1a1a]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1c1c1c] pb-4">
+            <div>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                BIOMETRIC FACE RECOGNITION
+              </h2>
+              <p className="text-xs text-[#888888] mt-1">
+                Enrolling your face enables touchless, automatic sign-in at the mirror terminal (optional).
+              </p>
+            </div>
+
+            {hasFace && (
+              <span className="px-2.5 py-1 text-[10px] font-bold uppercase bg-[#15803d] text-white border border-[#22c55e] shrink-0">
+                ✓ ACTIVE
+              </span>
             )}
-          </section>
+          </div>
 
-          <section className="pref-grid">
-            <div className="pref-section">
-              <h2 className="text-overline">Theme</h2>
-              <div className="pref-options">
-                <label className="pref-radio">
-                  <input type="radio" name="theme" value="dark" defaultChecked />
-                  Dark Mode
-                </label>
-                <label className="pref-radio">
-                  <input type="radio" name="theme" value="light" />
-                  Light Mode
-                </label>
+          {!hasBarcode ? (
+            <div className="bg-[#000000] p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-[#1a1a1a]">
+              <div>
+                <h4 className="text-xs font-bold text-white uppercase">BARCODE LINK REQUIRED FIRST</h4>
+                <p className="text-xs text-[#888888] mt-1 max-w-lg leading-relaxed">
+                  To prevent misidentification, a physical Student ID barcode must be linked to your account before enrolling facial biometrics.
+                </p>
               </div>
-            </div>
 
-            <div className="pref-section">
-              <h2 className="text-overline">Language</h2>
-              <select defaultValue="en" className="pref-select">
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-              </select>
-            </div>
-          </section>
-
-          <section className="pref-section pref-section-block">
-            <h2 className="text-overline">Account</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <button
-                className="modern-btn"
+                type="button"
+                onClick={() => setShowBarcodeModal(true)}
+                className="px-4 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase transition-all cursor-pointer shrink-0 rounded-none"
+              >
+                LINK BARCODE TO UNLOCK
+              </button>
+            </div>
+          ) : isScanRecent ? (
+            <div className="bg-[#000000] p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-[#1a1a1a]">
+              <div>
+                <strong className="text-xs font-bold text-white uppercase block">FACE PROFILE REGISTERED</strong>
+                <p className="text-xs text-[#888888] mt-1 leading-relaxed">
+                  Active model. Can be updated in {hoursUntilUpdate} hour{hoursUntilUpdate !== 1 ? 's' : ''}.
+                </p>
+              </div>
+
+              <button
+                type="button"
                 onClick={() => setShowDeleteConfirm(true)}
                 disabled={isDeleting || !isServerUp}
-                style={{
-                  background: 'rgba(239, 68, 68, 0.85)',
-                  border: '1px solid #ef4444',
-                  color: 'white',
-                  letterSpacing: '0.08em',
-                  fontWeight: 600,
-                  opacity: (isDeleting || !isServerUp) ? 0.5 : 1,
-                  cursor: (isDeleting || !isServerUp) ? 'not-allowed' : 'pointer'
-                }}
+                className="px-4 py-2 text-xs font-bold uppercase bg-[#1c0808] hover:bg-[#2c0e0e] text-[#f87171] border border-[#4a1212] transition-colors cursor-pointer shrink-0 rounded-none"
               >
-                DELETE FACE DATA
+                DELETE &amp; RE-SCAN
               </button>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#000000] p-4 border border-[#1a1a1a]">
+              <div>
+                <h4 className="text-xs font-bold text-white uppercase">
+                  READY FOR FACE ENROLLMENT
+                </h4>
+                <p className="text-xs text-[#888888] mt-1 leading-relaxed">
+                  Your Student ID barcode is verified. Click below to begin camera calibration.
+                </p>
+              </div>
 
               <button
-                className="modern-btn modern-btn-outline"
-                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
-                style={{
-                  borderColor: 'rgba(239, 68, 68, 0.4)',
-                  color: '#f87171',
-                  background: 'rgba(239, 68, 68, 0.05)',
-                  letterSpacing: '0.08em',
-                  fontWeight: 600
-                }}
+                type="button"
+                onClick={() => setShowFaceModal(true)}
+                disabled={!isServerUp}
+                className="px-5 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase transition-all cursor-pointer disabled:opacity-50 shrink-0 rounded-none"
               >
-                LOGOUT
+                {isServerUp ? 'REGISTER FACE' : 'SERVER OFFLINE'}
               </button>
             </div>
-          </section>
-
-          {(user?.email || '').toLowerCase().trim() === 'marminamina3@gmail.com' && (
-            <section className="pref-section pref-section-block">
-              <h2 className="text-overline" style={{ color: '#4fc3ff' }}>Administration</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <Link
-                  to="/admin"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '14px 16px',
-                    background: 'rgba(79, 195, 255, 0.08)',
-                    border: '1px solid rgba(79, 195, 255, 0.25)',
-                    borderRadius: '10px',
-                    color: '#ffffff',
-                    textDecoration: 'none',
-                    fontSize: '0.92rem',
-                    fontWeight: 600,
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span className="material-symbols-outlined" style={{ color: '#4fc3ff', fontSize: '20px' }}>
-                      analytics
-                    </span>
-                    <span>Admin Telemetry &amp; A/B Experimentation</span>
-                  </div>
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#4fc3ff' }}>
-                    arrow_forward
-                  </span>
-                </Link>
-              </div>
-              <p style={{ fontSize: '0.78rem', color: S.subText, marginTop: '8px', lineHeight: 1.5 }}>
-                Exclusively accessible to marminamina3@gmail.com for mirror usage analytics and hypothesis evaluation.
-              </p>
-            </section>
           )}
+        </section>
 
-          <section className="pref-section pref-section-block">
-            <h2 className="text-overline">Legal &amp; Policies</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <Link
-                to="/privacy"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  background: S.infoBoxBg,
-                  border: `1px solid ${S.infoBoxBorder}`,
-                  borderRadius: '10px',
-                  color: 'var(--text-primary)',
-                  textDecoration: 'none',
-                  fontSize: '0.88rem',
-                  fontWeight: 500,
-                  transition: 'background 0.2s',
-                }}
-              >
-                <span>Privacy Policy</span>
-                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>
-                  arrow_forward
-                </span>
-              </Link>
+        {/* Section: Administration (Admin only) */}
+        {isAdmin && (
+          <section className="bg-[#0c0c0c] p-6 flex flex-col gap-4 rounded-none border border-[#1a1a1a]">
+            <div className="flex items-center justify-between border-b border-[#1c1c1c] pb-3">
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                ADMINISTRATION &amp; A/B CONTROL
+              </h2>
+              <span className="px-2 py-0.5 text-[9px] font-bold uppercase bg-white text-black">
+                SUPERUSER
+              </span>
+            </div>
 
+            <p className="text-xs text-[#888888] leading-relaxed uppercase">
+              ACCESS A/B TESTING OBSERVATORY, TELEMETRY, AND GESTURE ANALYTICS.
+            </p>
+
+            <div className="pt-2">
               <Link
-                to="/terms"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  background: S.infoBoxBg,
-                  border: `1px solid ${S.infoBoxBorder}`,
-                  borderRadius: '10px',
-                  color: 'var(--text-primary)',
-                  textDecoration: 'none',
-                  fontSize: '0.88rem',
-                  fontWeight: 500,
-                  transition: 'background 0.2s',
-                }}
+                to="/admin"
+                className="inline-block px-5 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none"
               >
-                <span>Terms &amp; Conditions</span>
-                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>
-                  arrow_forward
-                </span>
+                OPEN ADMIN ANALYTICS →
               </Link>
             </div>
-            <p style={{ fontSize: '0.78rem', color: S.subText, marginTop: '8px', lineHeight: 1.5 }}>
-              Review student biometric privacy safeguards, parent/caregiver review notices, and terms of use.
-            </p>
           </section>
-        </motion.div>
-      </div>
+        )}
 
-      <FaceCaptureModal isOpen={showFaceModal} onClose={() => setShowFaceModal(false)} />
+        {/* Section: Centered Sign Out and Long Wipe Account Data Buttons */}
+        <section className="bg-[#0c0c0c] p-8 flex flex-col items-center gap-4 rounded-none border border-[#1a1a1a] text-center">
+          <div className="w-full border-b border-[#1c1c1c] pb-3 mb-2">
+            <h2 className="text-xs uppercase font-bold text-[#888888] tracking-widest">
+              SESSION &amp; ACCOUNT ACTIONS
+            </h2>
+          </div>
 
+          <div className="w-full flex flex-col items-center gap-3">
+            {/* Long Centered Sign Out Button (Secondary Red Outline Style) */}
+            <button
+              type="button"
+              onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+              className="w-full max-w-md mx-auto py-3 px-6 bg-transparent text-[#ef4444] border-2 border-[#ef4444] hover:bg-[#ef4444]/10 text-xs font-mono font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none flex items-center justify-center gap-2"
+            >
+              <span className="material-symbols-outlined text-sm">logout</span>
+              <span>SIGN OUT</span>
+            </button>
+
+            {/* Long Centered Wipe Account Data Button (Solid Red Danger Style) */}
+            <button
+              type="button"
+              onClick={() => setShowWipeConfirm(true)}
+              className="w-full max-w-md mx-auto py-3.5 px-6 bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs font-mono font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none flex items-center justify-center gap-2 shadow-lg"
+            >
+              <span className="material-symbols-outlined text-sm">delete_forever</span>
+              <span>WIPE ACCOUNT DATA</span>
+            </button>
+          </div>
+        </section>
+      </main>
+
+      {/* Face & Barcode Capture Modals */}
       <BarcodeCaptureModal
         isOpen={showBarcodeModal}
         onClose={() => setShowBarcodeModal(false)}
-        onBarcodeSaved={(code) => setStudentID(code)}
+        onBarcodeSaved={(code) => {
+          setStudentID(code)
+          setShowBarcodeModal(false)
+        }}
       />
 
-      {/* ── Delete confirmation modal ─────────────────────────────────────── */}
-      <AnimatePresence>
-        {showDeleteConfirm && (
-          <motion.div
-            className="fc-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={(e) => e.target === e.currentTarget && !isDeleting && setShowDeleteConfirm(false)}
-          >
-            <motion.div
-              className="fc-modal"
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="fc-phase fc-phase-center" style={{ justifyContent: 'center' }}>
-                {/* Warning icon */}
-                <div style={{
-                  width: '48px', height: '48px', borderRadius: '50%',
-                  background: S.dangerBg, border: `1px solid ${S.dangerBorder}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  flexShrink: 0,
-                }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={S.dangerText} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-                    <line x1="12" y1="9" x2="12" y2="13"/>
-                    <line x1="12" y1="17" x2="12.01" y2="17"/>
-                  </svg>
-                </div>
+      <FaceCaptureModal
+        isOpen={showFaceModal}
+        onClose={() => setShowFaceModal(false)}
+        onCaptureComplete={() => {
+          setShowFaceModal(false)
+          window.location.reload()
+        }}
+      />
 
-                <p className="fc-overline" style={{ color: S.dangerText }}>Destructive Action</p>
-                <h2 className="fc-title" style={{ fontSize: '1.35rem' }}>Delete Face Data?</h2>
-                <p className="fc-sub">
-                  This permanently removes your face encoding from our servers. You will no longer be recognised by the mirror until you register again.
-                  {isScanRecent && <><br /><span style={{ color: S.mutedText, fontSize: '0.78rem', marginTop: '6px', display: 'block' }}>You can register a new scan immediately after deletion.</span></>}
-                </p>
+      {/* Delete Face Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+          <div className="bg-[#0a0a0a] border border-[#222222] p-6 max-w-md w-full flex flex-col gap-4 text-white font-mono rounded-none">
+            <h3 className="text-sm font-bold text-white uppercase">
+              CONFIRM FACE BIOMETRIC DELETION
+            </h3>
+            <p className="text-xs text-[#888888] leading-relaxed">
+              Are you sure you want to delete your registered biometric face scan? This will remove your face embeddings from the server.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 border border-[#222222] text-[#888888] hover:text-white text-xs uppercase font-bold rounded-none cursor-pointer"
+              >
+                CLOSE
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteFace}
+                disabled={isDeleting}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs uppercase font-bold rounded-none cursor-pointer"
+              >
+                {isDeleting ? '...' : 'DELETE & RE-SCAN'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-                <div style={{
-                  background: S.dangerBg, border: `1px solid ${S.dangerBorder}`,
-                  borderRadius: '10px', padding: '10px 14px', width: '100%',
-                  fontSize: '0.78rem', color: S.dangerText, textAlign: 'left',
-                }}>
-                  This action cannot be undone.
-                </div>
+      {/* Wipe All Account Data Confirmation Modal */}
+      {showWipeConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="bg-[#0a0a0a] border border-[#441111] p-6 max-w-md w-full flex flex-col gap-4 text-white font-mono rounded-none shadow-2xl">
+            <div className="flex items-center gap-2 text-red-500">
+              <span className="material-symbols-outlined text-2xl">warning</span>
+              <h3 className="text-sm font-bold uppercase tracking-wider">
+                CONFIRM COMPLETE ACCOUNT DATA WIPE
+              </h3>
+            </div>
+            <p className="text-xs text-[#a0a0a0] leading-relaxed">
+              Are you sure you want to wipe all account data? This will permanently delete your facial biometric embeddings from the mirror server, unlink your Student ID barcode, and clear timetable configuration. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3 pt-3 border-t border-[#1a1a1a]">
+              <button
+                type="button"
+                onClick={() => setShowWipeConfirm(false)}
+                disabled={isWiping}
+                className="px-4 py-2 border border-[#222222] text-[#888888] hover:text-white text-xs uppercase font-bold rounded-none cursor-pointer"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                onClick={handleWipeAccountData}
+                disabled={isWiping}
+                className="px-5 py-2.5 bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs uppercase font-bold rounded-none cursor-pointer transition-colors"
+              >
+                {isWiping ? 'WIPING DATA...' : 'YES, WIPE ALL DATA'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-                <div className="fc-row-btns" style={{ marginTop: '4px' }}>
-                  <button
-                    className="fc-btn fc-btn-outline"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={isDeleting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="fc-btn"
-                    onClick={confirmDeleteFace}
-                    disabled={isDeleting || !isServerUp}
-                    style={{ background: '#dc2626', border: 'none', color: '#fff' }}
-                  >
-                    {isDeleting ? 'Deleting...' : 'Delete permanently'}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* 1-Year Face Re-Scan Expiry Notification Modal */}
+      {showYearExpiredModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+          <div className="bg-[#0a0a0a] border border-[#333333] p-6 max-w-md w-full flex flex-col gap-4 text-white font-mono rounded-none shadow-2xl">
+            <div className="flex items-center gap-2 text-amber-400">
+              <span className="material-symbols-outlined text-2xl">update</span>
+              <h3 className="text-sm font-bold uppercase tracking-wider">
+                BIOMETRICS UPDATE RECOMMENDED
+              </h3>
+            </div>
+            <p className="text-xs text-[#b0b0b0] leading-relaxed">
+              It has been over 1 year since your facial profile was scanned. Facial characteristics evolve over time. Re-scanning your face keeps touchless mirror recognition fast and accurate.
+            </p>
+            <div className="flex justify-end gap-3 pt-3 border-t border-[#1a1a1a]">
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.setItem('year_rescan_dismissed', '1')
+                  setShowYearExpiredModal(false)
+                }}
+                className="px-4 py-2 border border-[#222222] text-[#888888] hover:text-white text-xs uppercase font-bold rounded-none cursor-pointer"
+              >
+                REMIND ME LATER
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowYearExpiredModal(false)
+                  setShowFaceModal(true)
+                }}
+                className="px-5 py-2.5 bg-white text-black hover:bg-[#e0e0e0] text-xs uppercase font-bold rounded-none cursor-pointer transition-colors"
+              >
+                RE-SCAN NOW
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
