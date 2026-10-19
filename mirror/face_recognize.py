@@ -410,16 +410,8 @@ def _try_open_capture(target):
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-    if rpi_mode:
-        # Detect loopback device: prefer /dev/video20 (avoids bcm2835-codec collision), then /dev/video10
-        if os.path.exists("/dev/video20"):
-            target = "/dev/video20"
-        elif os.path.exists("/dev/video10"):
-            target = "/dev/video10"
-        else:
-            target = "/dev/video20"
-    else:
-        target = camera_id
+       if rpi_mode:
+        target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
 
     mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
     print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
