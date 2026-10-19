@@ -4,7 +4,9 @@
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
-LOOP_DEV=/dev/video20
+# Pi 5: the PiSP ISP owns /dev/video20-35, so the loopback must live elsewhere.
+LOOP_DEV=/dev/video42
+export MIRROR_LOOPBACK_DEV="$LOOP_DEV"   # face_recognize.py / gesture_engine.py read this
 
 # ── Automatic GitHub Updates ─────────────────────────────────────────────────
 echo "[START] Checking for updates from GitHub..."
@@ -44,7 +46,7 @@ if lsmod | grep -q '^v4l2loopback'; then
     sleep 1
 fi
 
-if ! sudo modprobe v4l2loopback devices=1 video_nr=20 card_label="VirtualCam1" exclusive_caps=1; then
+if ! sudo modprobe v4l2loopback devices=1 video_nr=42 card_label="VirtualCam1" exclusive_caps=1; then
     echo "[ERROR] Could not load v4l2loopback (kernel updated without rebuilding the module?)."
     echo "        Check: uname -r ; dkms status ; sudo dmesg | tail -20"
     exit 1
@@ -52,6 +54,15 @@ fi
 
 if [ ! -e "$LOOP_DEV" ]; then
     echo "[ERROR] $LOOP_DEV does not exist after loading v4l2loopback. Devices present:"
+    v4l2-ctl --list-devices 2>&1
+    exit 1
+fi
+
+# Existing is not enough: make sure the node really is the loopback driver.
+if command -v v4l2-ctl &>/dev/null && ! v4l2-ctl -d "$LOOP_DEV" -D 2>/dev/null | grep -qi 'loopback'; then
+    echo "[ERROR] $LOOP_DEV exists but is NOT a v4l2loopback device:"
+    v4l2-ctl -d "$LOOP_DEV" -D 2>&1 | head -5
+    echo "        Devices present:"
     v4l2-ctl --list-devices 2>&1
     exit 1
 fi
