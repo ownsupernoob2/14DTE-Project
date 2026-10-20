@@ -107,63 +107,25 @@ The server acts as the central coordination hub. It handles JWT authentication, 
 
 ### Core Handlers & Services
 
-- **Authentication & Middleware ([middleware.go](file:///e:/Code/offical/14DTE-Project/server/middleware.go))**: Validates Auth0 RS256 JWT bearer tokens on all protected routes.
-- **Biometric Face Pipeline ([handlers_face.go](file:///e:/Code/offical/14DTE-Project/server/handlers_face.go))**:
-  - `POST /api/faces/train`: Invokes [train.py](file:///e:/Code/offical/14DTE-Project/server/train.py) on temporary frame batches. Extracts 128-d vectors, purges outliers, and saves `encodings/<user_id>.pickle`.
-  - `POST /api/verify-face`: Receives a mirror camera frame, invokes [verify.py](file:///e:/Code/offical/14DTE-Project/server/verify.py), and returns the matched `user_id` and custom widget layout.
-  - `GET /api/download-index`: Runs [export_encodings.py](file:///e:/Code/offical/14DTE-Project/server/export_encodings.py) to compile all enrolled user face vectors into `exported_encodings.json`. This enables the mirror client to build a local FAISS index for instant, offline face search.
-- **Student ID Barcode Verification ([handlers_barcode.go](file:///e:/Code/offical/14DTE-Project/server/handlers_barcode.go))**:
-  - Links normalized student ID codes to user accounts (`data/<user_id>_barcode.txt`).
-  - Provides a rate-limited endpoint (`POST /api/verify-barcode`) allowing the physical mirror to authenticate students via card scans without storing secrets on the mirror.
-- **School Notices Service ([notices.go](file:///e:/Code/offical/14DTE-Project/server/notices.go), [fetch_notices.py](file:///e:/Code/offical/14DTE-Project/server/fetch_notices.py))**:
-  - Periodically fetches school daily notices, parses HTML tables, extracts year-level tags and categories, and caches results to `data/notices_cache.json`.
-- **Timetable Parser ([timetable.go](file:///e:/Code/offical/14DTE-Project/server/timetable.go))**:
-  - Parses iCalendar (ICS) feeds, calculates period start/end boundaries, extracts room codes and teacher initials, and computes active/upcoming class countdowns.
-- **King's Week Publication Scraper ([handlers_kingsweek.go](file:///e:/Code/offical/14DTE-Project/server/handlers_kingsweek.go))**:
-  - Employs a two-tier scraper: extracts weekly issue covers from the school's primary website (`kingshigh.school.nz`) and extracts article content directly from the inline JSON (`window.HAIL.articles`) within the Hail.to Vue runtime. Caches to `data/kings_week.json`.
-- **Campus Emergency Banner ([handlers_banner.go](file:///e:/Code/offical/14DTE-Project/server/handlers_banner.go))**:
-  - Administrative endpoint (`POST /api/admin/banner`, secured by `X-Admin-Token`) to broadcast campus alerts to all mirrors and dashboards.
+- **Database ([db.go](server/db.go))**: one SQLite file, `data/smartmirror.db` (pure-Go driver, no C compiler needed). Users, face encodings, student IDs, sessions, settings, screensaver images and an admin audit log. Creating it for the first time wipes the old file-based data.
+- **Auth & access ([auth.go](server/auth.go))**: Auth0 RS256 tokens on every signed-in route. Admins are verified Auth0 emails listed in `ADMIN_EMAILS` (looked up via Auth0 `/userinfo`, never trusted from the browser). Mirrors prove themselves with the shared `MIRROR_API_KEY` (`X-Mirror-Key` header).
+- **Face scans ([handlers_face.go](server/handlers_face.go), [python.go](server/python.go), [train.py](server/train.py))**: `POST /api/faces/train` runs train.py (in `server/.venv`, created by `setup-face-python.ps1`) to turn photos into 128-number encodings; photos are deleted straight away, duplicate faces across accounts are blocked. `GET /api/download-index` (mirror) hands the encodings to the mirror's local matcher.
+- **Student IDs ([handlers_barcode.go](server/handlers_barcode.go))**: one ID per account; `POST /api/verify-barcode` (mirror, rate limited) signs a student in by card scan.
+- **Admin ([admin.go](server/admin.go))**: users table with search, removing a face scan / student ID / timetable link / whole account. The student is told next time they sign in ([users.go](server/users.go)).
+- **Screensaver ([screensaver.go](server/screensaver.go))**: gesture demo, image slideshow or logo, chosen in the admin dashboard; mirrors cache the images.
+- **Analytics ([handlers_analytics.go](server/handlers_analytics.go))**: one record per mirror visit, A/B variant control and the summary behind the admin dashboard.
+- **School content ([notices.go](server/notices.go), [handlers_kingsweek.go](server/handlers_kingsweek.go), [timetable.go](server/timetable.go))**: daily notices PDF, King's Week articles and each student's ICS timetable.
 
-### API Route Summary
+See [server/API_DOCS.md](server/API_DOCS.md) for every route and who may call it.
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/health` | Public | Service health probe (`{"status":"ok"}`). |
-| `POST` | `/auth/login` | Public | Dev/local authentication login. |
-| `POST` | `/auth/register` | Public | Dev/local user registration. |
-| `POST` | `/api/verify-face` | Public | Mirror face verification endpoint (returns widgets). |
-| `POST` | `/api/verify-barcode` | Rate-Limited | Mirror student ID card verification (returns widgets). |
-| `GET` | `/api/download-index` | Public | Downloads exported face vector index for mirror FAISS. |
-| `POST` | `/api/faces/train` | JWT Bearer | Enrolls batched webcam frames (10 frames max). |
-| `DELETE` | `/api/faces/me` | JWT Bearer | Deletes the enrolled face encoding file. |
-| `GET` | `/api/users/me/barcode` | JWT Bearer | Retrieves currently linked student ID barcode. |
-| `PUT` | `/api/users/me/barcode` | JWT Bearer | Links a validated student ID barcode to the user. |
-| `DELETE` | `/api/users/me/barcode` | JWT Bearer | Unlinks the student ID barcode. |
-| `GET` | `/api/dashboard/widgets` | JWT Bearer | Retrieves user's saved widget layout. |
-| `PUT` | `/api/dashboard/widgets/bulk` | JWT Bearer | Bulk updates user's widget layout. |
-| `GET` | `/api/notices` | Public | Retrieves cached school notices with filter query support. |
-| `GET` | `/api/kings-week` | Public | Retrieves parsed King's Week editions and articles. |
-| `GET` | `/api/timetable` | Optional JWT | Retrieves today's or weekly parsed schedule. |
-| `POST` | `/api/timetable/ics` | JWT Bearer | Configures user's private ICS timetable URL. |
-| `GET` | `/api/banner` | Public | Retrieves active campus emergency banner. |
-| `POST` | `/api/admin/banner` | Admin Token | Broadcasts an emergency banner message. |
-
-### Data Storage Architecture
+### Data Storage
 
 ```
-server/
-├── data/
-│   ├── <user_id>_widgets.json     # Per-user widget layout configuration
-│   ├── <user_id>_barcode.txt      # Per-user linked student ID code
-│   ├── <user_id>_timetable.txt    # Per-user ICS calendar URL
-│   ├── notices_cache.json         # Cached daily school notices
-│   ├── kings_week.json            # Cached King's Week articles and issues
-│   └── admin_banner.json          # Active campus announcement
-├── encodings/
-│   ├── <user_id>.pickle           # Serialized 128-d face vector arrays
-│   ├── <user_id>.meta.json        # Training timestamp (24h cooldown)
-│   └── exported_encodings.json    # Vector matrix for client-side FAISS search
-└── temp/                          # Scratch directory for verification frames
+server/data/
+├── smartmirror.db        # users, faces, sessions, settings (SQLite)
+├── screensaver/          # uploaded screensaver images, named by SHA-256
+├── daily_notices.json    # cached school notices (public)
+└── kings_week.json       # cached King's Week articles (public)
 ```
 
 ---
@@ -415,19 +377,24 @@ npm run build
 │   └── package.json
 │
 ├── server/                         # Go 1.25+ Echo REST API + Python Workers
-│   ├── main.go                     # Route definitions & server bootstrap
-│   ├── middleware.go               # Auth0 JWT token verification
-│   ├── handlers_auth.go            # User registration & local login
-│   ├── handlers_face.go            # Face training & verification endpoints
-│   ├── handlers_barcode.go         # Barcode linking, validation & rate limiting
-│   ├── handlers_dashboard.go       # Per-user widget layout CRUD
+│   ├── main.go                     # Routes, grouped by who may call them
+│   ├── db.go                       # SQLite schema, settings, first-run wipe
+│   ├── auth.go                     # Auth0 tokens, admins, mirror key
+│   ├── users.go                    # /users/me, removal messages, self-service wipe
+│   ├── admin.go                    # Users table, data removal, audit log
+│   ├── handlers_face.go            # Face scans and the mirror's face index
+│   ├── python.go                   # Finds a Python able to run train.py
+│   ├── handlers_barcode.go         # Student ID linking & mirror sign-in
+│   ├── handlers_dashboard.go       # Per-user widget layout
+│   ├── handlers_analytics.go       # Mirror visit analytics & A/B config
+│   ├── screensaver.go              # Demo / slideshow / logo screensaver
 │   ├── handlers_kingsweek.go       # King's Week scraper (school + Hail.to)
-│   ├── handlers_banner.go          # Campus emergency banner broadcast
+│   ├── handlers_banner.go          # Campus banner broadcast
 │   ├── notices.go                  # Daily notices parsing & caching
 │   ├── timetable.go                # iCalendar (ICS) schedule parser
 │   ├── train.py                    # 128-d face encoding & outlier filter
-│   ├── verify.py                   # Euclidean distance face verifier
-│   ├── export_encodings.py         # Vector matrix exporter for FAISS
+│   ├── setup-face-python.ps1       # Creates server/.venv for train.py (Windows)
+│   ├── run-and-update.ps1          # Windows supervisor & auto-updater
 │   ├── Dockerfile                  # Multi-stage production container
 │   └── docker-compose.yml          # Container configuration with Watchtower
 │
@@ -435,9 +402,12 @@ npm run build
 │   ├── smart_mirror_pro.py         # Main PyQt6 fullscreen UI & barcode handler
 │   ├── face_recognize.py           # Face detection daemon & 3-state machine
 │   ├── gesture_engine.py           # MediaPipe touchless air gesture daemon
+│   ├── screensaver.py              # Screensaver sync & slideshow
+│   ├── debug_overlay.py            # Triple-click diagnostics panel
+│   ├── telemetry.py                # Visit analytics & A/B variant
 │   ├── mock_face.py                # Terminal-based state simulator (Idle/Guest/User)
 │   ├── timing_config.py            # State machine timeouts & hold constants
-│   ├── config.py                   # IPC paths & UI dimensions
+│   ├── config.py                   # Server URL, mirror key, shared paths
 │   ├── barcode_reader.py           # Camera barcode reader fallback
 │   ├── setup_venv.bat              # Automated Windows environment installer
 │   ├── setup.sh                    # Automated Raspberry Pi installer
@@ -449,6 +419,7 @@ npm run build
 │   │   └── kings_week_widget.py    # Gesture-navigable school newsletter grid
 │   └── tests/                      # Unit tests for UI, gestures & detectors
 │
+├── docs/                           # Project documents (A/B plans, testing notes)
 ├── setup.md                        # Production Docker & reverse-proxy guide
 ├── setup.bat                       # Root quick-start script for Windows
 ├── setup.sh                        # Root quick-start script for Linux/macOS
