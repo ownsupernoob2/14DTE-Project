@@ -5,7 +5,8 @@ PyQt6
 faiss-cpu
 pytesseract
 mediapipe
-opencv-contrib-python
+# OpenCV 5 no longer ships cv2.data haarcascades, which face_recognize.py uses
+opencv-contrib-python<5
 numpy
 pyzbar
 pygame
