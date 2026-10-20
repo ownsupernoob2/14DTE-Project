@@ -164,6 +164,19 @@ def _try_open_capture(target):
             return cap
         cap.release()
 
+    # OpenCV's V4L2 backend can refuse the Pi's v4l2loopback device even though
+    # ffmpeg reads it fine, so fall back to reading it through ffmpeg.
+    if sys.platform != 'win32' and isinstance(target, str) and target.startswith('/dev/video'):
+        try:
+            from loopback_capture import FFmpegPipeCapture
+            cap = FFmpegPipeCapture(target)
+            if cap.isOpened():
+                print(f"[CAMERA] OpenCV could not open {target}; reading it through ffmpeg instead.", flush=True)
+                return cap
+            cap.release()
+        except Exception as e:
+            print(f"[CAMERA] ffmpeg fallback failed: {e}", flush=True)
+
     return None
 
 
@@ -597,10 +610,11 @@ class GestureEngine:
                         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     except Exception:
                         pass
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FPS, 30)
+                if not is_linux_loopback:      # the loopback has a fixed size
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
 
                 ret, frame = cap.read()
                 if ret and frame is not None:

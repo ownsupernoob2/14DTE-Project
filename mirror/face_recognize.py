@@ -406,11 +406,26 @@ def _try_open_capture(target):
             return cap
         cap.release()
 
+    # OpenCV's V4L2 backend can refuse the Pi's v4l2loopback device even though
+    # ffmpeg reads it fine, so fall back to reading it through ffmpeg.
+    if sys.platform != 'win32' and isinstance(target, str) and target.startswith('/dev/video'):
+        try:
+            from loopback_capture import FFmpegPipeCapture
+            cap = FFmpegPipeCapture(target)
+            if cap.isOpened():
+                print(f"[CAMERA] OpenCV could not open {target}; reading it through ffmpeg instead.", flush=True)
+                return cap
+            cap.release()
+        except Exception as e:
+            print(f"[CAMERA] ffmpeg fallback failed: {e}", flush=True)
+
     return None
 
 
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
     if rpi_mode:
+        # The loopback number is chosen by start_smart_mirror.sh. On a Pi 5 the
+        # PiSP ISP owns /dev/video20-35, so it must not be 20.
         target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
     else:
         target = camera_id
