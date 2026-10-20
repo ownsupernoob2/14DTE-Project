@@ -37,6 +37,43 @@ from widgets.kings_week_widget import KingsWeekWidget
 from telemetry import TelemetryTracker
 from screensaver import ScreensaverClient, SlideshowView
 from debug_overlay import DebugOverlay, TripleClickWatcher, read_system_stats
+from log_forwarder import start_log_forwarder
+
+
+def _setup_mirror_log_tee():
+    """Ensure stdout and stderr are teed to mirror.log if not already redirected."""
+    try:
+        if hasattr(sys.stdout, 'isatty') and sys.stdout.isatty():
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mirror.log')
+            class _TeeStream:
+                def __init__(self, original, file_obj):
+                    self._orig = original
+                    self._file = file_obj
+                def write(self, s):
+                    try:
+                        self._orig.write(s)
+                    except Exception:
+                        pass
+                    try:
+                        self._file.write(s)
+                        self._file.flush()
+                    except Exception:
+                        pass
+                def flush(self):
+                    try:
+                        self._orig.flush()
+                    except Exception:
+                        pass
+                    try:
+                        self._file.flush()
+                    except Exception:
+                        pass
+
+            f = open(log_path, 'a', encoding='utf-8', errors='replace')
+            sys.stdout = _TeeStream(sys.stdout, f)
+            sys.stderr = _TeeStream(sys.stderr, f)
+    except Exception:
+        pass
 
 
 REF_WIDTH  = 1280
@@ -778,6 +815,9 @@ class SmartMirrorPro(QMainWindow):
         # ── Telemetry & A/B Testing Tracker ───────────────────────────────
         self.telemetry = TelemetryTracker(api_url=API_URL)
         self.current_variant = "A"
+
+        # ── Log Forwarder ──────────────────────────────────────────────────
+        self.log_forwarder = start_log_forwarder(background=True)
 
         # ── Timers ────────────────────────────────────────────────────────
 
@@ -3000,6 +3040,7 @@ def start_gesture_daemon():
 
 
 if __name__ == '__main__':
+    _setup_mirror_log_tee()
     # Set Windows multimedia timer resolution to 1 ms so QTimer intervals
     # are actually honoured at 8/16 ms instead of the default ~15.6 ms.
     try:
@@ -3025,6 +3066,12 @@ if __name__ == '__main__':
                     p.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     p.kill()
+        if hasattr(mirror, 'log_forwarder') and mirror.log_forwarder:
+            try:
+                mirror.log_forwarder.sync_once(force=True)
+                mirror.log_forwarder.stop()
+            except Exception:
+                pass
         # Restore Windows timer resolution
         try:
             if _timer_period_set:

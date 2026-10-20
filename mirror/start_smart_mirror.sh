@@ -48,6 +48,7 @@ pkill -f libcamera-vid    2>/dev/null || true
 pkill -f ffmpeg           2>/dev/null || true
 pkill -f face_recognize   2>/dev/null || true
 pkill -f gesture_engine   2>/dev/null || true
+pkill -f log_forwarder    2>/dev/null || true
 pkill -f smart_mirror_pro 2>/dev/null || true
 sleep 2
 
@@ -97,5 +98,9 @@ export DISPLAY=:0
 # The daemons above are already running, so stop the UI spawning a second pair
 # that would fight them for /dev/video42.
 MIRROR_FACE_DAEMON=0 MIRROR_GESTURES=0 "$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
+
+# ── Launch Log Forwarder Daemon ──────────────────────────────────────────────
+PYTHONUNBUFFERED=1 "$PYTHON" -u log_forwarder.py > "$APP_DIR/log_forwarder.log" 2>&1 &
+echo "[START] log_forwarder.py started."
 
 echo "[START] Smart Mirror is running."
