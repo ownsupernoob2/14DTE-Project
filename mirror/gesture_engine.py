@@ -328,7 +328,9 @@ class GestureEngine:
         if span <= 1e-9:
             return 0.0
         facing = cross / span
-        return facing if handedness == 'Right' else -facing
+        # Sign checked against the real camera: for a hand MediaPipe labels
+        # 'Right', a negative cross product is the palm side.
+        return -facing if handedness == 'Right' else facing
 
     @classmethod
     def is_backhand(cls, lm, handedness='Right', label_score=1.0):
@@ -338,7 +340,7 @@ class GestureEngine:
         at — with the label wrong the answer flips, and a real palm is worse to
         lose than a back of hand is to keep.
         """
-        if label_score < BACKHAND_MIN_LABEL_SCORE:
+        if handedness not in ('Left', 'Right') or label_score < BACKHAND_MIN_LABEL_SCORE:
             return False
         return cls.palm_facing(lm, handedness) < -BACKHAND_REJECT
 
@@ -360,7 +362,7 @@ class GestureEngine:
 
         candidates = []
         for idx, lm in enumerate(hand_landmarks_list):
-            h_name = 'Right'
+            h_name = None            # unknown: never judged palm or back
             h_score = 1.0
             if handedness_list and idx < len(handedness_list) and handedness_list[idx]:
                 cat = handedness_list[idx][0]
@@ -378,7 +380,10 @@ class GestureEngine:
             if size < MIN_PALM_SIZE:
                 continue
 
-            facing = max(0.0, self.palm_facing(lm, h_name)) if h_score >= BACKHAND_MIN_LABEL_SCORE else 0.5
+            if h_name in ('Left', 'Right') and h_score >= BACKHAND_MIN_LABEL_SCORE:
+                facing = max(0.0, self.palm_facing(lm, h_name))
+            else:
+                facing = 0.5
             score = size * (0.5 + 0.5 * facing) * (h_score ** 0.5) * self._in_frame(lm)
 
             if self.present:

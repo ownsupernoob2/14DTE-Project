@@ -280,7 +280,12 @@ class GestureUdpReceiver(QObject):
         self._thread.start()
 
     def stop(self):
+        """Stop listening and wait for the thread: emitting after the owner is
+        destroyed crashes Qt."""
         self.running = False
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.5)
+        self._thread = None
 
     def _run(self):
         sock = None
@@ -292,7 +297,7 @@ class GestureUdpReceiver(QObject):
             while self.running:
                 try:
                     data, _ = sock.recvfrom(4096)
-                    if data:
+                    if data and self.running:
                         parsed = json.loads(data.decode('utf-8'))
                         self.gesture_received.emit(parsed)
                 except socket.timeout:
@@ -313,7 +318,7 @@ class GestureUdpReceiver(QObject):
 # Gesture cursor: a dot with a short glowing trail
 # ─────────────────────────────────────────────────────────────────────────────
 class GestureTrailOverlay(QWidget):
-    """The on-screen hand cursor.
+    """The gesture trail: a short glowing ribbon behind a moving hand.
 
     The camera only reports the hand ~16 times a second on a Pi, so drawing
     each report as it arrives makes the cursor step. Between reports the
@@ -335,8 +340,8 @@ class GestureTrailOverlay(QWidget):
     _HEAD_TAU       = 0.035   # seconds for the head to close ~63% of the gap
     _PREDICT_SHARE  = 0.6     # extrapolate at most this share of one report interval
     _VELOCITY_BLEND = 0.5     # weight of the newest velocity sample
-    _DOT_RADIUS     = 7.0
-    _DOT_FADE_SEC   = 0.25
+    _STILL_SQ       = 8 ** 2  # no trail unless the hand travelled this far (px²)
+    _DOT_FADE_SEC   = 0.25    # how long the head lingers after the hand is lost
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -538,25 +543,17 @@ class GestureTrailOverlay(QWidget):
 
         r, g, b = self._PINCH_RGB if self._pinched else self._OPEN_RGB
 
-        # Trail: a fading ribbon behind a moving hand
+        # Trail: a fading ribbon behind a moving hand. A still hand draws
+        # nothing — there is no cursor, only the trail while it moves.
         pts = self._ipoints
-        if len(pts) >= 2:
+        moved = len(pts) >= 2 and (pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2 >= self._STILL_SQ
+        if moved:
             path = self._smooth_path(pts)
             for width, alpha in ((12, 70), (5, 150), (2.2, 230)):
                 painter.setPen(QPen(QColor(r, g, b, alpha), width, Qt.PenStyle.SolidLine,
                                     Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 painter.drawPath(path)
 
-        # Cursor dot, always visible while a hand is tracked
-        dot = self._dot_alpha(now)
-        if self._rx is not None and dot > 0:
-            centre = QPointF(self._rx, self._ry)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(r, g, b, int(60 * dot)))
-            painter.drawEllipse(centre, self._DOT_RADIUS * 2.0, self._DOT_RADIUS * 2.0)
-            painter.setBrush(QColor(255, 255, 255, int(235 * dot)) if not self._pinched
-                             else QColor(r, g, b, int(240 * dot)))
-            painter.drawEllipse(centre, self._DOT_RADIUS, self._DOT_RADIUS)
         painter.end()
 
 
@@ -645,6 +642,7 @@ class SmartMirrorPro(QMainWindow):
     barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
     banner_fetched_signal = pyqtSignal(dict)
     server_status_signal = pyqtSignal(bool)
+    version_fetched_signal = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -660,6 +658,7 @@ class SmartMirrorPro(QMainWindow):
         self.barcode_verified_signal.connect(self._on_barcode_verified)
         self.banner_fetched_signal.connect(self._update_banner)
         self.server_status_signal.connect(self._on_server_status_changed)
+        self.version_fetched_signal.connect(self._apply_server_version)
 
         # ── Load Hanken Grotesk if available ──────────────────────────────
         font_path = os.path.join(os.path.dirname(__file__), 'assets', 'HankenGrotesk.ttf')
@@ -820,7 +819,7 @@ class SmartMirrorPro(QMainWindow):
                     data = resp.json()
                     ver = data.get("version")
                     if ver:
-                        QTimer.singleShot(0, lambda: self._apply_server_version(ver))
+                        self.version_fetched_signal.emit(str(ver))   # safe if the window is gone
             except Exception:
                 pass
         threading.Thread(target=_worker, daemon=True).start()
@@ -2691,6 +2690,16 @@ class SmartMirrorPro(QMainWindow):
             if decoder is not None:
                 decoder.shutdown()
         self.screensaver.stop()
+        self.gesture_receiver.stop()
+        # Nothing may tick after the window is gone: running animations call
+        # back into widgets that are about to be destroyed.
+        for name in ('_anim_in', '_anim_out', '_demo_anim', '_idle_demo_anim',
+                     '_timetable_anim', '_kings_anim', '_guest_card_anim'):
+            anim = getattr(self, name, None)
+            if anim is not None:
+                anim.stop()
+        for timer in self.findChildren(QTimer):
+            timer.stop()
         super().closeEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────

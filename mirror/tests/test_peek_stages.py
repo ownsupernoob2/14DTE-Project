@@ -126,6 +126,7 @@ def close_mirror(mirror):
     for decoder in (mirror.demo_movie, getattr(mirror, 'idle_demo_movie', None)):
         if decoder is not None:
             decoder.shutdown()
+    mirror.gesture_receiver.stop()
     if mirror.kings_widget is not None:
         mirror.kings_widget.reset_gesture_state()
     mirror.hide()

@@ -656,32 +656,32 @@ def mirrored(hand):
 
 
 class TestBackhand(unittest.TestCase):
-    # make_hand is a right palm as MediaPipe sees it in a mirrored frame.
+    # make_hand's geometry is a palm when MediaPipe labels the hand 'Left'.
 
     def test_a_palm_is_not_a_backhand(self):
-        self.assertFalse(GestureEngine.is_backhand(make_hand(0.3, 0.5), 'Right'))
+        self.assertFalse(GestureEngine.is_backhand(make_hand(0.3, 0.5), 'Left'))
 
     def test_the_back_of_the_hand_is(self):
-        self.assertTrue(GestureEngine.is_backhand(backhand_of(make_hand(0.3, 0.5)), 'Right'))
+        self.assertTrue(GestureEngine.is_backhand(backhand_of(make_hand(0.3, 0.5)), 'Left'))
 
     def test_left_hands_are_judged_the_other_way_round(self):
         left_palm = mirrored(make_hand(0.3, 0.5))
-        self.assertFalse(GestureEngine.is_backhand(left_palm, 'Left'))
-        self.assertTrue(GestureEngine.is_backhand(backhand_of(left_palm), 'Left'))
+        self.assertFalse(GestureEngine.is_backhand(left_palm, 'Right'))
+        self.assertTrue(GestureEngine.is_backhand(backhand_of(left_palm), 'Right'))
 
     def test_mirroring_the_frame_does_not_change_the_answer(self):
         # Flipping the image flips both the geometry and MediaPipe's label.
         palm, back = make_hand(0.3, 0.5), backhand_of(make_hand(0.3, 0.5))
-        self.assertFalse(GestureEngine.is_backhand(mirrored(palm), 'Left'))
-        self.assertTrue(GestureEngine.is_backhand(mirrored(back), 'Left'))
+        self.assertFalse(GestureEngine.is_backhand(mirrored(palm), 'Right'))
+        self.assertTrue(GestureEngine.is_backhand(mirrored(back), 'Right'))
 
     def test_an_unsure_label_never_rejects_a_hand(self):
         back = backhand_of(make_hand(0.3, 0.5))
-        self.assertFalse(GestureEngine.is_backhand(back, 'Right', label_score=0.4))
+        self.assertFalse(GestureEngine.is_backhand(back, 'Left', label_score=0.4))
 
     def test_facing_is_a_signed_fraction(self):
-        self.assertGreater(GestureEngine.palm_facing(make_hand(0.3, 0.5), 'Right'), 0.5)
-        self.assertLess(GestureEngine.palm_facing(backhand_of(make_hand(0.3, 0.5)), 'Right'), -0.5)
+        self.assertGreater(GestureEngine.palm_facing(make_hand(0.3, 0.5), 'Left'), 0.5)
+        self.assertLess(GestureEngine.palm_facing(backhand_of(make_hand(0.3, 0.5)), 'Left'), -0.5)
 
 
 class TestHandSelection(unittest.TestCase):
@@ -691,26 +691,32 @@ class TestHandSelection(unittest.TestCase):
     def test_a_backhand_is_never_chosen(self):
         far_palm = make_hand(0.3, 0.5, scale=0.10)
         close_back = backhand_of(make_hand(0.6, 0.5, scale=0.25))
-        best, _ = self.e.select_best_hand([close_back, far_palm], [[_Cat('Right')], [_Cat('Right')]])
+        best, _ = self.e.select_best_hand([close_back, far_palm], [[_Cat('Left')], [_Cat('Left')]])
         self.assertIs(best, far_palm)
 
     def test_the_closest_palm_wins(self):
         far, close = make_hand(0.3, 0.5, scale=0.10), make_hand(0.6, 0.5, scale=0.25)
-        best, _ = self.e.select_best_hand([far, close], [[_Cat('Right')], [_Cat('Right')]])
+        best, _ = self.e.select_best_hand([far, close], [[_Cat('Left')], [_Cat('Left')]])
         self.assertIs(best, close)
 
     def test_a_hand_cut_off_by_the_frame_edge_loses_to_a_whole_one(self):
         cut = make_hand(0.97, 0.5, scale=0.20)        # half of it is off the right edge
         whole = make_hand(0.4, 0.5, scale=0.18)
-        best, _ = self.e.select_best_hand([cut, whole], [[_Cat('Right')], [_Cat('Right')]])
+        best, _ = self.e.select_best_hand([cut, whole], [[_Cat('Left')], [_Cat('Left')]])
         self.assertIs(best, whole)
 
     def test_the_hand_in_control_keeps_it_against_a_similar_one(self):
         mine = make_hand(0.3, 0.5, scale=0.18)
         self.e.process_landmarks(mine, 1000.0)
         other = make_hand(0.7, 0.5, scale=0.19)       # a touch bigger, but not clearly
-        best, _ = self.e.select_best_hand([other, mine], [[_Cat('Right')], [_Cat('Right')]])
+        best, _ = self.e.select_best_hand([other, mine], [[_Cat('Left')], [_Cat('Left')]])
         self.assertIs(best, mine)
+
+    def test_a_hand_without_a_label_is_never_rejected(self):
+        back = backhand_of(make_hand(0.3, 0.5))
+        self.assertFalse(GestureEngine.is_backhand(back, None))
+        best, _ = self.e.select_best_hand([back])
+        self.assertIs(best, back)
 
     def test_nothing_usable_returns_none(self):
         self.assertEqual(self.e.select_best_hand([]), (None, None))
