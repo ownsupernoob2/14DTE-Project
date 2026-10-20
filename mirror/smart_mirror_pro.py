@@ -30,12 +30,12 @@ from widgets.timetable_widget import TimetableWidget
 from widgets.clock_widget import ClockWidget
 from widgets.kings_week_widget import KingsWeekWidget
 from telemetry import TelemetryTracker
+from screensaver import ScreensaverClient, SlideshowView
+from debug_overlay import DebugOverlay, TripleClickWatcher, read_system_stats
 
-API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 REF_WIDTH  = 1280
 REF_HEIGHT = 800
-MIRROR_VERSION = "v1.2.0"
 
 # Gesture regions, mirroring gesture_engine.py.
 GESTURE_REGION_LEFT  = 'left'
@@ -260,22 +260,31 @@ class GestureDemoOverlay(QWidget):
 
 
 class IdleDemoScreen(QWidget):
-    """Full-screen gesture demo that plays while nobody is at the mirror."""
+    """The full-screen screensaver: the demo video, a slideshow, or a logo."""
 
     def __init__(self, decoder, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.surface = VideoSurface(self, background=QColor(0, 0, 0))
+        self.slides = SlideshowView(self)
+        self.slides.hide()
         self.decoder = decoder
-        decoder.frame_ready.connect(self.surface.set_image)
+        if decoder is not None:
+            decoder.frame_ready.connect(self.surface.set_image)
         self.effect = QGraphicsOpacityEffect(self)
         self.effect.setOpacity(0.0)
         self.setGraphicsEffect(self.effect)
 
+    def show_mode(self, mode):
+        self.surface.setVisible(mode == 'demo')
+        self.slides.setVisible(mode != 'demo')
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.surface.setGeometry(self.rect())
-        self.decoder.set_target_size(self.width(), self.height())
+        self.slides.setGeometry(self.rect())
+        if self.decoder is not None:
+            self.decoder.set_target_size(self.width(), self.height())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -774,7 +783,20 @@ class SmartMirrorPro(QMainWindow):
         self._last_presence_source = ''
         self._idle_demo_phase = 'off'    # off | playing | ending | leaving
         self._idle_demo_anim = None
+        self._idle_demo_mode = ''
+        self._screensaver_left_at = 0.0
         self._last_udp_gesture = 0.0
+
+        # ── Debug panel (triple-click with a mouse) ───────────────────────
+        self._last_gesture_data = {}
+        self._last_gesture_rx = 0.0
+        self._gesture_packets = []        # arrival times, for packets/second
+        self._last_face_data = {}
+        self._sys_stats = {}
+        self._sys_stats_at = 0.0
+        self.debug_overlay = DebugOverlay(self._debug_snapshot, self.central_widget)
+        self._click_watcher = TripleClickWatcher(self.debug_overlay.toggle, self)
+        QApplication.instance().installEventFilter(self._click_watcher)
 
         # ── Telemetry & A/B Testing Tracker ───────────────────────────────
         self.telemetry = TelemetryTracker(api_url=API_URL)
@@ -1032,13 +1054,18 @@ class SmartMirrorPro(QMainWindow):
         lay.addWidget(self.demo_hold_bar, alignment=Qt.AlignmentFlag.AlignCenter)
         self.gesture_demo_overlay.hide()
 
-        # Nobody at the mirror: the same demo, full screen, on a loop.
-        self.idle_demo = None
+        # Nobody at the mirror: the screensaver chosen in the admin dashboard
+        # (the demo full screen, a slideshow, or a logo).
+        self.idle_demo_movie = None
         if has_video:
             self.idle_demo_movie = DemoVideoDecoder(self._demo_video('720p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
             self.idle_demo_movie.played_once.connect(self._on_idle_demo_finished)
-            self.idle_demo = IdleDemoScreen(self.idle_demo_movie, self.central_widget)
-            self.idle_demo.hide()
+        self.idle_demo = IdleDemoScreen(self.idle_demo_movie, self.central_widget)
+        self.idle_demo.hide()
+        self.screensaver = ScreensaverClient(API_URL, parent=self)
+        self.screensaver.changed.connect(self._on_screensaver_changed)
+        if os.environ.get('MIRROR_SCREENSAVER_SYNC', '1') != '0':
+            self.screensaver.start()
 
         # Guest-only: bouncing + pulsing STUDENT ID SCAN callout
         # Self-contained widget -- no nested QGraphicsOpacityEffect (avoids freeze).
@@ -1290,6 +1317,11 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             self.gesture_trail.setGeometry(0, 0, w, h)
             self.gesture_trail.raise_()
+
+        if hasattr(self, 'debug_overlay'):
+            self.debug_overlay.move(16, 16)
+            if self.debug_overlay.isVisible():
+                self.debug_overlay.raise_()
 
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1769,6 +1801,8 @@ class SmartMirrorPro(QMainWindow):
         self._set_demo_hold_progress(progress)
         if progress >= 1.0:
             self._demo_pinch_start = None
+            if self.telemetry is not None:
+                self.telemetry.record_tutorial_dismissed()
             self._last_activity_time = now      # so the idle timer doesn't instantly re-show it
             self._fade_out_gesture_scrim()
 
@@ -1810,6 +1844,8 @@ class SmartMirrorPro(QMainWindow):
 
         if self.demo_movie is not None:
             self.demo_movie.play(loop=True)
+        if self.telemetry is not None:
+            self.telemetry.record_tutorial_shown()
 
         anim_in = QPropertyAnimation(effect, b"opacity", self)
         anim_in.setDuration(450)
@@ -1863,8 +1899,20 @@ class SmartMirrorPro(QMainWindow):
     #    │                    (anyone seen) ────────┴──▶ leaving ──▶ off     │
     #    └──────── fade-out done, still empty: play again ◀──────────────────┘
     # ─────────────────────────────────────────────────────────────────────
+    def _screensaver_mode(self):
+        mode = self.screensaver.config.get('mode', 'demo')
+        if mode == 'demo' and self.idle_demo_movie is None:
+            return ''                        # no video on this mirror: plain black
+        return mode
+
+    def _on_screensaver_changed(self, cfg):
+        print(f"[IDLE] Screensaver set to {cfg['mode']} "
+              f"({len(cfg['slides'])} slides, logo {'yes' if cfg['logo'] else 'no'}).", flush=True)
+        if self._idle_demo_phase == 'playing':
+            self._fade_idle_demo(0.6, 'ending')     # restarts with the new choice
+
     def _idle_demo_wanted(self):
-        if self.idle_demo is None or self._transitioning:
+        if self.idle_demo is None or self._transitioning or not self._screensaver_mode():
             return False
         if self._last_state not in (None, 'idle'):
             return False
@@ -1882,19 +1930,28 @@ class SmartMirrorPro(QMainWindow):
 
     def _start_idle_demo(self):
         demo = self.idle_demo
+        mode = self._screensaver_mode()
+        cfg = self.screensaver.config
         demo.setGeometry(0, 0, self.width(), self.height())
-        self.idle_demo_movie.set_target_size(self.width(), self.height())
         if demo.isHidden():
             demo.surface.set_image(None)
             demo.effect.setOpacity(0.0)
             demo.show()
+        demo.show_mode(mode)
         demo.raise_()
         for w in (self.guest_scan_callout, self.status_dot, self.version_lbl, self.gesture_trail):
             if w.isVisible():
                 w.raise_()
         self._idle_demo_phase = 'playing'
-        print("[IDLE] Nobody here: playing the gesture demo.", flush=True)
-        self.idle_demo_movie.play(loop=False)
+        self._idle_demo_mode = mode
+        print(f"[IDLE] Nobody here: showing the {mode} screensaver.", flush=True)
+        if mode == 'demo':
+            self.idle_demo_movie.set_target_size(self.width(), self.height())
+            self.idle_demo_movie.play(loop=False)
+        else:
+            images = cfg['slides'] if mode == 'slideshow' else [cfg['logo']]
+            demo.slides.set_images(images, cfg.get('slide_seconds', 8))
+            demo.slides.start()
         anim = self._animate_idle_demo(1.0, IDLE_DEMO_FADE_IN_SEC)
         # Fully opaque: drop the effect so each video frame isn't composited twice.
         anim.finished.connect(lambda: self.idle_demo.effect.setEnabled(False))
@@ -1910,13 +1967,17 @@ class SmartMirrorPro(QMainWindow):
             why = f'stopped for the {self._last_state} screen'
         else:
             why = f'stopped: a {self._last_presence_source or "person"} was seen'
-        print(f"[IDLE] Demo {why} — fading out over {seconds:.1f}s.", flush=True)
+        print(f"[IDLE] Screensaver {why} — fading out over {seconds:.1f}s.", flush=True)
+        if phase == 'leaving':
+            self._screensaver_left_at = time.time()
         self._idle_demo_phase = phase
         anim = self._animate_idle_demo(0.0, seconds)
         anim.finished.connect(self._on_idle_demo_faded)
 
     def _on_idle_demo_faded(self):
-        self.idle_demo_movie.stop()
+        if self.idle_demo_movie is not None:
+            self.idle_demo_movie.stop()
+        self.idle_demo.slides.stop()
         phase, self._idle_demo_phase = self._idle_demo_phase, 'off'
         if phase == 'ending' and self._idle_demo_wanted():
             self._start_idle_demo()          # still nobody here: play it again
@@ -1938,9 +1999,65 @@ class SmartMirrorPro(QMainWindow):
         return anim
 
     # ─────────────────────────────────────────────────────────────────────
+    # Debug panel contents
+    # ─────────────────────────────────────────────────────────────────────
+    def _debug_snapshot(self):
+        now = time.time()
+
+        def age(t):
+            return "never" if not t else f"{now - t:.1f}s ago"
+
+        g = self._last_gesture_data
+        gesture = [
+            ("hand", "present" if g.get("present") else "none"),
+            ("position", f"x={g.get('hand_x', 0):.3f}  y={g.get('hand_y', 0):.3f}  region={g.get('region')}"),
+            ("pinched", g.get("pinched", False)),
+            ("dwell", f"{g.get('right_dwell_progress', 0):.0%} ({g.get('dwell_side') or '-'})"),
+            ("last event", f"{g.get('event') or '-'} (#{g.get('event_id', 0)})"),
+            ("engine", f"{g['fps']:.1f} fps" if g.get("fps") else "fps unknown"),
+            ("packets", f"{len(self._gesture_packets) / 2:.0f}/s, newest {age(self._last_gesture_rx)}"),
+            ("source", "UDP" if now - self._last_udp_gesture < 1.0 else "status file"),
+        ]
+        f = self._last_face_data
+        face = [
+            ("daemon state", f.get("state", "no status file")),
+            ("status file", age(f.get("timestamp"))),
+            ("face", f"detected={f.get('detected', False)}  count={f.get('count', 0)}  in_grace={f.get('in_grace', False)}"),
+            ("last face seen", age(f.get("last_face_time"))),
+            ("recognised", f"{f.get('recognized', False)}  user={f.get('user_name') or '-'}"),
+            ("user id", f.get("user_id", "-")),
+            ("signed in by", f.get("auth_method") or "-"),
+            ("server", "online" if f.get("server_online", True) and not self.server_is_down else "OFFLINE"),
+        ]
+        sess = self.telemetry.current_session if self.telemetry is not None else None
+        ss = self.screensaver.config
+        ui = [
+            ("screen", f"{self._last_state or 'starting'}{' (transitioning)' if self._transitioning else ''}"),
+            ("screensaver", f"{self._idle_demo_phase} · showing {self._idle_demo_mode or '-'} · set to {ss.get('mode')}"
+                            f" ({len(ss.get('slides', []))} slides)"),
+            ("screensaver sync", f"{age(self.screensaver.last_sync)} {self.screensaver.last_error}".strip()),
+            ("someone seen", f"{age(self._last_presence_time)} ({self._last_presence_source or '-'})"),
+            ("tutorial", "showing" if self._demo_overlay_active() else "hidden"),
+            ("timetable", "collapsed" if self._timetable_slid_away else "showing"),
+            ("A/B variant", self.current_variant),
+            ("session", f"{sess['session_id']} {sess['session_type']} taps={sess['gesture_tap_count']} "
+                        f"scrolls={sess['gesture_scroll_count']}" if sess else "none"),
+            ("window", f"{self.width()}×{self.height()}"),
+        ]
+        if now - self._sys_stats_at > 5:
+            self._sys_stats, self._sys_stats_at = read_system_stats(), now
+        system = [("mirror", f"{MIRROR_ID} {MIRROR_VERSION}"), ("server url", API_URL),
+                  ("mirror key", "set" if MIRROR_API_KEY else "NOT SET")]
+        system += list(self._sys_stats.items())
+        return [("Gesture", gesture), ("Face", face), ("Mirror", ui), ("System", system)]
+
+    # ─────────────────────────────────────────────────────────────────────
     # Gesture Dispatch
     # ─────────────────────────────────────────────────────────────────────
     def _handle_gesture(self, data):
+        now = time.time()
+        self._last_gesture_data, self._last_gesture_rx = data, now
+        self._gesture_packets = [t for t in self._gesture_packets if now - t < 2.0] + [now]
         if data.get("present", False):
             self._last_presence_time = time.time()   # a hand is someone, even at idle
             self._last_presence_source = 'hand'
@@ -2018,7 +2135,7 @@ class SmartMirrorPro(QMainWindow):
                     self._last_telemetry_hx = hx
                     self._last_telemetry_hy = hy
                     if dist > 0.025:
-                        self.telemetry.record_gesture(event_type="motion", region=region)
+                        self.telemetry.record_hand_seen()
 
         # Action gestures: clicking (tap/click), scrolling (scroll/fling with delta != 0)
         is_click_or_scroll = (
@@ -2088,7 +2205,6 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(self, 'dwell_hint_pill'):
                 self.dwell_hint_pill.hide()
             if hasattr(self, 'telemetry') and self.telemetry is not None:
-                self.telemetry.record_gesture(event_type="dwell", region="top_right")
                 self.telemetry.record_timetable_toggle()
             if self._last_state == 'user':
                 if self._timetable_slid_away or getattr(self, '_timetable_full_mode', False):
@@ -2118,9 +2234,8 @@ class SmartMirrorPro(QMainWindow):
                     if hasattr(self, 'telemetry') and self.telemetry is not None:
                         self.telemetry.record_modal_close()
                 elif hasattr(notices, 'activate_selected'):
-                    notices.activate_selected()
-                    if hasattr(self, 'telemetry') and self.telemetry is not None:
-                        self.telemetry.record_modal_open()
+                    if notices.activate_selected() and self.telemetry is not None:
+                        self.telemetry.record_modal_open("notice")
                 elif hasattr(notices, 'toggle_scroll_pause'):
                     notices.toggle_scroll_pause()
             elif event not in ("scroll", "fling"):
@@ -2166,6 +2281,8 @@ class SmartMirrorPro(QMainWindow):
                             self._slide_timetable_out(animate=True)
                         else:
                             self._slide_guest_card_out(animate=True)
+                        if self.telemetry is not None:
+                            self.telemetry.record_kings_expand()
                     elif hasattr(active_target, 'modal_open') and active_target.modal_open:
                         active_target.close_modal()
                         if hasattr(self, 'telemetry') and self.telemetry is not None:
@@ -2175,8 +2292,8 @@ class SmartMirrorPro(QMainWindow):
                         if hasattr(active_target, 'focus_at'):
                             self._focus_kings_target(active_target, data)
                         if hasattr(active_target, 'activate_selected') and active_target.activate_selected():
-                            if hasattr(self, 'telemetry') and self.telemetry is not None:
-                                self.telemetry.record_modal_open()
+                            if self.telemetry is not None:
+                                self.telemetry.record_modal_open("article")
                 elif event not in ("scroll", "fling"):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
@@ -2327,6 +2444,7 @@ class SmartMirrorPro(QMainWindow):
                 if "server_online" in fdata:
                     self.server_status_signal.emit(bool(fdata["server_online"]))
 
+                self._last_face_data = fdata
                 self.face_detected   = fdata.get('detected', False)
                 self.face_recognized = fdata.get('recognized', False)
                 seen = now if self.face_detected else (fdata.get('last_face_time') or 0.0)
@@ -2489,10 +2607,18 @@ class SmartMirrorPro(QMainWindow):
             if not auth:
                 auth = 'face' if new_state == 'user' else 'presence'
 
-            if incoming is not visible and hasattr(self, 'telemetry') and self.telemetry is not None:
-                self.current_variant = self.telemetry.start_session(session_type=new_state, auth_method=auth)
-            elif hasattr(self, 'telemetry') and self.telemetry is not None and self.telemetry.current_session:
-                self.telemetry.update_auth_method(auth)
+            uid = new_user_id if new_state == 'user' else None
+            sess = self.telemetry.current_session if self.telemetry is not None else None
+            if sess is not None and sess['session_type'] == 'guest' and new_state == 'user':
+                # Same visit: the guest was recognised or scanned their ID.
+                self.telemetry.update_auth_method(auth, user_id=uid)
+            elif incoming is not visible and self.telemetry is not None:
+                self.current_variant = self.telemetry.start_session(
+                    session_type=new_state, auth_method=auth, user_id=uid,
+                    from_screensaver=time.time() - self._screensaver_left_at < 30.0,
+                    screensaver_mode=self._screensaver_mode())
+            elif sess is not None:
+                self.telemetry.update_auth_method(auth, user_id=uid)
 
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
@@ -2557,6 +2683,7 @@ class SmartMirrorPro(QMainWindow):
         for decoder in (self.demo_movie, getattr(self, 'idle_demo_movie', None)):
             if decoder is not None:
                 decoder.shutdown()
+        self.screensaver.stop()
         super().closeEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -2582,6 +2709,8 @@ class SmartMirrorPro(QMainWindow):
 
         if key == Qt.Key.Key_Escape:
             self._barcode_buffer = ""
+            if self.debug_overlay.isVisible():
+                self.debug_overlay.toggle()
             return
 
         if key == Qt.Key.Key_Backspace:
@@ -2632,32 +2761,17 @@ class SmartMirrorPro(QMainWindow):
         self._last_activity_time = time.time()
 
         def worker():
-            urls = [API_URL]
-            if "localhost" not in API_URL and "127.0.0.1" not in API_URL:
-                urls.extend(["http://localhost:8080", "http://127.0.0.1:8080"])
-
-            for base_url in urls:
-                try:
-                    res = requests.post(
-                        f"{base_url}/api/verify-barcode",
-                        json={"barcode": code},
-                        timeout=3.0
-                    )
-                    if res.status_code == 200:
-                        data = res.json()
-                        user_id = data.get("user_id") or data.get("student_id") or code
-                        widgets = data.get("widgets", [])
-                        config = data.get("config", {})
-                        self.barcode_verified_signal.emit(user_id, widgets, config, True, code)
-                        return
-                    elif res.status_code in (400, 404):
-                        print(f"[BARCODE] Verify failed (status {res.status_code}: Student ID not recognized) for code: {code}")
-                        break
-                    else:
-                        print(f"[BARCODE] Verify failed (status {res.status_code}) at {base_url} for code: {code}")
-                except Exception as e:
-                    print(f"[BARCODE] Verify error at {base_url}: {e}")
-
+            try:
+                res = requests.post(f"{API_URL}/api/verify-barcode", json={"barcode": code},
+                                    headers=mirror_headers(), timeout=4.0)
+                if res.status_code == 200:
+                    data = res.json()
+                    self.barcode_verified_signal.emit(data.get("user_id") or code, data.get("widgets", []),
+                                                      data.get("config", {}), True, code)
+                    return
+                print(f"[BARCODE] Verify failed (HTTP {res.status_code}) for code: {code}")
+            except Exception as e:
+                print(f"[BARCODE] Verify error: {e}")
             self.barcode_verified_signal.emit(None, [], {}, False, code)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2710,9 +2824,10 @@ class SmartMirrorPro(QMainWindow):
             self._barcode_auth_time = time.time()
             if hasattr(self, 'telemetry') and self.telemetry is not None:
                 if self.telemetry.current_session:
-                    self.telemetry.update_auth_method("barcode")
+                    self.telemetry.update_auth_method("barcode", user_id=user_id)
                 else:
-                    self.current_variant = self.telemetry.start_session(session_type="user", auth_method="barcode")
+                    self.current_variant = self.telemetry.start_session(
+                        session_type="user", auth_method="barcode", user_id=user_id)
 
             fdata = {
                 "state": "user",

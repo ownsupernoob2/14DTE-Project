@@ -161,6 +161,22 @@ ensure_files() {
     fi
 }
 
+ensure_env_file() {
+    local dir="$HOME/.config/smart-mirror" file
+    file="$dir/env"
+    [ -f "$file" ] && return 0
+    mkdir -p "$dir"
+    cat > "$file" <<'EOF'
+# Smart Mirror settings for this Pi (not stored in git).
+# MIRROR_API_KEY must match MIRROR_API_KEY in the server's .env.
+MIRROR_API_KEY=
+# API_URL=https://api.smartmirror.me
+# MIRROR_ID=library-mirror
+EOF
+    chmod 600 "$file"
+    say "Created $file — put the server's MIRROR_API_KEY in it."
+}
+
 ensure_autostart() {
     local dir="$HOME/.config/autostart" entry
     entry="$dir/smart_mirror.desktop"
@@ -192,6 +208,7 @@ ensure_python
 ensure_venv
 ensure_pip
 ensure_files
+ensure_env_file
 ensure_autostart
 
 if ! $ENSURE; then

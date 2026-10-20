@@ -44,3 +44,7 @@ nohup.out
 
 # Scratch scripts
 scratch/
+
+# Mirror caches (downloaded at runtime; face index is biometric data)
+mirror/exported_encodings.json
+mirror/face_index.json

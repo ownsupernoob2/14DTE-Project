@@ -27,6 +27,14 @@ fi
 # when nothing has changed, so a fresh clone or a pull just works.
 /bin/bash "$APP_DIR/setup.sh" --ensure || echo "[WARN] setup.sh --ensure reported a problem."
 
+# Per-mirror settings that must not live in git: MIRROR_API_KEY (and optionally
+# API_URL, MIRROR_ID). setup.sh creates the file.
+ENV_FILE="$HOME/.config/smart-mirror/env"
+if [ -f "$ENV_FILE" ]; then
+    set -a; . "$ENV_FILE"; set +a
+fi
+[ -z "$MIRROR_API_KEY" ] && echo "[WARN] MIRROR_API_KEY is not set in $ENV_FILE — the server may refuse face sign-in."
+
 PYTHON="${MIRROR_PYTHON:-$HOME/mirror-venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
     echo "[ERROR] $PYTHON not found — run ./setup.sh"

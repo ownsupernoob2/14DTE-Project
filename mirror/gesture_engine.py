@@ -271,6 +271,7 @@ class GestureEngine:
         self.right_dwell_progress = 0.0
 
         self.seq = 0
+        self.fps = 0.0               # smoothed processing rate, for the mirror's debug panel
         self.last_write = 0.0
         self.last_payload = None
 
@@ -581,6 +582,7 @@ class GestureEngine:
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
                         "seq":                  self.seq,
+                        "fps":                  round(self.fps, 1),
                         "timestamp":            now,
                     }
                     self._udp_sock.sendto(json.dumps(live_data).encode('utf-8'), ("127.0.0.1", GESTURE_UDP_PORT))
@@ -604,6 +606,7 @@ class GestureEngine:
             "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
             "seq":                  self.seq,
+            "fps":                  round(self.fps, 1),
             "timestamp":            now,
         }
 
@@ -706,6 +709,7 @@ class GestureEngine:
         start = time.time()
         last_stamp_ms = -1
         stats_since, stats_frames, stats_busy = time.time(), 0, 0.0
+        last_frame_at = 0.0
         try:
             while self.running:
                 ret, frame = cap.read()
@@ -713,6 +717,11 @@ class GestureEngine:
                     time.sleep(0.01)
                     continue
                 t_frame = time.time()
+                if last_frame_at:
+                    gap = t_frame - last_frame_at
+                    if gap > 0:
+                        self.fps = 0.9 * self.fps + 0.1 * (1.0 / gap) if self.fps else 1.0 / gap
+                last_frame_at = t_frame
 
                 if self.flip:
                     frame = cv2.flip(frame, 1)

@@ -110,15 +110,17 @@ Gestures are ignored while the mirror is idle, so put it in Guest or User state 
 ## 🍓 Raspberry Pi Setup (Production Mode)
 
 On the physical Raspberry Pi mirror:
-* Run the shell script to install system dependencies, configure autostart, and setup the environment:
+* Run the setup once (it asks for the sudo password): system packages, the camera loopback at boot, Python 3.10, and autostart:
   ```bash
-  chmod +x setup.sh
   ./setup.sh
   ```
-* Launch the complete pipeline (virtual camera loopback, face recognition daemon, and full-screen PyQt UI) using:
+* Put the server's `MIRROR_API_KEY` in `~/.config/smart-mirror/env` (setup creates the file). Without it the server refuses face and student ID sign-in once the key is set there.
+* Launch everything (camera pipeline, face and gesture daemons, full-screen UI). It pulls updates first and installs anything missing:
   ```bash
   ./start_smart_mirror.sh
   ```
+* **Debug panel:** triple-click anywhere on the mirror with a mouse to see live gesture, face, screensaver and system information (Esc or another triple-click closes it). Gestures can't open it.
+* **Screensaver:** chosen in the website's admin dashboard (gesture demo, slideshow or logo). Images are cached in `~/.cache/smart-mirror/screensaver`, so it keeps working offline.
 * Verify gesture prerequisites and live tracking with the diagnostic tool:
   ```bash
   python check_gesture_setup.py
