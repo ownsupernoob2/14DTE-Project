@@ -11,7 +11,6 @@ import re
 import socket
 
 import cv2
-import numpy as np
 
 # The UI only uses OpenCV to decode and scale the demo video. Left at its
 # default it fans every resize out over all four cores, competing in bursts
@@ -225,43 +224,12 @@ class VideoSurface(QWidget):
         painter.end()
 
 
-def blurred_snapshot(widget, downscale=8, sigma=3.0):
-    """A soft-focus copy of what `widget` shows right now.
-
-    Blurring one still grab is cheap; a live QGraphicsBlurEffect would re-blur
-    the whole screen on every repaint, which the Pi cannot afford.
-    """
-    img = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
-    w, h = img.width(), img.height()
-    if w < 2 or h < 2:
-        return img
-    ptr = img.constBits()
-    ptr.setsize(img.sizeInBytes())
-    arr = np.frombuffer(ptr, np.uint8).reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3)
-    small = cv2.resize(arr, (max(1, w // downscale), max(1, h // downscale)), interpolation=cv2.INTER_AREA)
-    small = cv2.GaussianBlur(small, (0, 0), sigma)
-    big = np.ascontiguousarray(cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR))
-    return QImage(big.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-
-
 class GestureDemoOverlay(QWidget):
-    """The in-session tutorial: the video over a blurred, dimmed copy of the screen."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._backdrop = None
-
-    def set_backdrop(self, img):
-        self._backdrop = img
-        self.update()
+    """The in-session tutorial: the video over a semi-transparent dark overlay."""
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        if self._backdrop is not None and not self._backdrop.isNull():
-            painter.drawImage(self.rect(), self._backdrop)
-            painter.fillRect(self.rect(), QColor(0, 0, 0, 110))
-        else:
-            painter.fillRect(self.rect(), QColor(0, 0, 0, 184))
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 184))
         painter.end()
 
 
@@ -1035,7 +1003,7 @@ class SmartMirrorPro(QMainWindow):
     def _build_gesture_demo(self):
         has_video = os.path.exists(self._demo_video())
 
-        # In-session tutorial: the demo over a blurred copy of the screen,
+        # In-session tutorial: the demo over a semi-transparent dark overlay,
         # dismissed by pinching and holding.
         self.gesture_demo_overlay = GestureDemoOverlay(self.central_widget)
         self.gesture_demo_overlay.setObjectName("GestureDemoOverlay")
@@ -1832,7 +1800,7 @@ class SmartMirrorPro(QMainWindow):
             self._fade_out_gesture_scrim()
 
     def _show_gesture_scrim(self):
-        """Play the tutorial over a blurred copy of the screen (no gestures for a while)."""
+        """Play the tutorial over a dark overlay (no gestures for a while)."""
         if self.gesture_demo_overlay is None:
             return
         if self.gesture_demo_overlay.isVisible() and not getattr(self, '_scrim_fading_out', False):
@@ -1840,10 +1808,6 @@ class SmartMirrorPro(QMainWindow):
 
         self._scrim_fading_out = False
         self.gesture_demo_overlay.setGeometry(0, 0, self.width(), self.height())
-        if not self.gesture_demo_overlay.isVisible():
-            self.gesture_trail.hide()             # keep the cursor out of the snapshot
-            self.gesture_demo_overlay.set_backdrop(blurred_snapshot(self.central_widget))
-            self.gesture_trail.setVisible(self.gesture_trail._active)
         effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
         self.gesture_demo_overlay.setGraphicsEffect(effect)
         effect.setOpacity(0.0)
@@ -1904,7 +1868,6 @@ class SmartMirrorPro(QMainWindow):
 
         def on_done():
             self.gesture_demo_overlay.hide()
-            self.gesture_demo_overlay.set_backdrop(None)
             self._hide_scan_callout()
             self._scrim_fading_out = False
             self._demo_pinch_start = None

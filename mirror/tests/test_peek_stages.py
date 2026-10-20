@@ -322,24 +322,22 @@ class TestKingsWeekExpandsOnTap(unittest.TestCase):
         self.assertTrue(m._guest_card_slid_away)
 
 
-class TestTutorialBackdrop(unittest.TestCase):
+class TestTutorialOverlay(unittest.TestCase):
     def setUp(self):
         self.mirror = make_mirror()
 
     def tearDown(self):
         close_mirror(self.mirror)
 
-    def test_the_tutorial_plays_over_a_blur_of_the_screen(self):
+    def test_the_tutorial_plays_over_a_dark_overlay_and_fades_away(self):
         self.mirror._show_gesture_scrim()
-        backdrop = self.mirror.gesture_demo_overlay._backdrop
-        self.assertIsNotNone(backdrop)
-        self.assertEqual((backdrop.width(), backdrop.height()),
-                         (self.mirror.central_widget.width(), self.mirror.central_widget.height()))
         settle(self.mirror)
+        self.assertTrue(self.mirror.gesture_demo_overlay.isVisible())
+        corner = self.mirror.gesture_demo_overlay.grab().toImage().pixelColor(2, 2)
+        self.assertLess(corner.lightness(), 40)
         self.mirror._fade_out_gesture_scrim()
         settle(self.mirror)
         self.assertFalse(self.mirror.gesture_demo_overlay.isVisible())
-        self.assertIsNone(self.mirror.gesture_demo_overlay._backdrop)
 
 
 class TestIdleAttractLoop(unittest.TestCase):
