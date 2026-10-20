@@ -10,6 +10,7 @@
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
+PATH="$PATH:/usr/sbin:/sbin"     # modinfo / modprobe aren't on a user's PATH on Debian
 
 ENSURE=false
 [ "$1" = "--ensure" ] && ENSURE=true

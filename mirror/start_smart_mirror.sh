@@ -3,6 +3,7 @@
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
+PATH="$PATH:/usr/sbin:/sbin"
 
 # Pi 5: ISP owns video20-35, so the loopbacks live at /dev/video42 and 43.
 # v4l2loopback only lets one reader stream at a time, so each daemon gets its
