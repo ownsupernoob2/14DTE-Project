@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import UsersPanel from '../components/admin/UsersPanel'
 import ScreensaverPanel from '../components/admin/ScreensaverPanel'
@@ -10,7 +10,7 @@ import { useMe } from '../contexts/MeContext'
 import { API_URL } from '../config'
 
 export default function AdminAnalytics() {
-  const { user, isLoading: isAuthLoading } = useAuth0()
+  const { isLoading: isAuthLoading } = useAuth0()
   const { me, meChecked, isAdmin, authFetch, contactEmail } = useMe()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -178,38 +178,9 @@ export default function AdminAnalytics() {
     )
   }
 
-  // Guard: Unauthorized Access
+  // Not an admin (or the server couldn't confirm it): back to the home page.
   if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-[#000000] text-white flex flex-col font-mono">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center p-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="max-w-md w-full bg-[#0a0a0a] border border-[#331111] rounded-none p-8 text-center shadow-2xl relative"
-          >
-            <div className="w-16 h-16 mx-auto mb-5 rounded-none bg-red-950/40 border border-red-500/30 flex items-center justify-center text-red-400">
-              <span className="material-symbols-outlined text-3xl">shield_lock</span>
-            </div>
-            <h1 className="text-xl font-bold text-white mb-2 uppercase tracking-tight">Admin Restricted Area</h1>
-            <p className="text-xs text-[#888888] mb-6 leading-relaxed uppercase tracking-wider">
-              This analytics and A/B hypothesis verification portal is restricted strictly to authorized mirror administrators.
-            </p>
-            <div className="bg-[#121212] border border-[#222222] rounded-none p-3 text-xs text-[#777777] mb-6 font-mono break-all">
-              Authenticated as: <span className="text-white font-medium">{user?.email || 'Guest'}</span>
-            </div>
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center justify-center gap-2 w-full py-3 px-4 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase tracking-wider rounded-none transition-colors"
-            >
-              <span className="material-symbols-outlined text-base">arrow_back</span>
-              Return to Dashboard
-            </Link>
-          </motion.div>
-        </div>
-      </div>
-    )
+    return <Navigate to="/" replace />
   }
 
   return (

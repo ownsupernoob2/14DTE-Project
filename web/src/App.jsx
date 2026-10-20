@@ -107,10 +107,10 @@ function App() {
             />
             <Route
               path="/admin"
-              element={isAuthenticated ? <AdminAnalytics /> : <Navigate to="/login" />}
+              element={isAuthenticated ? <AdminAnalytics /> : <Navigate to="/" replace />}
             />
 
-            <Route path="*" element={<Navigate to="/dashboard" />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <div className="fixed bottom-2 right-3 text-[#333333] text-[11px] font-mono tracking-wider select-none pointer-events-none z-40">
             {versionCode}
