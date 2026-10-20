@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bufio"
 
 	"github.com/labstack/echo/v4"
 )
@@ -31,6 +32,59 @@ type adminUserRow struct {
 	LastSessionAt int64  `json:"last_session_at"`
 	CreatedAt     int64  `json:"created_at"`
 	LastSeenAt    int64  `json:"last_seen_at"`
+}
+
+// GET /api/admin/logs?name=mirror — returns last N lines of a daemon log file.
+// Permitted log names: "mirror", "face", "gesture", "rpicam", "ffmpeg"
+func getAdminLogs(c echo.Context) error {
+	logName := c.QueryParam("name")
+	if logName == "" {
+		logName = "mirror"
+	}
+
+	// Map short names to safe filenames in the app directory
+	allowedLogs := map[string]string{
+		"mirror":  "mirror.log",
+		"face":    "face_daemon.log",
+		"gesture": "gesture_daemon.log",
+		"rpicam":  "rpicam.log",
+		"ffmpeg":  "ffmpeg.log",
+	}
+
+	fileName, exists := allowedLogs[logName]
+	if !exists {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid log specified"})
+	}
+
+	filePath := dataPath(fileName) // or filepath.Join(".", fileName)
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return c.JSON(http.StatusOK, map[string]interface{}{
+				"name":    logName,
+				"content": fmt.Sprintf("[%s log file does not exist yet]", fileName),
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not read log file"})
+	}
+	defer file.Close()
+
+	// Read last 300 lines using a simple buffer scanner
+	lines := []string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > 500 {
+			lines = lines[1:] // Keep buffer bounded to last 500 lines
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"name":    logName,
+		"content": strings.Join(lines, "\n"),
+		"updated": time.Now().Format(time.RFC3339),
+	})
 }
 
 // GET /api/admin/users?q= — everyone who has signed up, newest first.
