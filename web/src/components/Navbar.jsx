@@ -1,13 +1,12 @@
 import { Link, useLocation } from 'react-router-dom'
-import { useAuth0 } from '@auth0/auth0-react'
+import { useMe } from '../contexts/MeContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
 export default function Navbar() {
   const location = useLocation()
-  const { user } = useAuth0()
+  const { isAdmin } = useMe()
   const { t } = useLanguage()
 
-  const isAdmin = (user?.email || '').toLowerCase().trim() === 'marminamina3@gmail.com'
   const isSettings = location.pathname === '/settings'
   const isAdminPath = location.pathname === '/admin'
 

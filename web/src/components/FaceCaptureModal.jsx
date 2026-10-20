@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Webcam from 'react-webcam'
+import { CONTACT_EMAIL } from '../config'
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 const TOTAL_PHOTOS = 20
 const BURST_INTERVAL_MS = 1000
@@ -607,7 +608,7 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
                       <strong>Face Already Registered:</strong> This facial biometric vector matches an existing registered student account.
                     </p>
                     <p style={{ color: '#cbd5e1', fontSize: '0.78rem', marginTop: 8, marginBottom: 0 }}>
-                      If this is an error or someone mistakenly scanned your face, contact the mirror administrator at <strong style={{ color: '#4fc3ff' }}>marminamina3@gmail.com</strong> with your Student ID barcode number.
+                      If this is an error or someone mistakenly scanned your face, contact the mirror administrator at <strong style={{ color: '#4fc3ff' }}>{CONTACT_EMAIL}</strong> with your Student ID barcode number.
                     </p>
                   </div>
                 ) : (

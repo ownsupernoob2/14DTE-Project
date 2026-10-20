@@ -5,9 +5,9 @@ import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
 import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import { useServerStatus } from '../contexts/ServerStatusContext'
+import { useMe } from '../contexts/MeContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
-const AUTHORIZED_ADMIN_EMAIL = 'marminamina3@gmail.com'
 
 export default function Settings() {
   const { user, logout, getAccessTokenSilently } = useAuth0()
@@ -38,10 +38,10 @@ export default function Settings() {
     return isScanExpired && !sessionStorage.getItem('year_rescan_dismissed')
   })
 
-  const userEmail = (user?.email || '').toLowerCase().trim()
-  const isAdmin = userEmail === AUTHORIZED_ADMIN_EMAIL
+  const { me, isAdmin } = useMe()
   const hasBarcode = Boolean(studentID && studentID.trim())
-  const hasFace = Boolean(lastScan)
+  // The server knows whether a scan exists (an admin may have removed it).
+  const hasFace = me ? Boolean(me.has_face) : Boolean(lastScan)
 
   useEffect(() => {
     let cancelled = false
@@ -113,20 +113,10 @@ export default function Settings() {
     try {
       const token = await getAccessTokenSilently().catch(() => '')
       if (token) {
-        await Promise.allSettled([
-          fetch(`${API_URL}/api/faces/me`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/users/me/barcode`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/timetable/ics`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` }
-          }),
-        ])
+        await fetch(`${API_URL}/api/users/me/data`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        })
       }
     } catch { /* proceed with local storage wipe */ }
 

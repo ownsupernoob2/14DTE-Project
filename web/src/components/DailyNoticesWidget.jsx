@@ -329,19 +329,6 @@ export default function DailyNoticesWidget({ widget = {}, onUpdateData }) {
       const next = { ...current, ...updates };
       localStorage.setItem('notices_widget_config', JSON.stringify(next));
 
-      const payload = {
-        yearFilter: next.yearFilter ?? appliedYearFilter,
-        className: next.className ?? appliedClassName,
-        catFilters: next.catFilters ?? appliedCatFilters,
-        catOrder: next.catOrder ?? appliedCatOrder,
-        keywordFilter: next.keywordFilter ?? next.keywords ?? appliedKeywords,
-        scrollSpeed: next.scrollSpeed ?? appliedScrollSpeed,
-      };
-      await fetch(`${API_URL}/api/notices/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);

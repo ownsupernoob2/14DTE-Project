@@ -8,11 +8,12 @@ import Privacy from './pages/Privacy'
 import AdminAnalytics from './pages/AdminAnalytics'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { LanguageProvider } from './contexts/LanguageContext'
+import { MeProvider } from './contexts/MeContext'
+import AccountMessages from './components/AccountMessages'
+import { API_URL } from './config'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { useState, useEffect } from 'react'
-
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
 function ServerDownNotice() {
   const { isServerUp } = useServerStatus()
@@ -73,9 +74,11 @@ function App() {
 
   return (
     <LanguageProvider>
+      <MeProvider>
       <ServerStatusProvider>
         <Router>
           <ServerDownNotice />
+          {isAuthenticated && <AccountMessages />}
           <Routes>
             <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
             <Route path="/privacy" element={<Privacy />} />
@@ -114,6 +117,7 @@ function App() {
           </div>
         </Router>
       </ServerStatusProvider>
+      </MeProvider>
     </LanguageProvider>
   )
 }
