@@ -1,5 +1,9 @@
-face_recognition==1.3.0
+# Python used by train.py (face scans). face_recognition itself is installed
+# with --no-deps by setup-face-python.ps1 so it uses the prebuilt dlib-bin.
 numpy
-requests
-beautifulsoup4
-PyPDF2
+dlib-bin
+face_recognition_models
+Click
+Pillow
+# face_recognition_models imports pkg_resources, removed in setuptools 81
+setuptools<81

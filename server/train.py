@@ -1,152 +1,60 @@
 """
-train.py — Face encoding trainer
-Usage: python train.py <images_dir> <output_pickle>
+train.py — turn face-scan photos into face encodings.
 
-Loads all JPEG images from images_dir, computes face_recognition encodings,
-filters out outlier frames (distance > 0.40 from the median encoding),
-saves the list of encodings to output_pickle. Prints OK:<N> or ERROR:<msg>.
+Usage: python train.py <images_dir> <output_json>
+
+Computes a 128-number face_recognition encoding per photo, drops photos whose
+encoding is far from the median (side-on, blinking, someone else in frame), and
+writes {"encodings": [[...128 floats], ...], "median": [...]} to output_json.
+Prints OK:<frames kept> on success or ERROR:<message> on failure.
+
+Duplicate-face checks and storage happen in the Go server; this script only
+does the maths that needs dlib.
 """
-import sys
-import os
-import pickle
 import json
-import time
+import os
+import sys
+
 import face_recognition
 import numpy as np
 
+OUTLIER_THRESHOLD = 0.40
+
 
 def main():
-    if len(sys.argv) < 3:
-        print("ERROR:Usage: python train.py <images_dir> <output_pickle>")
-        sys.exit(1)
+    if len(sys.argv) != 3:
+        print("ERROR:Usage: python train.py <images_dir> <output_json>")
+        return 1
+    images_dir, output_json = sys.argv[1], sys.argv[2]
 
-    images_dir = sys.argv[1]
-    output_pickle = sys.argv[2]
-
-    if not os.path.isdir(images_dir):
-        print(f"ERROR:Images directory not found: {images_dir}")
-        sys.exit(1)
+    files = sorted(f for f in os.listdir(images_dir) if f.lower().endswith((".jpg", ".jpeg", ".png")))
+    if not files:
+        print("ERROR:No photos were received")
+        return 1
 
     encodings = []
-    skipped = 0
-
-    image_files = [
-        f for f in os.listdir(images_dir)
-        if f.lower().endswith(('.jpg', '.jpeg', '.png'))
-    ]
-
-    if not image_files:
-        print("ERROR:No image files found in directory")
-        sys.exit(1)
-
-    for filename in image_files:
-        filepath = os.path.join(images_dir, filename)
+    for name in files:
         try:
-            image = face_recognition.load_image_file(filepath)
+            image = face_recognition.load_image_file(os.path.join(images_dir, name))
             found = face_recognition.face_encodings(image)
-            if found:
-                encodings.append(found[0])
-            else:
-                skipped += 1
-        except Exception as e:
-            skipped += 1
+        except Exception:
             continue
+        if found:
+            encodings.append(found[0])
 
     if not encodings:
-        print("ERROR:No faces detected in any of the provided images")
-        sys.exit(1)
+        print("ERROR:No face was found in the photos. Face the camera in good light and try again.")
+        return 1
 
-    # ── Outlier filtering ─────────────────────────────────────────────────
-    # Compute the median encoding and remove any frame whose distance from the
-    # median exceeds 0.40. This discards bad scans (side-profiles, blinks, or
-    # background faces) that would otherwise pollute the recognition model.
-    OUTLIER_THRESHOLD = 0.40
-    enc_array = np.array(encodings)
-    median_enc = np.median(enc_array, axis=0)
+    median = np.median(np.array(encodings), axis=0)
+    kept = [e for e in encodings if float(np.linalg.norm(e - median)) <= OUTLIER_THRESHOLD] or encodings
+    median = np.median(np.array(kept), axis=0)
 
-    filtered = []
-    outlier_count = 0
-    for enc in encodings:
-        dist = float(np.linalg.norm(enc - median_enc))
-        if dist <= OUTLIER_THRESHOLD:
-            filtered.append(enc)
-        else:
-            outlier_count += 1
-
-    if not filtered:
-        # All frames were outliers — fall back to all encodings (better than nothing)
-        print(f"WARNING:All {len(encodings)} encodings were outliers; using unfiltered set")
-        filtered = encodings
-    else:
-       print(
-    f"[train] Kept {len(filtered)} / {len(encodings)} frames "
-    f"(removed {outlier_count} outliers)",
-    file=sys.stderr
-)
-
-
-    # ── Collision Check against other registered students ─────────────────
-    # If this face closely matches an already registered user (< 0.38 distance),
-    # reject to prevent account impersonation or duplicate registrations.
-    enc_dir = os.path.dirname(os.path.abspath(output_pickle))
-    target_basename = os.path.basename(output_pickle)
-    if os.path.isdir(enc_dir):
-        for fname in os.listdir(enc_dir):
-            if fname.endswith(".pickle") and fname != target_basename:
-                other_path = os.path.join(enc_dir, fname)
-                try:
-                    with open(other_path, "rb") as f:
-                        other_encs = pickle.load(f)
-                    if other_encs:
-                        dists = [float(np.linalg.norm(median_enc - o)) for o in other_encs]
-                        if min(dists) < 0.38:
-                            matched_account = fname.replace('.pickle', '')
-                            attempted_account = target_basename.replace('.pickle', '')
-
-                            # Append collision record to audit log for admin tracing
-                            try:
-                                log_dir = os.path.join(os.path.dirname(enc_dir), "data")
-                                os.makedirs(log_dir, exist_ok=True)
-                                log_path = os.path.join(log_dir, "face_collisions.json")
-                                logs = []
-                                if os.path.exists(log_path):
-                                    try:
-                                        with open(log_path, 'r') as lf:
-                                            logs = json.load(lf)
-                                    except Exception:
-                                        logs = []
-                                logs.append({
-                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                    "attempted_user": attempted_account,
-                                    "matched_user": matched_account,
-                                    "min_distance": round(min(dists), 4),
-                                    "action": "BLOCKED_REGISTRATION",
-                                    "contact_email": "marminamina3@gmail.com"
-                                })
-                                with open(log_path, 'w') as lf:
-                                    json.dump(logs, lf, indent=2)
-                            except Exception as le:
-                                print(f"[train] Could not write collision log: {le}", file=sys.stderr)
-
-                            print(
-                                f"ERROR:COLLISION:This face closely matches an already registered account ({fname}).",
-                                file=sys.stderr
-                            )
-                            print(f"ERROR:COLLISION:Face already registered to another student ({fname})")
-                            sys.exit(1)
-                except Exception:
-                    continue
-
-    # Ensure output directory exists
-    out_dir = os.path.dirname(output_pickle)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-
-    with open(output_pickle, 'wb') as f:
-        pickle.dump(filtered, f)
-
-    print(f"OK:{len(filtered)}")
+    with open(output_json, "w") as f:
+        json.dump({"encodings": [e.tolist() for e in kept], "median": median.tolist()}, f)
+    print(f"OK:{len(kept)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -120,32 +120,21 @@ func fetchNotices(c echo.Context) error {
 	return c.JSON(200, map[string]string{"message": "Notices fetched successfully"})
 }
 
-const configOutFile = "data/notices_config.json"
-
+// GET /api/notices/config
 func getNoticesConfig(c echo.Context) error {
-	data, err := os.ReadFile(configOutFile)
-	if err != nil {
-		return c.JSON(200, map[string]interface{}{})
-	}
-	var cfg map[string]interface{}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return c.JSON(200, map[string]interface{}{})
-	}
+	cfg := map[string]interface{}{}
+	getSetting("notices_config", &cfg)
 	return c.JSON(200, cfg)
 }
 
+// POST /api/notices/config (admin)
 func saveNoticesConfig(c echo.Context) error {
 	var body map[string]interface{}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(400, map[string]string{"error": "Invalid JSON"})
 	}
-	os.MkdirAll(dataDir, 0755)
-	data, err := json.MarshalIndent(body, "", "  ")
-	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to marshal config"})
-	}
-	if err := os.WriteFile(configOutFile, data, 0644); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to write config"})
+	if err := setSetting("notices_config", body); err != nil {
+		return c.JSON(500, map[string]string{"error": "Failed to save config"})
 	}
 	return c.JSON(200, map[string]interface{}{"status": "ok", "config": body})
 }

@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN pip install --no-cache-dir -r requirements.txt     && pip install --no-cache-dir --no-deps face_recognition \
     && apt-get purge -y build-essential cmake \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/* /root/.cache
@@ -42,11 +42,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Copy compiled Go binary
 COPY --from=builder /app/smart-mirror-api .
 
-# Copy Python helper scripts
-COPY *.py ./
+# Face scan helper
+COPY train.py ./
 
-# Create default directories for data persistence
-RUN mkdir -p data encodings faces temp
+RUN mkdir -p data
 
 EXPOSE 8080
 

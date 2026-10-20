@@ -158,6 +158,17 @@ function Wait-ApiHealthy([int]$timeoutSeconds = 20) {
     return $false
 }
 
+# Face scans run train.py in server\.venv; (re)install it when missing or when
+# requirements.txt changed. A failure here only disables face scanning.
+function Ensure-FacePython {
+    try {
+        $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoPath "setup-face-python.ps1") 2>&1 | Out-String
+        Write-Log "Face Python: $($out.Trim())"
+    } catch {
+        Write-Log "WARNING: setup-face-python.ps1 failed: $_"
+    }
+}
+
 # ── 4. Update Engine ──────────────────────────────────────────────────────────
 
 function Check-And-Apply-Updates {
@@ -215,6 +226,8 @@ function Check-And-Apply-Updates {
         return
     }
 
+    Ensure-FacePython
+
     # Step D: Build succeeded. Stop old API and replace executable
     Stop-ApiProcess
     Move-Item -Force "$RepoPath\$exeName.new.exe" "$RepoPath\$exeName.exe"
@@ -250,6 +263,8 @@ if (-not (Test-Path "$RepoPath\$exeName.exe")) {
     Set-Location $RepoPath
     & $go build -o "$exeName.exe" .
 }
+
+Ensure-FacePython
 
 # Ensure API is running at start
 if (-not (Test-ApiRunning)) {

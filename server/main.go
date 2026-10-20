@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"os"
-	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -11,163 +11,117 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
-func init() {
+const AppVersion = "v3.0.0"
+
+func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
-	os.MkdirAll("faces", 0755)
-	os.MkdirAll("temp", 0755)
-	os.MkdirAll("encodings", 0755)
-	// Per-user widget layouts and barcode links live here.
-	os.MkdirAll("data", 0755)
-}
+	if err := openDatabase(dataPath("smartmirror.db")); err != nil {
+		log.Fatalf("Could not open the database: %v", err)
+	}
+	go facePython() // find Python early so the first face scan isn't slow
 
-func main() {
 	StartNoticeFetcher()
 	StartKingsWeekFetcher()
-	e := echo.New()
 
-	// Middleware
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
-
-	// Public routes
-	e.POST("/auth/login", login)
-	e.POST("/auth/register", register)
-	e.POST("/auth/refresh", refreshToken)
-
-	// Mirror endpoint — no auth needed for the mirror to verify faces
-	e.POST("/api/verify-face", verifyFace)
-	e.GET("/api/download-index", downloadIndex)
-
-	// Mirror barcode sign-in. Unauthenticated like verify-face, but a barcode is
-	// guessable in a way a face is not, so cap attempts per source IP.
-	e.POST("/api/verify-barcode", verifyBarcode, middleware.RateLimiterWithConfig(
-		middleware.RateLimiterConfig{
-			Store: middleware.NewRateLimiterMemoryStoreWithConfig(
-				middleware.RateLimiterMemoryStoreConfig{Rate: 1, Burst: 10, ExpiresIn: time.Minute},
-			),
-		},
-	))
-
-	// Protected routes (JWT middleware)
-	protected := e.Group("/api")
-	protected.Use(EnsureValidToken())
-
-	// User routes
-	protected.GET("/users/me", getCurrentUser)
-	protected.PUT("/users/:id", updateUser)
-	protected.GET("/users/:id", getUser)
-
-	// Face training route — replaces the old single-image upload
-	protected.POST("/faces/train", trainFace)
-	protected.DELETE("/faces/me", deleteFace)
-
-	// Legacy single-image face upload (kept for backward compatibility)
-	protected.POST("/users/me/face", uploadFace)
-
-	// Student ID / barcode sign-in — the web links a code, the mirror resolves it
-	protected.PUT("/users/me/barcode", saveBarcode)
-	protected.GET("/users/me/barcode", getBarcode)
-	protected.DELETE("/users/me/barcode", deleteBarcode)
-
-	// User language preferences
-	protected.PUT("/users/me/language", saveUserLanguage)
-	protected.POST("/users/me/language", saveUserLanguage)
-	protected.GET("/users/me/language", getUserLanguage)
-	e.GET("/api/users/language", getPublicUserLanguage)
-
-	// Dashboard/Widget routes
-	protected.GET("/dashboard", getDashboard)
-	protected.POST("/dashboard/widgets", addWidget)
-	protected.PUT("/dashboard/widgets/:id", updateWidget)
-	protected.DELETE("/dashboard/widgets/:id", deleteWidget)
-	protected.GET("/dashboard/widgets", getWidgets)
-	protected.PUT("/dashboard/widgets/bulk", updateWidgetsBulk)
-
-	// Daily Notices routes
-	e.GET("/api/notices", getNotices)
-	e.GET("/api/notices/config", getNoticesConfig)
-	e.POST("/api/notices/config", saveNoticesConfig)
-	protected.POST("/notices/fetch", fetchNotices)
-
-	// Kings Week route
-	e.GET("/api/kings-week", getKingsWeek)
-
-	// Admin Banner routes
-	e.POST("/api/admin/banner", setAdminBanner)
-	e.GET("/api/banner", getAdminBanner)
-
-	// Analytics & A/B Testing Telemetry routes
-	e.POST("/api/analytics/events", recordAnalyticsEvent)
-	e.GET("/api/analytics/config", getAnalyticsConfig)
-	e.POST("/api/analytics/config", updateAnalyticsConfig)
-	e.GET("/api/admin/analytics", getAdminAnalytics, OptionalEnsureValidToken())
-	e.GET("/api/admin/face-audit", getFaceAuditLog, OptionalEnsureValidToken())
-
-	// Timetable routes
-	e.GET("/api/timetable", getTimetable, OptionalEnsureValidToken()) // public – also accepts JWT
-	protected.POST("/timetable/ics", setTimetableURL)
-	protected.GET("/timetable/ics", getMyTimetableURL)
-
-	// Health check and version
-	e.GET("/health", health)
-	e.GET("/api/health", health)
-	e.GET("/api/version", version)
-
+	e := newServer()
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
 	e.Logger.Fatal(e.Start(":" + port))
 }
 
-// ─── Handlers ────────────────────────────────────────────────────────────────
+func newServer() *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+	e.Use(middleware.Secure())
+	e.Use(middleware.BodyLimit("30M"))
+	origins := []string{"*"}
+	if raw := os.Getenv("CORS_ORIGINS"); raw != "" {
+		origins = strings.Split(raw, ",")
+	}
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: origins,
+		AllowHeaders: []string{"Authorization", "Content-Type", "X-Mirror-Key", "X-Admin-Token"},
+	}))
 
-const AppVersion = "v2.0.1"
+	// ── Public ───────────────────────────────────────────────────────────
+	e.GET("/health", health)
+	e.GET("/api/health", health)
+	e.GET("/api/version", version)
+	e.GET("/api/notices", getNotices)
+	e.GET("/api/notices/config", getNoticesConfig)
+	e.GET("/api/kings-week", getKingsWeek)
+	e.GET("/api/banner", getAdminBanner)
+	e.GET("/api/analytics/config", getAnalyticsConfig)
+	e.GET("/api/screensaver", getScreensaver)
+	e.GET("/api/screensaver/files/:name", getScreensaverFile)
+	// Signed-in users read their own; mirrors (with their key) any user's.
+	e.GET("/api/timetable", getTimetable)
+
+	// ── Mirrors (X-Mirror-Key) ───────────────────────────────────────────
+	mirror := e.Group("/api", RequireMirror())
+	mirror.POST("/verify-face", verifyFace)
+	mirror.GET("/download-index", downloadIndex)
+	mirror.POST("/analytics/events", recordAnalyticsEvent)
+	mirror.GET("/users/language", getPublicUserLanguage)
+	// A student ID is guessable in a way a face is not, so cap attempts per IP.
+	mirror.POST("/verify-barcode", verifyBarcode, middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{
+			Rate: 1, Burst: 10, ExpiresIn: time.Minute,
+		}),
+	}))
+
+	// ── Signed-in users (Auth0) ──────────────────────────────────────────
+	user := e.Group("/api", EnsureValidToken())
+	user.GET("/users/me", getCurrentUser)
+	user.POST("/users/me/messages/seen", markMessagesSeen)
+	user.DELETE("/users/me/data", deleteMyData)
+	user.POST("/faces/train", trainFace)
+	user.DELETE("/faces/me", deleteFace)
+	user.PUT("/users/me/barcode", saveBarcode)
+	user.GET("/users/me/barcode", getBarcode)
+	user.DELETE("/users/me/barcode", deleteBarcode)
+	user.PUT("/users/me/language", saveUserLanguage)
+	user.POST("/users/me/language", saveUserLanguage)
+	user.GET("/users/me/language", getUserLanguage)
+	user.GET("/dashboard", getDashboard)
+	user.GET("/dashboard/widgets", getWidgets)
+	user.POST("/dashboard/widgets", addWidget)
+	user.PUT("/dashboard/widgets/bulk", updateWidgetsBulk)
+	user.PUT("/dashboard/widgets/:id", updateWidget)
+	user.DELETE("/dashboard/widgets/:id", deleteWidget)
+	user.POST("/timetable/ics", setTimetableURL)
+	user.GET("/timetable/ics", getMyTimetableURL)
+	user.DELETE("/timetable/ics", deleteMyTimetableURL)
+
+	// ── Admins (Auth0 + verified email in ADMIN_EMAILS) ──────────────────
+	admin := e.Group("/api", EnsureValidToken(), RequireAdmin())
+	admin.GET("/admin/analytics", getAdminAnalytics)
+	admin.GET("/admin/face-audit", getFaceAuditLog)
+	admin.GET("/admin/users", adminListUsers)
+	admin.DELETE("/admin/users/:id", adminDeleteUser)
+	admin.DELETE("/admin/users/:id/:kind", adminRemoveUserData)
+	admin.POST("/analytics/config", updateAnalyticsConfig)
+	admin.POST("/notices/config", saveNoticesConfig)
+	admin.POST("/notices/fetch", fetchNotices)
+	admin.POST("/admin/screensaver", setScreensaverConfig)
+	admin.POST("/admin/screensaver/images", uploadScreensaverImages)
+	admin.DELETE("/admin/screensaver/images/:id", deleteScreensaverImage)
+	// The Windows updater posts "updating" notices with ADMIN_TOKEN.
+	e.POST("/api/admin/banner", setAdminBanner, RequireAdminOrUpdater())
+
+	return e
+}
 
 func health(c echo.Context) error {
-	return c.JSON(200, map[string]interface{}{
-		"status":  "ok",
-		"version": AppVersion,
-	})
+	return c.JSON(200, map[string]interface{}{"status": "ok", "version": AppVersion})
 }
 
 func version(c echo.Context) error {
-	return c.JSON(200, map[string]string{
-		"version": AppVersion,
-		"service": "smart-mirror-api",
-	})
-}
-
-func getPythonCmd() string {
-	if envPy := os.Getenv("PYTHON_CMD"); envPy != "" {
-		if _, err := exec.LookPath(envPy); err == nil {
-			return envPy
-		}
-		if _, err := os.Stat(envPy); err == nil {
-			return envPy
-		}
-	}
-
-	venvCandidates := []string{
-		"venv/bin/python",
-		"venv/Scripts/python.exe",
-		"../venv/bin/python",
-		"../venv/Scripts/python.exe",
-		"../mirror/venv/bin/python",
-		"../mirror/venv/Scripts/python.exe",
-	}
-	for _, venv := range venvCandidates {
-		if _, err := os.Stat(venv); err == nil {
-			return venv
-		}
-	}
-
-	if _, err := exec.LookPath("python3"); err == nil {
-		return "python3"
-	}
-	return "python"
+	return c.JSON(200, map[string]string{"version": AppVersion, "service": "smart-mirror-api"})
 }

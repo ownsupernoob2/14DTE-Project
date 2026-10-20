@@ -3,9 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -56,9 +54,6 @@ type Dashboard struct {
 }
 func getDashboard(c echo.Context) error {
 	userID := getUserIDFromToken(c)
-	if userID == "" {
-		userID = c.QueryParam("user_id")
-	}
 	config := getDashboardConfigForUser(userID)
 	widgets := []Widget{}
 	for _, slot := range config.Slots {
@@ -71,59 +66,28 @@ func getDashboard(c echo.Context) error {
 		Widgets: widgets,
 	})
 }
-// In-memory cache + file sync per user
-func getSafeUserID(userID string) string {
-	safeUserID := strings.ReplaceAll(userID, "|", "_")
-	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
-	return safeUserID
-}
-
-func getUserWidgetsPath(userID string) string {
-	return fmt.Sprintf("data/%s_widgets.json", getSafeUserID(userID))
-}
-
 func getDashboardConfigForUser(userID string) UserDashboardConfig {
-	if userID == "" {
-		return defaultDashboardConfig()
-	}
-	path := getUserWidgetsPath(userID)
-	data, err := os.ReadFile(path)
-	if err != nil {
+	var raw string
+	if userID == "" || db.QueryRow(`SELECT dashboard FROM users WHERE id = ?`, userID).Scan(&raw) != nil || raw == "" {
 		return defaultDashboardConfig()
 	}
 	var config UserDashboardConfig
-	err = json.Unmarshal(data, &config)
-	if err != nil {
-		// Fallback to legacy structure
-		var widgets []Widget
-		if json.Unmarshal(data, &widgets) == nil {
-			slots := []Slot{}
-			for i, w := range widgets {
-				slots = append(slots, Slot{
-					SlotID:      fmt.Sprintf("slot_%d", i),
-					Orientation: "horizontal",
-					Widget:      w,
-				})
-			}
-			return UserDashboardConfig{
-				Theme: defaultTheme(),
-				Slots: slots,
-			}
-		}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
 		return defaultDashboardConfig()
 	}
 	return config
 }
 
-func saveDashboardConfigForUser(userID string, config UserDashboardConfig) {
+func saveDashboardConfigForUser(userID string, config UserDashboardConfig) error {
 	if userID == "" {
-		return
+		return nil
 	}
-	path := getUserWidgetsPath(userID)
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err == nil {
-		os.WriteFile(path, data, 0644)
+	data, err := json.Marshal(config)
+	if err != nil {
+		return err
 	}
+	_, err = db.Exec(`UPDATE users SET dashboard = ? WHERE id = ?`, string(data), userID)
+	return err
 }
 
 func defaultTheme() Theme {

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"crypto/subtle"
+	"net/http"
 	"os"
-	"sync"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,56 +16,46 @@ type BannerResponse struct {
 	Message string `json:"message"`
 }
 
-var (
-	bannerMutex sync.RWMutex
-	cachedBanner string
-)
-
-func init() {
-	// Pre-load from simple cache file if exists
-	data, err := os.ReadFile("data/admin_banner.json")
-	if err == nil {
-		var resp BannerResponse
-		if json.Unmarshal(data, &resp) == nil {
-			cachedBanner = resp.Message
+// RequireAdminOrUpdater lets an admin through, or the Windows updater script
+// (run-and-update.ps1), which posts "server updating" notices with ADMIN_TOKEN.
+func RequireAdminOrUpdater() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if want := os.Getenv("ADMIN_TOKEN"); want != "" {
+				got := c.Request().Header.Get("X-Admin-Token")
+				if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+					return next(c)
+				}
+			}
+			if err := validateRequestToken(c); err != nil {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Please sign in again."})
+			}
+			if !isAdmin(c) {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "This area is for administrators only."})
+			}
+			return next(c)
 		}
 	}
 }
 
 // POST /api/admin/banner
 func setAdminBanner(c echo.Context) error {
-	// Simple admin token check: can use a header named X-Admin-Token or check token claims
-	// Let's check environment variable ADMIN_TOKEN if set, or accept validated token.
-	adminToken := os.Getenv("ADMIN_TOKEN")
-	if adminToken != "" {
-		reqToken := c.Request().Header.Get("X-Admin-Token")
-		if reqToken != adminToken {
-			return c.JSON(403, map[string]string{"error": "Forbidden: Invalid admin token"})
-		}
-	}
-
 	var req BannerRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
-
-	bannerMutex.Lock()
-	cachedBanner = req.Message
-	bannerMutex.Unlock()
-
-	// Persist to data directory
-	resp := BannerResponse{Message: req.Message}
-	data, err := json.Marshal(resp)
-	if err == nil {
-		_ = os.WriteFile("data/admin_banner.json", data, 0644)
+	if len(req.Message) > 500 {
+		req.Message = req.Message[:500]
 	}
-
-	return c.JSON(200, map[string]string{"message": "Banner set successfully", "banner": req.Message})
+	if err := setSetting("banner", BannerResponse{Message: req.Message}); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not save the banner"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Banner set successfully", "banner": req.Message})
 }
 
 // GET /api/banner
 func getAdminBanner(c echo.Context) error {
-	bannerMutex.RLock()
-	defer bannerMutex.RUnlock()
-	return c.JSON(200, BannerResponse{Message: cachedBanner})
+	var b BannerResponse
+	getSetting("banner", &b)
+	return c.JSON(http.StatusOK, b)
 }
