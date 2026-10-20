@@ -128,6 +128,30 @@ class TestNoticesCardPinchAndHighlight(unittest.TestCase):
         self.assertEqual(card._bw, 0.0)
         card.grab()                                       # paints without error
 
+    def _finish_hint(self, card):
+        card.read_more._anim.setCurrentTime(card.read_more._anim.duration())
+
+    def test_read_more_only_shows_on_the_selected_card(self):
+        a, b = self.notices.cards
+        self.assertEqual(a.read_more.progress, 0.0)
+        self.assertEqual(b.read_more.progress, 0.0)
+        a.set_selected(True)
+        self.assertTrue(a.read_more._anim.state() == a.read_more._anim.State.Running)
+        self._finish_hint(a)
+        self.assertEqual(a.read_more.progress, 1.0)
+        self.assertEqual(b.read_more.progress, 0.0)          # others stay clear
+        a.grab()                                             # paints without error
+        a.set_selected(False)
+        self._finish_hint(a)
+        self.assertEqual(a.read_more.progress, 0.0)
+
+    def test_the_hint_does_not_move_the_card_text(self):
+        card = self.notices.cards[0]
+        before = card.sizeHint()
+        card.set_selected(True)
+        self._finish_hint(card)
+        self.assertEqual(card.sizeHint(), before)
+
     def test_reselecting_the_same_card_does_no_work(self):
         # select_at_point runs on every gesture packet; restyling every card each
         # time was a source of UI lag.

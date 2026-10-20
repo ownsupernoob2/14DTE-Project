@@ -112,7 +112,7 @@ func newServer() *echo.Echo {
 	admin.POST("/admin/screensaver", setScreensaverConfig)
 	admin.POST("/admin/screensaver/images", uploadScreensaverImages)
 	admin.DELETE("/admin/screensaver/images/:id", deleteScreensaverImage)
-	// The Windows updater posts "updating" notices with ADMIN_TOKEN.
+	admin.GET("/admin/logs", getAdminLogs)
 	e.POST("/api/admin/banner", setAdminBanner, RequireAdminOrUpdater())
 
 	return e

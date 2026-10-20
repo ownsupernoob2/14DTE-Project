@@ -5,19 +5,23 @@ import { API_URL } from '../config'
 
 // The admin's school-wide notice — the same one shown on every mirror.
 export const NOTICE_LEVELS = {
-  notice: { tag: 'NOTICE', bar: 'bg-[#0a1020] border-[#1e3a8a]', chip: 'bg-[#2563eb] text-white' },
-  warning: { tag: 'WARNING', bar: 'bg-[#1a1205] border-[#78500f]', chip: 'bg-[#f59e0b] text-black' },
-  urgent: { tag: 'URGENT', bar: 'bg-[#140a0a] border-[#3b1212]', chip: 'bg-[#ef4444] text-black' },
+  notice: { tag: 'NOTICE', accent: 'border-l-[#3b82f6]', text: 'text-[#3b82f6]' },
+  warning: { tag: 'WARNING', accent: 'border-l-[#f59e0b]', text: 'text-[#f59e0b]' },
+  urgent: { tag: 'URGENT', accent: 'border-l-[#ef4444]', text: 'text-[#ef4444]' },
 }
 
+// Flat panel with an accent stripe, like the notice cards: no outline.
 export function NoticeBarView({ message, level = 'notice' }) {
   const style = NOTICE_LEVELS[level] || NOTICE_LEVELS.notice
   return (
-    <div className={`w-full border-b px-6 py-2 flex items-center gap-3 text-xs shrink-0 ${style.bar}`} role="status">
-      <span className={`font-mono font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-none shrink-0 ${style.chip}`}>
+    <div
+      className={`w-full bg-[#111111] border-l-8 ${style.accent} px-6 py-4 flex flex-col gap-1 shrink-0`}
+      role="status"
+    >
+      <span className={`font-mono font-extrabold text-sm uppercase tracking-[0.15em] ${style.text}`}>
         {style.tag}
       </span>
-      <span className="font-sans font-medium text-white">{message}</span>
+      <span className="font-sans font-bold text-white text-xl sm:text-2xl leading-snug">{message}</span>
     </div>
   )
 }

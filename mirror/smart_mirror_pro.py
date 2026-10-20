@@ -833,34 +833,28 @@ class SmartMirrorPro(QMainWindow):
     # Build: banner
     # ─────────────────────────────────────────────────────────────────────
     def _build_banner(self):
+        # Same look as the notice cards: flat #111 panel, accent stripe down the
+        # left edge, big white text, no outline. Colours are set per level.
         self.banner_frame = QFrame(self.central_widget)
         self.banner_frame.setObjectName("BannerFrame")
-        self.banner_frame.setStyleSheet("""
-            #BannerFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a0d0d, stop:1 #1a0505);
-                border-bottom: 1px solid #4a1414;
-            }
-        """)
-        self.banner_frame.setFixedHeight(54)
+        self.banner_frame.setFixedHeight(108)    # grows for long messages: _fit_banner
         self.banner_frame.hide()
 
-        lay = QHBoxLayout(self.banner_frame)
-        lay.setContentsMargins(24, 6, 24, 6)
-        lay.setSpacing(14)
+        lay = QVBoxLayout(self.banner_frame)
+        lay.setContentsMargins(34, 14, 34, 14)
+        lay.setSpacing(4)
+        lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.tag_lbl = QLabel("Notice", self.banner_frame)
-        self.tag_lbl.setStyleSheet(
-            'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; '
-            'color: #ffffff; background-color: #dc2626; border-radius: 4px; padding: 4px 10px;'
-        )
+        self.tag_lbl = QLabel("NOTICE", self.banner_frame)
         lay.addWidget(self.tag_lbl)
 
         self.banner_label = QLabel(self.banner_frame)
+        self.banner_label.setWordWrap(True)
         self.banner_label.setStyleSheet(
-            'font-family: "Segoe UI", sans-serif; color: #ffffff; background: transparent; '
-            'font-size: 18px; font-weight: 600;'
+            'font-family: "Segoe UI", system-ui, sans-serif; color: #ffffff; background: transparent; '
+            'border: none; font-size: 30px; font-weight: 700;'
         )
-        lay.addWidget(self.banner_label, 1)
+        lay.addWidget(self.banner_label)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: top horizontal indicator bar and header arrow indicator
@@ -1268,6 +1262,7 @@ class SmartMirrorPro(QMainWindow):
         w, h = self.width(), self.height()
 
         if hasattr(self, 'banner_frame'):
+            self._fit_banner(w - 32)
             self.banner_frame.setGeometry(16, 16, w - 32, self.banner_frame.height())
 
         if hasattr(self, 'guest_container') and not self.guest_container.isHidden():
@@ -1344,10 +1339,10 @@ class SmartMirrorPro(QMainWindow):
     # The admin's mirror-wide notice: one line across the top, for guests and
     # signed-in students alike. Hidden while the screensaver owns the screen.
     BANNER_STYLES = {
-        #           tag text   tag bg     tag fg     frame gradient            frame border
-        'notice':  ('NOTICE',  '#2563eb', '#ffffff', ('#0c1a33', '#060c18'), '#1e3a8a'),
-        'warning': ('WARNING', '#f59e0b', '#000000', ('#33240a', '#1a1205'), '#78500f'),
-        'urgent':  ('URGENT',  '#dc2626', '#ffffff', ('#3a0d0d', '#1a0505'), '#4a1414'),
+        # level:    label      accent
+        'notice':  ('NOTICE',  '#3b82f6'),
+        'warning': ('WARNING', '#f59e0b'),
+        'urgent':  ('URGENT',  '#ef4444'),
     }
 
     def _update_banner(self, banner):
@@ -1356,21 +1351,32 @@ class SmartMirrorPro(QMainWindow):
         self._admin_banner_msg = banner.get("message", "") or ""
         level = banner.get("level", "notice")
         self._admin_banner_level = level if level in self.BANNER_STYLES else "notice"
-        tag, tag_bg, tag_fg, (g1, g2), border = self.BANNER_STYLES[self._admin_banner_level]
+        tag, accent = self.BANNER_STYLES[self._admin_banner_level]
         self.banner_frame.setStyleSheet(f"""
             #BannerFrame {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {g1}, stop:1 {g2});
-                border: 1px solid {border};
+                background-color: #111111;
+                border: none;
+                border-left: 8px solid {accent};
                 border-radius: 6px;
             }}
         """)
         self.tag_lbl.setText(tag)
         self.tag_lbl.setStyleSheet(
-            f'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; letter-spacing: 1px; '
-            f'color: {tag_fg}; background-color: {tag_bg}; border-radius: 4px; padding: 4px 10px;'
+            f'font-family: "Consolas", "SFMono-Regular", "Segoe UI", monospace; font-size: 17px; '
+            f'font-weight: 800; letter-spacing: 2px; color: {accent}; background: transparent; border: none;'
         )
         self.banner_label.setText(self._admin_banner_msg)
-        self._refresh_banner()
+        self._fit_banner(self.width() - 32)
+        self.banner_frame.setGeometry(16, 16, self.width() - 32, self.banner_frame.height())
+        self._refresh_banner(relayout=True)     # the height may have changed
+
+    def _fit_banner(self, width=None):
+        """Size the notice to its text: at least 108 px, taller if it wraps."""
+        width = width or self.banner_frame.width()
+        text_w = max(200, width - 34 * 2 - 8)
+        h = (14 * 2 + 4 + self.tag_lbl.sizeHint().height()
+             + self.banner_label.heightForWidth(text_w))
+        self.banner_frame.setFixedHeight(max(108, h))
 
     def _banner_space(self):
         """Pixels the screens move down so the notice doesn't cover them."""
@@ -1378,10 +1384,10 @@ class SmartMirrorPro(QMainWindow):
             return 0
         return self.banner_frame.y() + self.banner_frame.height() + 8
 
-    def _refresh_banner(self):
+    def _refresh_banner(self, relayout=False):
         """Show the notice on the guest and user screens; never over the screensaver."""
         want = bool(self._admin_banner_msg) and self._last_state in ('guest', 'user')
-        if want == self.banner_frame.isVisible():
+        if want == self.banner_frame.isVisible() and not relayout:
             if want:
                 self.banner_frame.raise_()
             return

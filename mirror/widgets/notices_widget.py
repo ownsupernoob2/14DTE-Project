@@ -10,8 +10,8 @@ from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QWidget, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint, QRectF
-from PyQt6.QtGui import QPainter, QPen, QColor
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRectF, QVariantAnimation, QEasingCurve
+from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 
 NOTICE_CARD_RADIUS = 6
 SELECT_BORDER_PX = 3.0     # same animated white border as the King's Week cards
@@ -193,6 +193,64 @@ class NoticeDetailModal(QFrame):
         self.hide()
 
 
+class ReadMoreHint(QWidget):
+    """The READ MORE hint, which slides in and fades up while its card is selected.
+
+    Painted rather than laid out, so appearing never moves the text above it.
+    """
+    HEIGHT = 22
+    SLIDE_PX = 14
+
+    def __init__(self, color, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(self.HEIGHT)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._color = QColor(color)
+        self._p = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.valueChanged.connect(self._on_value)
+
+    @property
+    def progress(self):
+        return self._p
+
+    def reveal(self, show):
+        self._anim.stop()
+        self._anim.setStartValue(self._p)
+        self._anim.setEndValue(1.0 if show else 0.0)
+        self._anim.setDuration(260 if show else 180)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic if show else QEasingCurve.Type.InCubic)
+        self._anim.start()
+
+    def _on_value(self, v):
+        self._p = float(v)
+        self.update()
+
+    def paintEvent(self, event):
+        if self._p <= 0.01:
+            return
+        p = self._p
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont("Segoe UI")
+        font.setPixelSize(15)
+        font.setWeight(QFont.Weight.ExtraBold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.5)
+        painter.setFont(font)
+        color = QColor(self._color)
+        color.setAlphaF(p)
+        painter.setPen(color)
+        slide = (1.0 - p) * self.SLIDE_PX
+        # The arrow overshoots a little further than the text as it arrives.
+        arrow_nudge = (1.0 - p) * self.SLIDE_PX * 1.6
+        arrow_w = 18
+        painter.drawText(QRectF(-slide, 0, self.width() - arrow_w, self.height()),
+                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "READ MORE")
+        painter.drawText(QRectF(self.width() - arrow_w - arrow_nudge, 0, arrow_w, self.height()),
+                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "›")
+        painter.end()
+
+
 class NoticeCard(QFrame):
     """Interactive notice card with hover/tap affordance opening NoticeDetailModal."""
 
@@ -317,16 +375,9 @@ class NoticeCard(QFrame):
             )
             lay.addWidget(body_lbl)
 
-        # Subtle tap-to-expand prompt footer
-        footer = QHBoxLayout()
-        footer.addStretch(1)
-        expand_hint = QLabel("TAP TO EXPAND FULL NOTICE", self)
-        expand_hint.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 800; "
-            "color: #94a3b8; letter-spacing: 0.5px; background: transparent; border: none;"
-        )
-        footer.addWidget(expand_hint)
-        lay.addLayout(footer)
+        # "READ MORE" appears only on the selected card (hand over it, or hover).
+        self.read_more = ReadMoreHint(border_color, self)
+        lay.addWidget(self.read_more)
 
     def set_selected(self, selected=True):
         # Called on every gesture packet, so it must be free when nothing changes.
@@ -335,6 +386,7 @@ class NoticeCard(QFrame):
             return
         self._selected = selected
         self._bw_timer.start()
+        self.read_more.reveal(selected)
 
     @property
     def selected(self):
