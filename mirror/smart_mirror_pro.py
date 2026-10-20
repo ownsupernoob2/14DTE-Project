@@ -129,7 +129,9 @@ class DemoVideoDecoder(QThread):
     def _to_image(self, frame):
         w, h = self._fit(frame.shape[1], frame.shape[0])
         if (w, h) != (frame.shape[1], frame.shape[0]):
-            frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+            shrinking = w < frame.shape[1]
+            frame = cv2.resize(frame, (w, h),
+                               interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
@@ -769,6 +771,7 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Idle attract loop (full-screen demo while nobody is there) ────
         self._last_presence_time = 0.0   # last face or hand seen, by anyone
+        self._last_presence_source = ''
         self._idle_demo_phase = 'off'    # off | playing | ending | leaving
         self._idle_demo_anim = None
         self._last_udp_gesture = 0.0
@@ -986,9 +989,19 @@ class SmartMirrorPro(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────
     # Build: gesture demo (in-session tutorial + idle attract loop)
     # ─────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _demo_video(variant=''):
+        """Path to a pre-scaled copy of the demo, or the full-size original.
+
+        Decoding the 1080p original costs the Pi about twice what the 540p copy
+        does, and that CPU comes straight out of the gesture tracker.
+        """
+        assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+        scaled = os.path.join(assets, f'gesture_demo_{variant}.mp4')
+        return scaled if variant and os.path.exists(scaled) else os.path.join(assets, 'gesture_demo.mp4')
+
     def _build_gesture_demo(self):
-        mp4_path = os.path.join(os.path.dirname(__file__), 'assets', 'gesture_demo.mp4')
-        has_video = os.path.exists(mp4_path)
+        has_video = os.path.exists(self._demo_video())
 
         # In-session tutorial: the demo over a blurred copy of the screen,
         # dismissed by pinching and holding.
@@ -1004,7 +1017,7 @@ class SmartMirrorPro(QMainWindow):
         self.demo_surface.setFixedSize(800, 450)
         lay.addWidget(self.demo_surface, alignment=Qt.AlignmentFlag.AlignCenter)
         if has_video:
-            self.demo_movie = DemoVideoDecoder(mp4_path, GESTURE_TUTORIAL_SPEED_FACTOR, self)
+            self.demo_movie = DemoVideoDecoder(self._demo_video('540p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
             self.demo_movie.set_target_size(800, 450)
             self.demo_movie.frame_ready.connect(self.demo_surface.set_image)
             self.demo_surface.set_image(self.demo_movie.first_frame())
@@ -1022,7 +1035,7 @@ class SmartMirrorPro(QMainWindow):
         # Nobody at the mirror: the same demo, full screen, on a loop.
         self.idle_demo = None
         if has_video:
-            self.idle_demo_movie = DemoVideoDecoder(mp4_path, GESTURE_TUTORIAL_SPEED_FACTOR, self)
+            self.idle_demo_movie = DemoVideoDecoder(self._demo_video('720p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
             self.idle_demo_movie.played_once.connect(self._on_idle_demo_finished)
             self.idle_demo = IdleDemoScreen(self.idle_demo_movie, self.central_widget)
             self.idle_demo.hide()
@@ -1880,6 +1893,7 @@ class SmartMirrorPro(QMainWindow):
             if w.isVisible():
                 w.raise_()
         self._idle_demo_phase = 'playing'
+        print("[IDLE] Nobody here: playing the gesture demo.", flush=True)
         self.idle_demo_movie.play(loop=False)
         anim = self._animate_idle_demo(1.0, IDLE_DEMO_FADE_IN_SEC)
         # Fully opaque: drop the effect so each video frame isn't composited twice.
@@ -1890,6 +1904,13 @@ class SmartMirrorPro(QMainWindow):
             self._fade_idle_demo(IDLE_DEMO_FADE_OUT_SEC, 'ending')
 
     def _fade_idle_demo(self, seconds, phase):
+        if phase == 'ending':
+            why = 'ended'
+        elif self._last_state not in (None, 'idle'):
+            why = f'stopped for the {self._last_state} screen'
+        else:
+            why = f'stopped: a {self._last_presence_source or "person"} was seen'
+        print(f"[IDLE] Demo {why} — fading out over {seconds:.1f}s.", flush=True)
         self._idle_demo_phase = phase
         anim = self._animate_idle_demo(0.0, seconds)
         anim.finished.connect(self._on_idle_demo_faded)
@@ -1922,6 +1943,7 @@ class SmartMirrorPro(QMainWindow):
     def _handle_gesture(self, data):
         if data.get("present", False):
             self._last_presence_time = time.time()   # a hand is someone, even at idle
+            self._last_presence_source = 'hand'
             self._update_idle_demo()
 
         # Don't turn on gestures until it's either in guest or recognized
@@ -2307,8 +2329,10 @@ class SmartMirrorPro(QMainWindow):
 
                 self.face_detected   = fdata.get('detected', False)
                 self.face_recognized = fdata.get('recognized', False)
-                seen = now if self.face_detected else fdata.get('last_face_time', 0.0)
-                self._last_presence_time = max(self._last_presence_time, seen or 0.0)
+                seen = now if self.face_detected else (fdata.get('last_face_time') or 0.0)
+                if seen > self._last_presence_time:
+                    self._last_presence_time = seen
+                    self._last_presence_source = 'face'
                 self.face_confidence = fdata.get('confidence', 0.0)
                 self.in_grace        = fdata.get('in_grace', False)
 
