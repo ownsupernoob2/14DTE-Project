@@ -347,20 +347,6 @@ def verify_barcode_worker(code, on_result):
             barcode_state["busy"] = False
 
 
-def _parse_camera_target(target):
-    """Return integer index if target is an int or '/dev/videoN' / 'N', else raw target."""
-    if isinstance(target, int):
-        return target
-    if isinstance(target, str):
-        target_str = target.strip()
-        m = re.match(r'^/dev/video(\d+)$', target_str)
-        if m:
-            return int(m.group(1))
-        if target_str.isdigit():
-            return int(target_str)
-    return target
-
-
 def _try_open_capture(target):
     """Open VideoCapture trying index or string path across backends."""
     idx = _parse_camera_target(target)
@@ -422,44 +408,50 @@ def _try_open_capture(target):
     return None
 
 
+def _parse_camera_target(target):
+    if isinstance(target, int):
+        return target
+    if isinstance(target, str):
+        target_str = target.strip()
+        m = re.match(r'^/dev/video(\d+)$', target_str)
+        if m:
+            return int(m.group(1))
+        if target_str.isdigit():
+            return int(target_str)
+    return target
+
+
 def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
     if rpi_mode:
-        # The loopback number is chosen by start_smart_mirror.sh. On a Pi 5 the
-        # PiSP ISP owns /dev/video20-35, so it must not be 20.
         target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
     else:
         target = camera_id
 
-    mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
-    
-    print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
+    idx = _parse_camera_target(target)
+    print(f"[CAMERA] Connecting to camera device {target} (index {idx})...", flush=True)
 
     max_attempts = 10 if rpi_mode else 3
-    cap = None
     for attempt in range(1, max_attempts + 1):
-        cap = _try_open_capture(target)
-        if cap is not None and cap.isOpened():
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Open directly using OpenCV V4L2 backend with integer index
+        if isinstance(idx, int) and sys.platform != 'win32':
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        else:
+            cap = cv2.VideoCapture(target)
 
-            # Test frame read — v4l2loopback requires ffmpeg actively writing before read succeeds
+        if cap is not None and cap.isOpened():
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             ret, frame = cap.read()
             if ret and frame is not None:
-                print(f"[CAMERA] Opened successfully on attempt {attempt}.", flush=True)
+                print(f"[CAMERA] Successfully opened camera on attempt {attempt}.", flush=True)
                 return cap
             cap.release()
-            cap = None
 
         if attempt < max_attempts:
-            print(f"[CAMERA] Waiting for camera {target} to become ready (attempt {attempt}/{max_attempts})...", flush=True)
             time.sleep(1.0)
 
     print(f"[ERROR] Could not open camera {target} after {max_attempts} attempts.", flush=True)
-    if rpi_mode:
-        print(f"[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding {target}.", flush=True)
     sys.exit(1)
-
+    
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
                       session_widgets, in_grace, auth_method=AUTH_FACE,
