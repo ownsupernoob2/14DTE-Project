@@ -4,9 +4,13 @@
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
-# Pi 5: ISP owns video20-35, loopback lives at /dev/video42
-LOOP_DEV=/dev/video42
+# Pi 5: ISP owns video20-35, so the loopbacks live at /dev/video42 and 43.
+# v4l2loopback only lets one reader stream at a time, so each daemon gets its
+# own device carrying the same camera feed.
+LOOP_DEV=/dev/video42           # face_recognize.py
+GESTURE_DEV=/dev/video43        # gesture_engine.py
 export MIRROR_LOOPBACK_DEV="$LOOP_DEV"
+export MIRROR_GESTURE_DEV="$GESTURE_DEV"
 
 echo "[START] Checking for updates from GitHub..."
 git pull || echo "[WARN] Failed to pull updates."
@@ -26,14 +30,13 @@ pkill -f gesture_engine   2>/dev/null || true
 pkill -f smart_mirror_pro 2>/dev/null || true
 sleep 2
 
-# ── Reload v4l2loopback with MULTI-READ SUPPORT (exclusive_caps=0) ──────────
+# ── Reload v4l2loopback with one device per daemon ──────────────────────────
 if lsmod | grep -q '^v4l2loopback'; then
     sudo modprobe -r v4l2loopback 2>/dev/null || true
     sleep 1
 fi
 
-# IMPORTANT: exclusive_caps=0 allows OpenCV in multiple daemons to read /dev/video42 simultaneously
-if ! sudo modprobe v4l2loopback devices=1 video_nr=42 card_label="VirtualCam1" exclusive_caps=0; then
+if ! sudo modprobe v4l2loopback devices=2 video_nr=42,43 card_label="FaceCam,GestureCam" exclusive_caps=0,0; then
     echo "[ERROR] Could not load v4l2loopback module."
     exit 1
 fi
@@ -49,6 +52,7 @@ $RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --fram
 ffmpeg -hide_banner -loglevel warning \
     -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
     -pix_fmt yuyv422 -f v4l2 "$LOOP_DEV" \
+    -pix_fmt yuyv422 -f v4l2 "$GESTURE_DEV" \
     2> "$APP_DIR/ffmpeg.log" &
 
 echo "[START] Camera pipeline started. Waiting 5s..."

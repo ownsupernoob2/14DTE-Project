@@ -52,8 +52,11 @@ GESTURE_STATUS_FILE = os.path.join(
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "gesture_recognizer.task")
 
-# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds (/dev/video20).
-RPI_CAMERA = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
+# The Pi reads its own v4l2loopback device that start_smart_mirror.sh feeds.
+# v4l2loopback only lets one reader stream at a time, so the face daemon gets
+# /dev/video42 and this daemon gets a second copy of the feed on /dev/video43.
+RPI_CAMERA = (os.environ.get("MIRROR_GESTURE_DEV")
+              or os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video43"))
 
 
 def default_flip():
