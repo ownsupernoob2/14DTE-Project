@@ -8,10 +8,13 @@ from html.parser import HTMLParser
 
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QWidget, QScrollArea, QSizePolicy
+    QWidget, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRectF
+from PyQt6.QtGui import QPainter, QPen, QColor
+
+NOTICE_CARD_RADIUS = 6
+SELECT_BORDER_PX = 3.0     # same animated white border as the King's Week cards
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,13 +202,19 @@ class NoticeCard(QFrame):
         self.on_click = on_click
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setObjectName('NoticeCard')
+
+        # Animated border: lerps 0 -> 3px on select, back to 0 on deselect
+        self._bw = 0.0
+        self._bw_timer = QTimer(self)
+        self._bw_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._bw_timer.setInterval(12)
+        self._bw_timer.timeout.connect(self._tick_border)
         self._build_ui()
 
     def _build_ui(self):
         notice = self.notice
         category = notice.get('category', 'General')
         is_urgent = notice.get('importance', 'normal') == 'high'
-        is_medium = category in ['Academic', 'Sports', 'Arts & Culture', 'Careers', 'Meetings']
 
         title = notice.get('title', category)
         body_raw = notice.get('notice', '')
@@ -233,7 +242,6 @@ class NoticeCard(QFrame):
         }
 
         card_bg = '#111111'
-        border_main = '#222222'
 
         if is_urgent:
             border_color = '#ef4444'   # red  (matches website urgent)
@@ -261,10 +269,16 @@ class NoticeCard(QFrame):
         loc_part = f" · {loc_str.upper()}" if loc_str and is_room_change else ""
 
         self.card_bg = card_bg
-        self.border_main = border_main
         self.border_color = border_color
         self._selected = False
-        self.set_selected(False)
+        self.setStyleSheet(f"""
+            #NoticeCard {{
+                background-color: {card_bg};
+                border: none;
+                border-left: 4px solid {border_color};
+                border-radius: {NOTICE_CARD_RADIUS}px;
+            }}
+        """)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 16)
@@ -315,25 +329,38 @@ class NoticeCard(QFrame):
         lay.addLayout(footer)
 
     def set_selected(self, selected=True):
+        # Called on every gesture packet, so it must be free when nothing changes.
+        selected = bool(selected)
+        if selected == self._selected:
+            return
         self._selected = selected
-        if selected:
-            self.setStyleSheet(f"""
-                #NoticeCard {{
-                    background-color: {self.card_bg};
-                    border: none;
-                    border-left: 5px solid {self.border_color};
-                    border-radius: 6px;
-                }}
-            """)
-        else:
-            self.setStyleSheet(f"""
-                #NoticeCard {{
-                    background-color: {self.card_bg};
-                    border: none;
-                    border-left: 4px solid {self.border_color};
-                    border-radius: 4px;
-                }}
-            """)
+        self._bw_timer.start()
+
+    @property
+    def selected(self):
+        return self._selected
+
+    def _tick_border(self):
+        target = SELECT_BORDER_PX if self._selected else 0.0
+        self._bw += 0.28 * (target - self._bw)          # exponential lerp
+        if abs(self._bw - target) < 0.08:
+            self._bw = target
+            self._bw_timer.stop()
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)                     # background + accent stripe
+        if self._bw <= 0.15:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        inset = self._bw * 0.5
+        alpha = int(255 * min(1.0, self._bw / SELECT_BORDER_PX))
+        painter.setPen(QPen(QColor(255, 255, 255, alpha), self._bw))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(inset, inset, -inset, -inset),
+                                NOTICE_CARD_RADIUS, NOTICE_CARD_RADIUS)
+        painter.end()
 
     def enterEvent(self, event):
         self.set_selected(True)

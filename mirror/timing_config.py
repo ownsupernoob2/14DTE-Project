@@ -54,3 +54,15 @@ GESTURE_TUTORIAL_SPEED_FACTOR = 1.30
 # By default ~5.6 seconds matching gesture_demo.mp4 at 1.30x speed (~7.27s / 1.30).
 GESTURE_TUTORIAL_DURATION_SEC = 5.6
 
+
+# --- IDLE ATTRACT LOOP (nobody at the mirror) ---
+
+# With nobody in front of the mirror the gesture demo plays full screen. When
+# the clip ends it fades out over IDLE_DEMO_FADE_OUT_SEC, then plays again.
+IDLE_DEMO_FADE_IN_SEC = 0.8
+IDLE_DEMO_FADE_OUT_SEC = 3.0
+
+# Anyone seen at all — a face or a hand, however briefly — fades the demo out
+# this fast, and it stays away until nobody has been seen for IDLE_DEMO_RESUME_SEC.
+IDLE_DEMO_PRESENCE_FADE_SEC = 0.6
+IDLE_DEMO_RESUME_SEC = 4.0

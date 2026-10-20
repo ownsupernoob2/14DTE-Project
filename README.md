@@ -443,15 +443,11 @@ npm run build
 │   ├── setup.sh                    # Automated Raspberry Pi installer
 │   ├── start_smart_mirror.sh       # Raspberry Pi production launch script
 │   ├── widgets/
-│   │   ├── base_widget.py          # Abstract PyQt6 base widget
 │   │   ├── clock_widget.py         # Digital time & date display
 │   │   ├── notices_widget.py       # Scrolling notice column with category chips
 │   │   ├── timetable_widget.py     # Hero current class & next block view
-│   │   ├── schedule_peek_widget.py # Gesture-triggered full-day timetable panel
-│   │   ├── kings_week_widget.py    # Gesture-navigable school newsletter grid
-│   │   ├── note_widget.py          # Text memo sticky note
-│   │   └── style.py                # Pure black color palette & style constants
-│   └── tests/                      # 137 unit tests for UI, gestures & detectors
+│   │   └── kings_week_widget.py    # Gesture-navigable school newsletter grid
+│   └── tests/                      # Unit tests for UI, gestures & detectors
 │
 ├── setup.md                        # Production Docker & reverse-proxy guide
 ├── setup.bat                       # Root quick-start script for Windows

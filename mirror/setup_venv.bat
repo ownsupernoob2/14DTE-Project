@@ -41,7 +41,7 @@ echo ==========================================================
 echo Setup Completed Successfully!
 echo.
 echo To run the mirror simulator:
-echo   1. Open a terminal and run: .venv\Scripts\python.exe simulator_camera.py --mock
+echo   1. Open a terminal and run: .venv\Scripts\python.exe mock_face.py
 echo   2. Open a second terminal, set environment variable and run:
 echo      $env:MIRROR_WINDOWED="1"
 echo      .venv\Scripts\python.exe smart_mirror_pro.py

@@ -1,20 +1,81 @@
 """
-loopback_capture.py — fallback camera reader for the Pi's v4l2loopback device.
+loopback_capture.py — camera readers that always hand back the newest frame.
 
-On the Pi, OpenCV's own V4L2 backend refuses to open /dev/video42 even though
-ffmpeg and v4l2-ctl use it without trouble. This class has the small part of
-the cv2.VideoCapture interface the daemons use (isOpened / read / set / get /
-release) but gets its frames from an `ffmpeg` child process instead.
+FFmpegPipeCapture is a fallback for the Pi's v4l2loopback device: if OpenCV's
+own V4L2 backend refuses /dev/video42, this reads it through an `ffmpeg` child
+process instead, behind the same small cv2.VideoCapture interface the daemons
+use (isOpened / read / set / get / release).
 
-A background thread drains ffmpeg's output and keeps only the newest frame, so
-a slow consumer always sees a fresh picture rather than a growing backlog (the
-same effect CAP_PROP_BUFFERSIZE=1 has with OpenCV).
+LatestFrameReader wraps any capture the same way. The daemons are slower than
+the camera (the hand tracker manages ~16 fps on a Pi 5 against a 30 fps feed),
+and V4L2 queues frames for them, so a plain cap.read() returns a picture that
+is already a couple of frames old. Draining the capture on a thread and keeping
+only the newest frame takes that queueing lag out of every gesture.
 """
 
 import subprocess
 import threading
+import time
 
 import numpy as np
+
+
+class LatestFrameReader:
+    """Drain `cap` on a thread; read() returns the newest frame not yet seen."""
+
+    def __init__(self, cap):
+        self._cap = cap
+        self._cond = threading.Condition()
+        self._frame = None
+        self._seq = 0
+        self._last_seq = 0
+        self._alive = True
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self):
+        failures = 0
+        while self._alive:
+            ok, frame = self._cap.read()
+            if not ok or frame is None:
+                failures += 1
+                if failures > 100:              # ~1s of nothing: the camera is gone
+                    break
+                time.sleep(0.01)
+                continue
+            failures = 0
+            with self._cond:
+                self._frame = frame
+                self._seq += 1
+                self._cond.notify_all()
+        with self._cond:
+            self._alive = False
+            self._cond.notify_all()
+
+    def isOpened(self):
+        return self._alive and self._cap.isOpened()
+
+    def read(self, timeout=2.0):
+        with self._cond:
+            self._cond.wait_for(lambda: self._seq != self._last_seq or not self._alive,
+                                timeout)
+            if self._seq == self._last_seq:
+                return False, None
+            self._last_seq = self._seq
+            return True, self._frame
+
+    def set(self, prop, value):
+        return self._cap.set(prop, value)
+
+    def get(self, prop):
+        return self._cap.get(prop)
+
+    def release(self):
+        self._alive = False
+        self._thread.join(timeout=1.0)          # never release under a read in flight
+        self._cap.release()
+        with self._cond:
+            self._cond.notify_all()
 
 
 class FFmpegPipeCapture:

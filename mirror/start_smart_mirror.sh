@@ -12,12 +12,24 @@ GESTURE_DEV=/dev/video43        # gesture_engine.py
 export MIRROR_LOOPBACK_DEV="$LOOP_DEV"
 export MIRROR_GESTURE_DEV="$GESTURE_DEV"
 
-echo "[START] Checking for updates from GitHub..."
-git pull || echo "[WARN] Failed to pull updates."
+if [ "$1" != "--pulled" ]; then
+    echo "[START] Checking for updates from GitHub..."
+    BEFORE="$(git rev-parse HEAD 2>/dev/null)"
+    git pull --ff-only || echo "[WARN] Failed to pull updates."
+    if [ "$(git rev-parse HEAD 2>/dev/null)" != "$BEFORE" ]; then
+        # bash reads this file as it runs; start again on the version just pulled.
+        exec /bin/bash "$APP_DIR/start_smart_mirror.sh" --pulled
+    fi
+fi
+
+# Install anything missing (Python 3.10 venv, packages, v4l2loopback). Quick
+# when nothing has changed, so a fresh clone or a pull just works.
+/bin/bash "$APP_DIR/setup.sh" --ensure || echo "[WARN] setup.sh --ensure reported a problem."
 
 PYTHON="${MIRROR_PYTHON:-$HOME/mirror-venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
-    PYTHON=python3
+    echo "[ERROR] $PYTHON not found — run ./setup.sh"
+    exit 1
 fi
 echo "[START] Using Python: $($PYTHON --version)"
 

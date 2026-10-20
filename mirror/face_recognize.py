@@ -21,7 +21,6 @@ All timing constants live in timing_config.py — edit them there.
 """
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -453,7 +452,7 @@ def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
                       session_widgets, in_grace, auth_method=AUTH_FACE,
-                      server_online=True):
+                      server_online=True, last_face_time=0.0):
     """Atomically write the state JSON consumed by smart_mirror_pro.py.
 
     The .tmp file is placed in the same directory as the target so that
@@ -487,6 +486,9 @@ def write_face_status(state, detected, faces_count,
         "timestamp":     time.time(),
         "widgets":       session_widgets if is_recognised else [],
         "in_grace":      in_grace,
+        # When a face was last seen. The mirror polls far slower than this file
+        # is written, so it uses this to catch a face that was only there briefly.
+        "last_face_time": last_face_time,
         # How this session was established, so the mirror can label it.
         "auth_method":   final_auth,
         "server_online": bool(server_online),
@@ -559,6 +561,9 @@ def main():
     print(f"  Status file: {FACE_DATA_FILE}")
 
     cap = open_camera(args.rpi, args.camera_id)
+    from loopback_capture import FFmpegPipeCapture, LatestFrameReader
+    if not isinstance(cap, FFmpegPipeCapture):      # always work on the newest frame
+        cap = LatestFrameReader(cap)
 
     # ── Barcode sign-in (camera decoding is off by default since physical scanner acts as keyboard) ──
     barcode_reader = None
@@ -618,6 +623,7 @@ def main():
     last_server_check  = 0.0
     unrecognised_since = None   # when the unrecognised streak started
     barcode_until      = 0.0    # a scan holds the dashboard until this time
+    barcode_active     = False
 
     detected           = False
     faces_count        = 0
@@ -843,7 +849,8 @@ def main():
             write_face_status(state, detected, faces_count,
                               session_user_id, session_user_name,
                               session_widgets, in_grace, auth_method,
-                              server_online=server_online)
+                              server_online=server_online,
+                              last_face_time=last_face_time)
 
             # ── Periodic console log ─────────────────────────────────────────
             if frame_counter % 90 == 0:
