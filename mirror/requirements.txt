@@ -1,6 +1,17 @@
-# Core and pip dependencies
+# Raspberry Pi runtime dependencies (Python 3.10). face_recognition itself is
+# installed with --no-deps by setup.sh so it uses dlib-bin instead of building dlib.
 requests
 PyQt6
 faiss-cpu
 pytesseract
 mediapipe
+opencv-contrib-python
+numpy
+pyzbar
+pygame
+Pillow
+Click
+dlib-bin
+face_recognition_models
+# face_recognition_models imports pkg_resources, removed in setuptools 81
+setuptools<81

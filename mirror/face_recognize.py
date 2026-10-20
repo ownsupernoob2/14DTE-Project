@@ -364,16 +364,18 @@ def _try_open_capture(target):
         return None
 
     # 2. On Linux:
-    # Try V4L2 by integer index first (OpenCV V4L2 backend requires index in many builds)
-    if isinstance(idx, int):
-        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+    # Try V4L2 by device path first. On the Pi, OpenCV refuses the
+    # v4l2loopback device by index ("can't open camera by index") but
+    # opens /dev/video42 fine by path.
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
 
-    # Try V4L2 by device path string (e.g. /dev/video20)
-    if isinstance(target, str):
-        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+    # Then V4L2 by integer index
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
@@ -432,11 +434,7 @@ def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
 
     max_attempts = 10 if rpi_mode else 3
     for attempt in range(1, max_attempts + 1):
-        # Open directly using OpenCV V4L2 backend with integer index
-        if isinstance(idx, int) and sys.platform != 'win32':
-            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
-        else:
-            cap = cv2.VideoCapture(target)
+        cap = _try_open_capture(target)
 
         if cap is not None and cap.isOpened():
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

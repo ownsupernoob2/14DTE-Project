@@ -66,6 +66,8 @@ sleep 2
 
 # ── Launch Smart Mirror UI ───────────────────────────────────────────────────
 export DISPLAY=:0
-"$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
+# The daemons above are already running, so stop the UI spawning a second pair
+# that would fight them for /dev/video42.
+MIRROR_FACE_DAEMON=0 MIRROR_GESTURES=0 "$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
 
 echo "[START] Smart Mirror is running."

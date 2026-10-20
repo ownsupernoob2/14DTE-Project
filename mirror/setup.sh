@@ -6,48 +6,46 @@ echo "=========================================================="
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
-# Detect suitable Python version (Python 3.10, 3.11, or default python3 >= 3.10)
-if command -v python3.11 &>/dev/null; then
-    PYTHON=python3.11
-elif command -v python3.10 &>/dev/null; then
-    PYTHON=python3.10
-elif command -v pyenv &>/dev/null && pyenv versions --bare | grep -q '^3\.\(10\|11\)'; then
-    PYTHON="$(pyenv root)/versions/$(pyenv versions --bare | grep '^3\.\(10\|11\)' | head -1)/bin/python"
-elif command -v python3 &>/dev/null; then
-    PYTHON=python3
-else
-    echo "ERROR: python3 is not installed."
-    echo "Install with: sudo apt install python3 python3-venv python3-dev"
-    exit 1
-fi
-
-PY_CHECK=$("$PYTHON" -c "import sys; print(1 if sys.version_info >= (3, 10) else 0)" 2>/dev/null || echo 0)
-if [ "$PY_CHECK" != "1" ]; then
-    echo "ERROR: Python 3.10+ is required (found $($PYTHON --version 2>&1))."
-    echo "Install Python 3.10 or 3.11 before running setup."
-    exit 1
-fi
-
-echo ">>> Using Python: $($PYTHON --version)"
-
 echo ">>> Installing apt packages..."
 sudo apt update
-sudo apt install -y \
-    python3-venv python3-dev \
-    ffmpeg v4l2loopback-dkms \
-    python3-opencv python3-numpy python3-pil python3-pygame \
-    python3-mediapipe 2>/dev/null || echo ">>> Note: python3-mediapipe apt package not found, will install via pip fallback."
+# Each package on its own so one missing package (python3-mediapipe does not
+# exist on Debian trixie) cannot silently skip v4l2loopback-dkms with it.
+for pkg in python3-venv ffmpeg v4l2loopback-dkms v4l-utils libzbar0 tesseract-ocr \
+           cmake build-essential libopenblas-dev liblapack-dev; do
+    sudo apt install -y "$pkg" || echo ">>> WARNING: could not install $pkg"
+done
+
+# The mirror needs Python 3.10 (mediapipe / dlib wheels). Raspberry Pi OS
+# trixie ships 3.13, so fetch a standalone 3.10 with uv when it is missing.
+if command -v python3.10 &>/dev/null; then
+    PYTHON="$(command -v python3.10)"
+else
+    if [ ! -x "$HOME/.uv-tool/bin/uv" ]; then
+        python3 -m venv "$HOME/.uv-tool"
+        "$HOME/.uv-tool/bin/pip" install -q uv
+    fi
+    "$HOME/.uv-tool/bin/uv" python install 3.10
+    PYTHON="$("$HOME/.uv-tool/bin/uv" python find 3.10)"
+fi
+echo ">>> Using Python: $($PYTHON --version)"
 
 VENV_DIR="$HOME/mirror-venv"
 echo ">>> Using virtual environment at: $VENV_DIR"
 
+if [ -x "$VENV_DIR/bin/python" ] && ! "$VENV_DIR/bin/python" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 10))'; then
+    echo ">>> Existing venv is not Python 3.10 — moving it to $VENV_DIR.old"
+    rm -rf "$VENV_DIR.old"
+    mv "$VENV_DIR" "$VENV_DIR.old"
+fi
 if [ ! -d "$VENV_DIR" ]; then
-    "$PYTHON" -m venv --system-site-packages "$VENV_DIR"
+    "$PYTHON" -m venv "$VENV_DIR"
 fi
 
 echo ">>> Installing pip packages..."
-"$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
+"$VENV_DIR/bin/python" -m pip install --upgrade pip wheel
 "$VENV_DIR/bin/python" -m pip install -r requirements.txt
+# face_recognition pins a source-built dlib; use the prebuilt dlib-bin instead.
+"$VENV_DIR/bin/python" -m pip install --no-deps face_recognition
 
 # Verification step for MediaPipe
 echo ">>> Verifying MediaPipe installation..."
