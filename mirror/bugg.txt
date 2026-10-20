@@ -1,0 +1,47 @@
+raspi@raspi:~/14DTE-Project/mirror $ cat mirror.log rpicam.log ffmpeg.log 
+[MIRROR] Face recognition daemon started (pid 3766, --rpi --exit-with-parent).
+[MIRROR] Gesture daemon started (pid 3767, --rpi --exit-with-parent). Logs: /home/raspi/14DTE-Project/mirror/gesture_daemon.log
+============================================================
+Smart Mirror — Face Recognition Daemon
+  Mode       : Raspberry Pi (rpicam → loopback)
+  API        : https://api.smartmirror.me
+  IDLE after : 10.0s  |  GUEST grace: 1s  |  USER hold: 25.0s
+  Poll IDLE  : 1.5s  |  GUEST: 3.0s  |  USER: 5.0s
+  Status file: /tmp/face_status.json
+[CAMERA] Connecting to camera device /dev/video42 (index 42)...
+[ WARN:0@3.604] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@3.604] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@4.605] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@4.605] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@5.606] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@5.606] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@6.607] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@6.607] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@7.608] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@7.608] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@8.610] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@8.610] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@9.611] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@9.611] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@10.612] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@10.612] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@11.613] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@11.613] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ WARN:0@12.614] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video42): can't open camera by index
+[ WARN:0@12.614] global cap.cpp:478 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by index
+[ERROR] Could not open camera /dev/video42 after 10 attempts.
+[0:06:40.721152417] [3615]  INFO Camera camera_manager.cpp:340 libcamera v0.7.2+rpt20261009
+[0:06:40.734245899] [3624]  INFO RPI pisp.cpp:725 libpisp version v1.7.0 07-08-2026 (09:22:13)
+[0:06:40.746972159] [3624]  INFO IPAProxy ipa_proxy.cpp:184 Using tuning file /usr/share/libcamera/ipa/rpi/pisp/imx708.json
+[0:06:40.756645993] [3624]  INFO Camera camera_manager.cpp:223 Adding camera '/base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a' for pipeline handler rpi/pisp
+[0:06:40.756692475] [3624]  INFO RPI pisp.cpp:1186 Registered camera /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a to CFE device /dev/media1 and ISP device /dev/media2 using PiSP variant BCM2712_D0
+[0:06:40.795853496] [3624]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc30
+[0:06:40.795894162] [3624]  WARN V4L2 v4l2_pixelformat.cpp:346 Unsupported V4L2 pixel format Nc12
+Mode selection for 640:480:12:P(30)
+    SRGGB10_CSI2P,1536x864/120.135 - Score: 1486.67
+    SRGGB10_CSI2P,2304x1296/56.0255 - Score: 1786.67
+    SRGGB10_CSI2P,4608x2592/14.3536 - Score: 33979.5
+Stream configuration adjusted
+[0:06:40.796197144] [3615]  INFO Camera camera.cpp:1216 configuring streams: (0) 640x480-YUV420/sYCC (1) 1536x864-BGGR_PISP_COMP1/RAW
+[0:06:40.796288014] [3624]  INFO RPI pisp.cpp:1502 Sensor: /base/axi/pcie@1000120000/rp1/i2c@80000/imx708@1a - Selected sensor format: 1536x864-SBGGR10_1X10/RAW - Selected CFE format: 1536x864-PC1B/RAW
+raspi@raspi:~/14DTE-Project/mirror $ 
