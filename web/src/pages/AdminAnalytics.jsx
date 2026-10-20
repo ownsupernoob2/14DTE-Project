@@ -4,7 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import UsersPanel from '../components/admin/UsersPanel'
-import UsersPanel from '../components/admin/AdminLogs'
+import AdminLogs from '../components/admin/AdminLogs'
 import ScreensaverPanel from '../components/admin/ScreensaverPanel'
 import MirrorNoticePanel from '../components/admin/MirrorNoticePanel'
 import { useMe } from '../contexts/MeContext'
@@ -446,7 +446,7 @@ export default function AdminAnalytics() {
             {/* ── TAB 1: A/B TESTING DEEP-DIVE BATTLE CARD ───────────────── */}
             {activeTab === 'users' && <UsersPanel />}
             {activeTab === 'screensaver' && <ScreensaverPanel />}
-            {activeTab === 'logs' && (<AdminLogs token={adminToken} />)}
+            {activeTab === 'logs' && <AdminLogs />}
             {activeTab === 'notice' && <MirrorNoticePanel />}
 
             {activeTab === 'overview' && (
