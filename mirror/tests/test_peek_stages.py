@@ -368,15 +368,33 @@ class TestIdleAttractLoop(unittest.TestCase):
         self._finish_fade()
         self.assertEqual(demo.effect.opacity(), 1.0)
 
-    def test_at_the_end_it_fades_out_over_three_seconds_then_plays_again(self):
+    def test_at_the_end_it_fades_out_waits_in_black_then_fades_back_in(self):
         self.mirror._update_idle_demo()
         self._finish_fade()
         self.mirror._on_idle_demo_finished()
         self.assertEqual(self.mirror._idle_demo_phase, 'ending')
-        self.assertEqual(self.mirror._idle_demo_anim.duration(), int(smp.IDLE_DEMO_FADE_OUT_SEC * 1000))
+        self.assertEqual(self.mirror._idle_demo_anim.duration(), 500)       # 0.5 s fade out
         self._finish_fade()
+        self.assertEqual(self.mirror._idle_demo_phase, 'gap')               # black screen
+        self.assertEqual(self.mirror.idle_demo.effect.opacity(), 0.0)
+        self.assertEqual(self.mirror._idle_gap_timer.interval(), 5000)
+        self.assertTrue(self.mirror._idle_gap_timer.isActive())
+        self.mirror._idle_gap_timer.stop()
+        self.mirror._end_idle_gap()
         self.assertEqual(self.mirror._idle_demo_phase, 'playing')
-        self.assertTrue(self.mirror.idle_demo.isVisible())
+        self.assertEqual(self.mirror._idle_demo_anim.duration(), 500)       # 0.5 s fade in
+        self._finish_fade()
+        self.assertEqual(self.mirror.idle_demo.effect.opacity(), 1.0)
+
+    def test_someone_arriving_during_the_black_pause_cancels_it(self):
+        self.mirror._update_idle_demo()
+        self._finish_fade()
+        self.mirror._on_idle_demo_finished()
+        self._finish_fade()
+        self.mirror._handle_gesture(gesture(present=True))
+        self.assertEqual(self.mirror._idle_demo_phase, 'off')
+        self.assertFalse(self.mirror._idle_gap_timer.isActive())
+        self.assertFalse(self.mirror.idle_demo.isVisible())
 
     def test_a_hand_even_briefly_fades_it_away_and_it_stays_away(self):
         self.mirror._update_idle_demo()
@@ -408,3 +426,41 @@ class TestIdleAttractLoop(unittest.TestCase):
         self.mirror._last_state = 'user'
         self.mirror._update_idle_demo()
         self.assertEqual(self.mirror._idle_demo_phase, 'off')
+
+
+class TestMirrorNotice(unittest.TestCase):
+    def setUp(self):
+        self.mirror = make_mirror()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_the_notice_shows_for_users_and_guests_styled_by_level(self):
+        m = self.mirror
+        m._update_banner({"message": "Fire drill at 2pm", "level": "urgent"})
+        self.assertTrue(m.banner_frame.isVisible())
+        self.assertEqual(m.tag_lbl.text(), "URGENT")
+        self.assertEqual(m.banner_label.text(), "Fire drill at 2pm")
+        self.assertGreaterEqual(m.user_container.y(), m.banner_frame.geometry().bottom())  # no overlap
+
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        self.assertTrue(m.banner_frame.isVisible())
+
+        m._update_banner({"message": "Library closed", "level": "warning"})
+        self.assertEqual(m.tag_lbl.text(), "WARNING")
+
+    def test_it_is_hidden_while_the_mirror_is_idle_and_when_cleared(self):
+        m = self.mirror
+        m._update_banner({"message": "Hello", "level": "notice"})
+        m._transitioning = True
+        m._last_state = 'idle'
+        m._trigger_transition('idle', 'idle', {})
+        self.assertFalse(m.banner_frame.isVisible())
+        m._last_state = 'user'
+        m._refresh_banner()
+        self.assertTrue(m.banner_frame.isVisible())
+        m._update_banner({"message": "", "level": "notice"})
+        self.assertFalse(m.banner_frame.isVisible())

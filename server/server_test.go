@@ -565,3 +565,39 @@ func TestStudentsCanWipeTheirOwnData(t *testing.T) {
 		t.Errorf("left behind: faces=%d barcode=%v ics=%q dash=%q lang=%q", faces, barcode, ics, dash, lang)
 	}
 }
+
+func TestMirrorNoticeLevelsAndExpiry(t *testing.T) {
+	newTestDB(t)
+	addUser(t, adminID, "marminamina3@gmail.com")
+	rec := call(t, setAdminBanner, "POST", "/", `{"message":"  Fire drill\n at 2pm ","level":"urgent","expires_in_minutes":60}`, adminID)
+	var b BannerResponse
+	decode(t, rec, &b)
+	if b.Message != "Fire drill at 2pm" || b.Level != "urgent" || b.ExpiresAt-b.UpdatedAt != 3600 || b.UpdatedBy != "marminamina3@gmail.com" {
+		t.Fatalf("banner = %+v", b)
+	}
+	decode(t, call(t, getAdminBanner, "GET", "/", "", ""), &b)
+	if b.Message != "Fire drill at 2pm" {
+		t.Errorf("public banner = %+v", b)
+	}
+
+	// Once it expires, mirrors stop showing it.
+	setSetting("banner", BannerResponse{Message: "old", Level: "warning", ExpiresAt: time.Now().Unix() - 1})
+	decode(t, call(t, getAdminBanner, "GET", "/", "", ""), &b)
+	if b.Message != "" {
+		t.Errorf("expired banner still shown: %+v", b)
+	}
+
+	if rec := call(t, setAdminBanner, "POST", "/", `{"message":"`+strings.Repeat("x", 281)+`"}`, adminID); rec.Code != 400 {
+		t.Errorf("over-long notice = %d", rec.Code)
+	}
+	call(t, setAdminBanner, "POST", "/", `{"message":"Hi","level":"bogus"}`, adminID)
+	decode(t, call(t, getAdminBanner, "GET", "/", "", ""), &b)
+	if b.Level != "notice" || b.ExpiresAt != 0 {
+		t.Errorf("defaults = %+v", b)
+	}
+	var audits int
+	db.QueryRow(`SELECT COUNT(*) FROM admin_audit WHERE action = 'banner_set'`).Scan(&audits)
+	if audits != 2 {
+		t.Errorf("audit rows = %d", audits)
+	}
+}

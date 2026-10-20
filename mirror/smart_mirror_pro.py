@@ -27,7 +27,8 @@ from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QC
 from config import *
 from timing_config import (
     GESTURE_TUTORIAL_IDLE_SEC, GESTURE_TUTORIAL_DURATION_SEC, GESTURE_TUTORIAL_SPEED_FACTOR,
-    IDLE_DEMO_FADE_IN_SEC, IDLE_DEMO_FADE_OUT_SEC, IDLE_DEMO_PRESENCE_FADE_SEC, IDLE_DEMO_RESUME_SEC,
+    IDLE_DEMO_FADE_IN_SEC, IDLE_DEMO_FADE_OUT_SEC, IDLE_DEMO_GAP_SEC,
+    IDLE_DEMO_PRESENCE_FADE_SEC, IDLE_DEMO_RESUME_SEC,
 )
 
 from widgets.notices_widget import NoticesWidget
@@ -674,7 +675,7 @@ class GuestScanCallout(QWidget):
 
 class SmartMirrorPro(QMainWindow):
     barcode_verified_signal = pyqtSignal(object, list, dict, bool, str)
-    banner_fetched_signal = pyqtSignal(str)
+    banner_fetched_signal = pyqtSignal(dict)
     server_status_signal = pyqtSignal(bool)
 
     def __init__(self):
@@ -685,6 +686,7 @@ class SmartMirrorPro(QMainWindow):
         # ── Server connectivity & offline state ──────────────────────────
         self.server_is_down = False
         self._admin_banner_msg = ""
+        self._admin_banner_level = "notice"
 
         # ── Cross-thread signal connections ──────────────────────────────
         self.barcode_verified_signal.connect(self._on_barcode_verified)
@@ -786,8 +788,11 @@ class SmartMirrorPro(QMainWindow):
         # ── Idle attract loop (full-screen demo while nobody is there) ────
         self._last_presence_time = 0.0   # last face or hand seen, by anyone
         self._last_presence_source = ''
-        self._idle_demo_phase = 'off'    # off | playing | ending | leaving
+        self._idle_demo_phase = 'off'    # off | playing | ending | gap | restart | leaving
         self._idle_demo_anim = None
+        self._idle_gap_timer = QTimer(self)
+        self._idle_gap_timer.setSingleShot(True)
+        self._idle_gap_timer.timeout.connect(self._end_idle_gap)
         self._idle_demo_mode = ''
         self._screensaver_left_at = 0.0
         self._last_udp_gesture = 0.0
@@ -824,7 +829,7 @@ class SmartMirrorPro(QMainWindow):
 
         self.banner_timer = QTimer(self)
         self.banner_timer.timeout.connect(self._poll_banner)
-        self.banner_timer.start(30000)
+        self.banner_timer.start(15000)
         self._poll_banner()
 
         # Fetch version code from server /health
@@ -885,7 +890,7 @@ class SmartMirrorPro(QMainWindow):
 
         self.banner_label = QLabel(self.banner_frame)
         self.banner_label.setStyleSheet(
-            'font-family: "Segoe UI", sans-serif; color: #ffffff; '
+            'font-family: "Segoe UI", sans-serif; color: #ffffff; background: transparent; '
             'font-size: 18px; font-weight: 600;'
         )
         lay.addWidget(self.banner_label, 1)
@@ -1113,7 +1118,7 @@ class SmartMirrorPro(QMainWindow):
 
     def _apply_user_layout(self, w, h):
         """Position user layout elements matching 50/50 split and vertical accordion."""
-        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        banner_h = self._banner_space()
         top = banner_h
 
         self.user_container.setGeometry(0, top, w, h - top)
@@ -1261,7 +1266,7 @@ class SmartMirrorPro(QMainWindow):
 
     def _apply_guest_layout(self, w, h):
         """Position guest layout elements."""
-        banner_h = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        banner_h = self._banner_space()
         top = banner_h
 
         self.guest_container.setGeometry(0, top, w, h - top)
@@ -1337,8 +1342,9 @@ class SmartMirrorPro(QMainWindow):
             try:
                 res = requests.get(f"{API_URL}/api/banner", timeout=4)
                 if res.status_code == 200:
-                    msg = res.json().get("message", "")
-                    self.banner_fetched_signal.emit(msg)
+                    data = res.json()
+                    self.banner_fetched_signal.emit({"message": data.get("message", "") or "",
+                                                     "level": data.get("level", "notice") or "notice"})
                     self.server_status_signal.emit(True)
                 else:
                     self.server_status_signal.emit(False)
@@ -1366,42 +1372,56 @@ class SmartMirrorPro(QMainWindow):
                 self.guest_server_status_lbl.hide()
 
     def _update_offline_banner(self, is_down):
-        if is_down:
-            if self._admin_banner_msg:
-                self._update_banner(self._admin_banner_msg)
-            else:
-                self.banner_frame.hide()
-        else:
-            if self._admin_banner_msg:
-                self._update_banner(self._admin_banner_msg)
-            else:
-                self.banner_frame.hide()
-        # Re-apply layout in case banner height changed
-        if hasattr(self, 'user_container') and not self.user_container.isHidden():
-            self._apply_user_layout(self.width(), self.height())
-        elif hasattr(self, 'guest_container') and not self.guest_container.isHidden():
-            self._apply_guest_layout(self.width(), self.height())
+        self._refresh_banner()
 
-    def _update_banner(self, message):
-        self._admin_banner_msg = message or ""
-        if message:
-            self.tag_lbl.setText("Notice")
-            self.tag_lbl.setStyleSheet(
-                'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; '
-                'color: #ffffff; background-color: #dc2626; border-radius: 4px; padding: 4px 10px;'
-            )
-            self.banner_label.setText(message)
-            self.banner_label.setStyleSheet(
-                'font-family: "Segoe UI", sans-serif; color: #ffffff; '
-                'font-size: 18px; font-weight: 600;'
-            )
-            self.banner_frame.show()
+    # The admin's mirror-wide notice: one line across the top, for guests and
+    # signed-in students alike. Hidden while the screensaver owns the screen.
+    BANNER_STYLES = {
+        #           tag text   tag bg     tag fg     frame gradient            frame border
+        'notice':  ('NOTICE',  '#2563eb', '#ffffff', ('#0c1a33', '#060c18'), '#1e3a8a'),
+        'warning': ('WARNING', '#f59e0b', '#000000', ('#33240a', '#1a1205'), '#78500f'),
+        'urgent':  ('URGENT',  '#dc2626', '#ffffff', ('#3a0d0d', '#1a0505'), '#4a1414'),
+    }
+
+    def _update_banner(self, banner):
+        if isinstance(banner, str):
+            banner = {"message": banner, "level": "notice"}
+        self._admin_banner_msg = banner.get("message", "") or ""
+        level = banner.get("level", "notice")
+        self._admin_banner_level = level if level in self.BANNER_STYLES else "notice"
+        tag, tag_bg, tag_fg, (g1, g2), border = self.BANNER_STYLES[self._admin_banner_level]
+        self.banner_frame.setStyleSheet(f"""
+            #BannerFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {g1}, stop:1 {g2});
+                border: 1px solid {border};
+                border-radius: 6px;
+            }}
+        """)
+        self.tag_lbl.setText(tag)
+        self.tag_lbl.setStyleSheet(
+            f'font-family: "Segoe UI", sans-serif; font-size: 14px; font-weight: 800; letter-spacing: 1px; '
+            f'color: {tag_fg}; background-color: {tag_bg}; border-radius: 4px; padding: 4px 10px;'
+        )
+        self.banner_label.setText(self._admin_banner_msg)
+        self._refresh_banner()
+
+    def _banner_space(self):
+        """Pixels the screens move down so the notice doesn't cover them."""
+        if self.banner_frame.isHidden():
+            return 0
+        return self.banner_frame.y() + self.banner_frame.height() + 8
+
+    def _refresh_banner(self):
+        """Show the notice on the guest and user screens; never over the screensaver."""
+        want = bool(self._admin_banner_msg) and self._last_state in ('guest', 'user')
+        if want == self.banner_frame.isVisible():
+            if want:
+                self.banner_frame.raise_()
+            return
+        self.banner_frame.setVisible(want)
+        if want:
             self.banner_frame.raise_()
-        elif self.server_is_down:
-            self._update_offline_banner(True)
-        else:
-            self.banner_frame.hide()
-        # Re-apply layout in case banner height changed
+        # The layouts make room for the banner.
         if hasattr(self, 'user_container') and not self.user_container.isHidden():
             self._apply_user_layout(self.width(), self.height())
         elif hasattr(self, 'guest_container') and not self.guest_container.isHidden():
@@ -1737,7 +1757,7 @@ class SmartMirrorPro(QMainWindow):
         right_w = w - left_w
         content_x = left_w + 30
         content_w = right_w - 60
-        top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+        top = self._banner_space()
 
         # Position arrow centered in the header area between date and clock
         arrow_x = content_x + (content_w - 32) // 2
@@ -1900,9 +1920,9 @@ class SmartMirrorPro(QMainWindow):
     # Idle attract loop: the demo, full screen, while nobody is at the mirror
     #
     #   off ──(empty for IDLE_DEMO_RESUME_SEC)──▶ playing ──(clip ends)──▶ ending
-    #    ▲                                          │                        │
-    #    │                    (anyone seen) ────────┴──▶ leaving ──▶ off     │
-    #    └──────── fade-out done, still empty: play again ◀──────────────────┘
+    #    ▲                                          │                        │ 0.5 s fade
+    #    │                    (anyone seen) ────────┴──▶ leaving ──▶ off     ▼
+    #    └──────── still empty after 5 s of black: fade in, play ◀────────  gap
     # ─────────────────────────────────────────────────────────────────────
     def _screensaver_mode(self):
         mode = self.screensaver.config.get('mode', 'demo')
@@ -1914,7 +1934,7 @@ class SmartMirrorPro(QMainWindow):
         print(f"[IDLE] Screensaver set to {cfg['mode']} "
               f"({len(cfg['slides'])} slides, logo {'yes' if cfg['logo'] else 'no'}).", flush=True)
         if self._idle_demo_phase == 'playing':
-            self._fade_idle_demo(0.6, 'ending')     # restarts with the new choice
+            self._fade_idle_demo(IDLE_DEMO_FADE_OUT_SEC, 'restart')   # straight into the new choice
 
     def _idle_demo_wanted(self):
         if self.idle_demo is None or self._transitioning or not self._screensaver_mode():
@@ -1930,7 +1950,11 @@ class SmartMirrorPro(QMainWindow):
         wanted = self._idle_demo_wanted()
         if wanted and self._idle_demo_phase == 'off':
             self._start_idle_demo()
-        elif not wanted and self._idle_demo_phase in ('playing', 'ending'):
+        elif not wanted and self._idle_demo_phase == 'gap':
+            self._idle_gap_timer.stop()          # already black: just stop
+            self._idle_demo_phase = 'off'
+            self.idle_demo.hide()
+        elif not wanted and self._idle_demo_phase in ('playing', 'ending', 'restart'):
             self._fade_idle_demo(IDLE_DEMO_PRESENCE_FADE_SEC * self.idle_demo.effect.opacity(), 'leaving')
 
     def _start_idle_demo(self):
@@ -1967,7 +1991,9 @@ class SmartMirrorPro(QMainWindow):
 
     def _fade_idle_demo(self, seconds, phase):
         if phase == 'ending':
-            why = 'ended'
+            why = f'ended (then {IDLE_DEMO_GAP_SEC:.0f}s of black)'
+        elif phase == 'restart':
+            why = 'changed by an admin'
         elif self._last_state not in (None, 'idle'):
             why = f'stopped for the {self._last_state} screen'
         else:
@@ -1985,7 +2011,19 @@ class SmartMirrorPro(QMainWindow):
         self.idle_demo.slides.stop()
         phase, self._idle_demo_phase = self._idle_demo_phase, 'off'
         if phase == 'ending' and self._idle_demo_wanted():
-            self._start_idle_demo()          # still nobody here: play it again
+            self._idle_demo_phase = 'gap'    # black screen, then play it again
+            self._idle_gap_timer.start(int(IDLE_DEMO_GAP_SEC * 1000))
+        elif phase == 'restart' and self._idle_demo_wanted():
+            self._start_idle_demo()
+        else:
+            self.idle_demo.hide()
+
+    def _end_idle_gap(self):
+        if self._idle_demo_phase != 'gap':
+            return
+        self._idle_demo_phase = 'off'
+        if self._idle_demo_wanted():
+            self._start_idle_demo()
         else:
             self.idle_demo.hide()
 
@@ -2166,7 +2204,7 @@ class SmartMirrorPro(QMainWindow):
                 right_w = w - left_w
                 content_x = left_w + 30
                 content_w = right_w - 60
-                top = self.banner_frame.height() if not self.banner_frame.isHidden() else 0
+                top = self._banner_space()
                 bar_y = top + 86
 
                 self.indicator_bar.setGeometry(content_x, bar_y, content_w, 4)
@@ -2570,6 +2608,7 @@ class SmartMirrorPro(QMainWindow):
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
         """Dissolve from whatever is on screen to the new state."""
+        self._refresh_banner()     # notice shows for guests and users, not when idle
         visible = None
         if not self.user_container.isHidden():
             visible = self.user_container

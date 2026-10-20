@@ -58,9 +58,12 @@ GESTURE_TUTORIAL_DURATION_SEC = 5.6
 # --- IDLE ATTRACT LOOP (nobody at the mirror) ---
 
 # With nobody in front of the mirror the gesture demo plays full screen. When
-# the clip ends it fades out over IDLE_DEMO_FADE_OUT_SEC, then plays again.
-IDLE_DEMO_FADE_IN_SEC = 0.8
-IDLE_DEMO_FADE_OUT_SEC = 3.0
+# the clip ends it fades out over IDLE_DEMO_FADE_OUT_SEC, holds a black screen
+# for IDLE_DEMO_GAP_SEC, then fades back in over IDLE_DEMO_FADE_IN_SEC and plays
+# again.
+IDLE_DEMO_FADE_IN_SEC = 0.5
+IDLE_DEMO_FADE_OUT_SEC = 0.5
+IDLE_DEMO_GAP_SEC = 5.0
 
 # Anyone seen at all — a face or a hand, however briefly — fades the demo out
 # this fast, and it stays away until nobody has been seen for IDLE_DEMO_RESUME_SEC.

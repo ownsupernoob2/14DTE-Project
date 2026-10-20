@@ -188,8 +188,9 @@ class TestScreensaverOnTheMirror(unittest.TestCase):
         cfg = {"mode": "slideshow", "slide_seconds": 8, "slides": self.paths, "logo": None}
         self.mirror.screensaver.config = cfg
         self.mirror._on_screensaver_changed(cfg)
-        self.assertEqual(self.mirror._idle_demo_phase, "ending")
+        self.assertEqual(self.mirror._idle_demo_phase, "restart")
         self._finish_fade()
+        self.assertEqual(self.mirror._idle_demo_phase, "playing")     # no black pause
         self.assertEqual(self.mirror._idle_demo_mode, "slideshow")
 
     def test_a_session_started_from_the_screensaver_says_so(self):

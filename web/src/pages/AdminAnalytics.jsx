@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import UsersPanel from '../components/admin/UsersPanel'
 import ScreensaverPanel from '../components/admin/ScreensaverPanel'
+import MirrorNoticePanel from '../components/admin/MirrorNoticePanel'
 import { useMe } from '../contexts/MeContext'
 import { API_URL } from '../config'
 
@@ -449,6 +450,7 @@ export default function AdminAnalytics() {
                 { id: 'overview', label: 'A/B Battle Card' },
                 { id: 'users', label: 'Users' },
                 { id: 'screensaver', label: 'Screensaver' },
+                { id: 'notice', label: 'Mirror Notice' },
                 { id: 'hourly', label: 'Hourly Peak Distribution' },
                 { id: 'sessions', label: `Recent Session Feed (${data.recent_sessions?.length || 0})` },
                 { id: 'biometrics', label: 'Biometric Audit & Collisions' },
@@ -470,6 +472,7 @@ export default function AdminAnalytics() {
             {/* ── TAB 1: A/B TESTING DEEP-DIVE BATTLE CARD ───────────────── */}
             {activeTab === 'users' && <UsersPanel />}
             {activeTab === 'screensaver' && <ScreensaverPanel />}
+            {activeTab === 'notice' && <MirrorNoticePanel />}
 
             {activeTab === 'overview' && (
               <section className="flex flex-col gap-6">

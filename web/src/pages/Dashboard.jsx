@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import DailyNoticesWidget from '../components/DailyNoticesWidget'
 import TimetableWidget from '../components/TimetableWidget'
+import KingsWeekWidget from '../components/KingsWeekWidget'
+import MirrorNoticeBar from '../components/MirrorNoticeBar'
 import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
 import FaceCaptureModal from '../components/FaceCaptureModal'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -137,7 +139,6 @@ function OnboardingModal({ isOpen, onClose, onOpenBarcode, onOpenFace, onOpenTim
 
 // ─── Main Unified Dashboard Page ─────────────────────────────────────────────
 export default function Dashboard() {
-  const [bannerMsg, setBannerMsg] = useState('')
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showFaceModal, setShowFaceModal] = useState(false)
@@ -160,21 +161,6 @@ export default function Dashboard() {
     }
   }, [user, getAccessTokenSilently, syncWithServer])
 
-  // Emergency banner
-  useEffect(() => {
-    const fetchBanner = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/banner`)
-        if (res.ok) {
-          const data = await res.json()
-          setBannerMsg(data.message || '')
-        }
-      } catch { /* silent */ }
-    }
-    fetchBanner()
-    const interval = setInterval(fetchBanner, 30000)
-    return () => clearInterval(interval)
-  }, [])
 
   // Onboarding trigger: only pop up if user has NOT linked barcode and has not checked "Don't show this again"
   useEffect(() => {
@@ -211,22 +197,8 @@ export default function Dashboard() {
       <Navbar />
 
       <main className="flex-1 flex flex-col relative z-10 min-h-0 overflow-hidden">
-        {/* Top Emergency Notice Banner */}
-        <AnimatePresence mode="wait">
-          {bannerMsg && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="w-full bg-[#140a0a] border-b border-[#3b1212] px-6 py-2 flex items-center gap-3 text-xs text-[#fca5a5] shrink-0"
-            >
-              <span className="bg-[#ef4444] text-black font-mono font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-none shrink-0">
-                NOTICE
-              </span>
-              <span className="truncate font-sans font-medium text-white">{bannerMsg}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* School-wide notice from the admin (same as on the mirrors) */}
+        <MirrorNoticeBar />
 
         {/* 2-Column Unified Layout: Left = Notices, Right = Timetable */}
         <div className="grid grid-cols-1 md:grid-cols-[48%_52%] flex-1 min-h-0 overflow-hidden">
@@ -235,14 +207,18 @@ export default function Dashboard() {
             <DailyNoticesWidget widget={{}} />
           </section>
 
-          {/* RIGHT: TIMETABLE & HERO PANEL */}
+          {/* RIGHT: TIMETABLE, WITH KING'S WEEK UNDERNEATH (as on the mirror) */}
           <section className="flex flex-col p-6 md:p-8 h-full min-h-0 bg-[#000000] overflow-y-auto">
-            <div className="flex-1 flex flex-col justify-center min-h-0 py-2">
+            <div className="flex flex-col shrink-0 py-2">
               <TimetableWidget
                 widget={{ data: { viewMode: 'today' } }}
                 externalOpenSetup={externalOpenTimetable}
                 onExternalCloseSetup={() => setExternalOpenTimetable(false)}
               />
+            </div>
+
+            <div className="flex-1 pt-6 pb-4">
+              <KingsWeekWidget />
             </div>
 
             {/* Bottom Footer Info */}
