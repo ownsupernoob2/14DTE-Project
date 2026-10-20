@@ -42,15 +42,18 @@ pkill -f gesture_engine   2>/dev/null || true
 pkill -f smart_mirror_pro 2>/dev/null || true
 sleep 2
 
-# ── Reload v4l2loopback with one device per daemon ──────────────────────────
-if lsmod | grep -q '^v4l2loopback'; then
-    sudo modprobe -r v4l2loopback 2>/dev/null || true
-    sleep 1
-fi
-
-if ! sudo modprobe v4l2loopback devices=2 video_nr=42,43 card_label="FaceCam,GestureCam" exclusive_caps=0,0; then
-    echo "[ERROR] Could not load v4l2loopback module."
-    exit 1
+# ── Loopback devices, one per daemon ────────────────────────────────────────
+# setup.sh has the kernel create these at boot, so normally there is nothing
+# to do. Otherwise try to (re)load the module — without ever waiting on a sudo
+# password that nobody is there to type.
+if [ ! -e "$LOOP_DEV" ] || [ ! -e "$GESTURE_DEV" ]; then
+    sudo -n modprobe -r v4l2loopback 2>/dev/null
+    if ! sudo -n modprobe v4l2loopback devices=2 video_nr=42,43 \
+            card_label=FaceCam,GestureCam exclusive_caps=0,0; then
+        echo "[ERROR] $LOOP_DEV / $GESTURE_DEV are missing, and loading v4l2loopback needs sudo."
+        echo "[ERROR] Run ./setup.sh once (it makes them load at boot), then start again."
+        exit 1
+    fi
 fi
 
 # ── Pipe Camera Stream to Loopback ───────────────────────────────────────────

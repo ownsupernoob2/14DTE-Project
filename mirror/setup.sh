@@ -14,6 +14,10 @@ cd "$APP_DIR"
 ENSURE=false
 [ "$1" = "--ensure" ] && ENSURE=true
 
+# At boot nobody is there to type a sudo password, so --ensure never asks for
+# one: anything that needs it is skipped with a note to run ./setup.sh once.
+if $ENSURE; then SUDO="sudo -n"; else SUDO="sudo"; fi
+
 VENV_DIR="$HOME/mirror-venv"
 UV="$HOME/.uv-tool/bin/uv"
 REQ_STAMP="$VENV_DIR/.requirements.sha256"
@@ -48,10 +52,14 @@ ensure_apt() {
     fi
     [ -z "${missing// /}" ] && return 0
     say "Installing system packages:$missing"
-    sudo apt-get update -q
+    if ! $SUDO true 2>/dev/null; then
+        say "WARNING: missing packages need sudo — run ./setup.sh once to install them."
+        return 0
+    fi
+    $SUDO apt-get update -q
     # One at a time, so a single unavailable package can't block the rest.
     for pkg in $missing; do
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$pkg" \
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$pkg" \
             || say "WARNING: could not install $pkg"
     done
     if ! modinfo v4l2loopback >/dev/null 2>&1; then
@@ -124,6 +132,25 @@ ensure_pip() {
     echo "$want" > "$REQ_STAMP"
 }
 
+# The camera pipeline needs two loopback devices: /dev/video42 for the face
+# daemon, /dev/video43 for the gesture engine (one reader per device). Loading
+# them at boot means the start script never needs sudo.
+LOOPBACK_OPTIONS='options v4l2loopback devices=2 video_nr=42,43 card_label=FaceCam,GestureCam exclusive_caps=0,0'
+ensure_loopback_at_boot() {
+    local conf=/etc/modprobe.d/smart-mirror-v4l2loopback.conf
+    local load=/etc/modules-load.d/smart-mirror-v4l2loopback.conf
+    if [ "$(cat "$conf" 2>/dev/null)" = "$LOOPBACK_OPTIONS" ] && [ -f "$load" ]; then
+        return 0
+    fi
+    if ! $SUDO true 2>/dev/null; then
+        say "WARNING: run ./setup.sh once so the camera loopback loads at boot."
+        return 0
+    fi
+    say "Configuring v4l2loopback to load at boot"
+    echo "$LOOPBACK_OPTIONS" | $SUDO tee "$conf" >/dev/null
+    echo "v4l2loopback" | $SUDO tee "$load" >/dev/null
+}
+
 ensure_files() {
     chmod +x start_smart_mirror.sh setup.sh auto_updater.sh 2>/dev/null || true
     if [ ! -f gesture_recognizer.task ]; then
@@ -159,6 +186,7 @@ $ENSURE || echo "Installing Smart Mirror Environment..."
 $ENSURE || echo "=========================================================="
 
 ensure_apt
+ensure_loopback_at_boot
 ensure_python
 ensure_venv
 ensure_pip
