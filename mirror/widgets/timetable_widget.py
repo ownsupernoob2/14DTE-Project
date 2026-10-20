@@ -6,6 +6,8 @@ from datetime import datetime
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget
 from PyQt6.QtCore import Qt, QTimer
 
+from config import mirror_headers
+
 
 def _parse_time(time_str):
     """Parse time string like '10:00', '10:00am', '10:00:00', '2026-08-24T10:00:00' into (hour, minute)."""
@@ -245,7 +247,8 @@ class TimetableWidget(QFrame):
     def _fetch_data(self):
         try:
             params = {'user_id': self.user_id} if self.user_id else {}
-            res = requests.get(f"{self.api_url}/api/timetable", params=params, timeout=8)
+            res = requests.get(f"{self.api_url}/api/timetable", params=params,
+                               headers=mirror_headers(), timeout=8)
             if res.status_code == 200:
                 data = res.json()
                 with self._lock:

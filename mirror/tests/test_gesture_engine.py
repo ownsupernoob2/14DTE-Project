@@ -636,54 +636,124 @@ class TestParentWatch(unittest.TestCase):
             sys.stdin = orig
 
 
-class TestBackhandAndHandSelection(unittest.TestCase):
-    def test_palm_vs_backhand_detection(self):
+class _Cat:
+    """Stand-in for a mediapipe handedness Category."""
+
+    def __init__(self, name, score=0.95):
+        self.category_name = name
+        self.score = score
+
+
+def backhand_of(hand):
+    """The same hand turned round: index and pinky knuckles swap sides."""
+    back = list(hand)
+    back[5], back[17] = _P(hand[17].x, hand[17].y), _P(hand[5].x, hand[5].y)
+    return back
+
+
+def mirrored(hand):
+    return [_P(1.0 - p.x, p.y, p.z) for p in hand]
+
+
+class TestBackhand(unittest.TestCase):
+    # make_hand's geometry is a palm when MediaPipe labels the hand 'Left'.
+
+    def test_a_palm_is_not_a_backhand(self):
+        self.assertFalse(GestureEngine.is_backhand(make_hand(0.3, 0.5), 'Left'))
+
+    def test_the_back_of_the_hand_is(self):
+        self.assertTrue(GestureEngine.is_backhand(backhand_of(make_hand(0.3, 0.5)), 'Left'))
+
+    def test_left_hands_are_judged_the_other_way_round(self):
+        left_palm = mirrored(make_hand(0.3, 0.5))
+        self.assertFalse(GestureEngine.is_backhand(left_palm, 'Right'))
+        self.assertTrue(GestureEngine.is_backhand(backhand_of(left_palm), 'Right'))
+
+    def test_mirroring_the_frame_does_not_change_the_answer(self):
+        # Flipping the image flips both the geometry and MediaPipe's label.
+        palm, back = make_hand(0.3, 0.5), backhand_of(make_hand(0.3, 0.5))
+        self.assertFalse(GestureEngine.is_backhand(mirrored(palm), 'Right'))
+        self.assertTrue(GestureEngine.is_backhand(mirrored(back), 'Right'))
+
+    def test_an_unsure_label_never_rejects_a_hand(self):
+        back = backhand_of(make_hand(0.3, 0.5))
+        self.assertFalse(GestureEngine.is_backhand(back, 'Left', label_score=0.4))
+
+    def test_facing_is_a_signed_fraction(self):
+        self.assertGreater(GestureEngine.palm_facing(make_hand(0.3, 0.5), 'Left'), 0.5)
+        self.assertLess(GestureEngine.palm_facing(backhand_of(make_hand(0.3, 0.5)), 'Left'), -0.5)
+
+
+class TestHandSelection(unittest.TestCase):
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_a_backhand_is_never_chosen(self):
+        far_palm = make_hand(0.3, 0.5, scale=0.10)
+        close_back = backhand_of(make_hand(0.6, 0.5, scale=0.25))
+        best, _ = self.e.select_best_hand([close_back, far_palm], [[_Cat('Left')], [_Cat('Left')]])
+        self.assertIs(best, far_palm)
+
+    def test_the_closest_palm_wins(self):
+        far, close = make_hand(0.3, 0.5, scale=0.10), make_hand(0.6, 0.5, scale=0.25)
+        best, _ = self.e.select_best_hand([far, close], [[_Cat('Left')], [_Cat('Left')]])
+        self.assertIs(best, close)
+
+    def test_a_hand_cut_off_by_the_frame_edge_loses_to_a_whole_one(self):
+        cut = make_hand(0.97, 0.5, scale=0.20)        # half of it is off the right edge
+        whole = make_hand(0.4, 0.5, scale=0.18)
+        best, _ = self.e.select_best_hand([cut, whole], [[_Cat('Left')], [_Cat('Left')]])
+        self.assertIs(best, whole)
+
+    def test_the_hand_in_control_keeps_it_against_a_similar_one(self):
+        mine = make_hand(0.3, 0.5, scale=0.18)
+        self.e.process_landmarks(mine, 1000.0)
+        other = make_hand(0.7, 0.5, scale=0.19)       # a touch bigger, but not clearly
+        best, _ = self.e.select_best_hand([other, mine], [[_Cat('Left')], [_Cat('Left')]])
+        self.assertIs(best, mine)
+
+    def test_a_hand_without_a_label_is_never_rejected(self):
+        back = backhand_of(make_hand(0.3, 0.5))
+        self.assertFalse(GestureEngine.is_backhand(back, None))
+        best, _ = self.e.select_best_hand([back])
+        self.assertIs(best, back)
+
+    def test_nothing_usable_returns_none(self):
+        self.assertEqual(self.e.select_best_hand([]), (None, None))
+        tiny = make_hand(0.3, 0.5, scale=MIN_PALM_SIZE / 2)
+        self.assertEqual(self.e.select_best_hand([tiny]), (None, None))
+
+
+class TestCursorSmoothing(unittest.TestCase):
+    def test_a_resting_hand_is_steady(self):
         e = StubEngine()
-        # Normal palm from make_hand
-        palm_hand = make_hand(0.3, 0.5)
-        self.assertFalse(e.is_backhand(palm_hand, 'Right'))
+        t = 1000.0
+        xs = []
+        for i in range(60):
+            jitter = 0.004 if i % 2 else -0.004         # landmark noise at rest
+            e.process_landmarks(make_hand(0.4 + jitter, 0.5), t)
+            xs.append(e.hand_x)
+            t += 1 / 16
+        settled = xs[20:]
+        self.assertLess(max(settled) - min(settled), 0.004)   # well under the raw 0.008 swing
 
-        # Invert index and pinky to simulate dorsal backhand
-        back_hand = [p for p in palm_hand]
-        # Swap landmark 5 and 17 coordinates
-        p5 = palm_hand[5]
-        p17 = palm_hand[17]
-        back_hand[5] = _P(p17.x, p17.y, p17.z)
-        back_hand[17] = _P(p5.x, p5.y, p5.z)
-        self.assertTrue(e.is_backhand(back_hand, 'Right'))
-
-        # When flip is True (mirrored webcam), parity is corrected
-        # A mirrored palm has reflected x coordinates
-        flipped_palm = [p for p in back_hand]
-        self.assertFalse(e.is_backhand(flipped_palm, 'Right', flip=True))
-        # A mirrored backhand has reflected x coordinates
-        flipped_back = [p for p in palm_hand]
-        self.assertTrue(e.is_backhand(flipped_back, 'Right', flip=True))
-
-    def test_select_best_hand_filters_backhand_and_picks_closest(self):
-        class MockCat:
-            def __init__(self, name, score):
-                self.category_name = name
-                self.score = score
-
+    def test_a_fast_move_is_followed_without_lag(self):
         e = StubEngine()
-        e.flip = False
-        # Create small palm hand (further away)
-        hand_far = make_hand(0.3, 0.5, scale=0.10)
-        # Create large palm hand (closer)
-        hand_close = make_hand(0.3, 0.5, scale=0.25)
-        # Create backhand
-        back_hand = [p for p in hand_close]
-        back_hand[5] = _P(hand_close[17].x, hand_close[17].y)
-        back_hand[17] = _P(hand_close[5].x, hand_close[5].y)
+        t = 1000.0
+        for _ in range(10):
+            e.process_landmarks(make_hand(0.2, 0.5), t)
+            t += 1 / 16
+        for i in range(1, 9):                           # ~1 screen width per second
+            e.process_landmarks(make_hand(0.2 + i * 0.06, 0.5), t)
+            t += 1 / 16
+        self.assertGreater(e.hand_x, 0.2 + 8 * 0.06 - 0.06)    # within one frame's travel
 
-        # 1. Backhand is rejected, so only far hand remains
-        best, _ = e.select_best_hand([back_hand, hand_far], [[MockCat('Right', 0.9)], [MockCat('Right', 0.9)]])
-        self.assertIs(best, hand_far)
-
-        # 2. Both are palms: closer/larger hand is chosen
-        best, _ = e.select_best_hand([hand_far, hand_close], [[MockCat('Right', 0.9)], [MockCat('Right', 0.9)]])
-        self.assertIs(best, hand_close)
+    def test_losing_the_hand_restarts_the_filter(self):
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        e.mark_absent(1000.0 + HAND_LOST_SEC + 0.1)
+        e.process_landmarks(make_hand(0.8, 0.5), 1001.0)
+        self.assertAlmostEqual(e.hand_x, 0.8, places=3)       # no glide from the old spot
 
 
 if __name__ == '__main__':

@@ -1,16 +1,23 @@
-# React + Vite
+# Smart Mirror — website
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite site where students sign in (Auth0), register their face or student ID, link their timetable and arrange their mirror. Administrators get `/admin`: analytics and A/B testing, the users table, and the mirror screensaver.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+Settings come from `.env` (all public, browser-side values):
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Variable | |
+|---|---|
+| `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, `VITE_AUTH0_AUDIENCE` | Auth0 application |
+| `VITE_API_URL` | Server, e.g. `https://api.smartmirror.me` |
 
-## Expanding the ESLint configuration
+## Deploy
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+`npm run build` produces `dist/`; Vercel builds it on every push (`vercel.json` routes all paths to the single-page app).
+
+Who is an administrator is decided by the server (`ADMIN_EMAILS`), not by the site.

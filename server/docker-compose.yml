@@ -15,10 +15,12 @@ services:
       - AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-https://dev-pgz1qjberxzo8hkl.us.auth0.com/api/v2/}
       - PORT=8080
       - MIRROR_API_KEY=${MIRROR_API_KEY:-}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      - AUTH0_MGMT_CLIENT_ID=${AUTH0_MGMT_CLIENT_ID:-}
+      - AUTH0_MGMT_CLIENT_SECRET=${AUTH0_MGMT_CLIENT_SECRET:-}
     volumes:
-      - ./data:/root/data
-      - ./encodings:/root/encodings
-      - ./faces:/root/faces
+      - ./data:/root/data   # smartmirror.db, screensaver images, notice caches
 
   # Watchtower checks for newly pushed Docker images from GitHub and automatically updates the container
   watchtower:

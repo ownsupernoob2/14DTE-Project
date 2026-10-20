@@ -1,11 +1,18 @@
 # mirror/telemetry.py
 """
-Telemetry & A/B testing client for the smart mirror.
+Session analytics and A/B variant assignment for the mirror.
 
-Tracks session duration, authentication method, hands-free gesture adoption,
-and timetable dwell discovery across Variant A (Control) and Variant B (Treatment).
-Flushes summaries asynchronously to POST /api/analytics/events on the Go server,
-with offline local buffering in case of network drops.
+One record per visit (from someone walking up to the mirror going idle again),
+sent to POST /api/analytics/events when the visit ends. Records that can't be
+sent are kept in a small local buffer and retried after the next success.
+
+What counts as what:
+  has_gesture    a deliberate control: scroll, tap, or holding a dwell
+  hand_seen      a hand was tracked at all, deliberate or not
+  scroll / tap   one per scroll or tap event
+  notice/article opens and reading time, King's Week expands
+  tutorial shown / dismissed (pinch-and-hold)
+  from_screensaver  the visit interrupted the idle screensaver
 """
 
 import json
@@ -16,10 +23,13 @@ import uuid
 
 import requests
 
+from config import MIRROR_ID, MIRROR_VERSION, mirror_headers
+
 TELEMETRY_BUFFER_FILE = os.path.join(
     os.environ.get("TEMP", os.environ.get("TMP", "/tmp")),
     "smartmirror_telemetry_buffer.json"
 )
+BUFFER_LIMIT = 500
 
 
 class TelemetryTracker:
@@ -31,6 +41,8 @@ class TelemetryTracker:
         self._last_cfg_check = 0.0
         self._cached_cfg_variant = None
 
+    # ── Variant ──────────────────────────────────────────────────────────────
+
     def _get_config_variant(self):
         now = time.time()
         if (now - self._last_cfg_check < 30) and self._cached_cfg_variant:
@@ -39,8 +51,7 @@ class TelemetryTracker:
         try:
             resp = requests.get(f"{self.api_url}/api/analytics/config", timeout=1.5)
             if resp.status_code == 200:
-                data = resp.json()
-                active = data.get("active_variant")
+                active = resp.json().get("active_variant")
                 if active in ("A", "B"):
                     self._cached_cfg_variant = active
                     return active
@@ -48,31 +59,38 @@ class TelemetryTracker:
             pass
         return self._cached_cfg_variant
 
-    def start_session(self, session_type="guest", auth_method="none", variant=None):
-        """Begin tracking a session. Assigns A/B variant if not provided."""
+    @property
+    def current_variant(self):
+        with self._lock:
+            return self.current_session.get("variant", "A") if self.current_session else "A"
+
+    # ── Session lifecycle ────────────────────────────────────────────────────
+
+    def start_session(self, session_type="guest", auth_method="presence", variant=None,
+                      user_id=None, from_screensaver=False, screensaver_mode=""):
+        """Begin tracking a visit; returns its A/B variant."""
         with self._lock:
             if self.current_session is not None:
                 self._finalize_current_session_locked()
-
             self._session_counter += 1
-            # Check server-controlled A/B experiment config or alternate
             if variant not in ("A", "B"):
-                cfg_variant = self._get_config_variant()
-                if cfg_variant in ("A", "B"):
-                    variant = cfg_variant
-                else:
-                    variant = "B" if (self._session_counter % 2 == 0) else "A"
-
+                variant = self._get_config_variant() or ("B" if self._session_counter % 2 == 0 else "A")
             now = time.time()
             self.current_session = {
                 "session_id": f"sess-{uuid.uuid4().hex[:12]}",
+                "user_id": user_id if session_type == "user" else None,
+                "mirror_id": MIRROR_ID,
+                "mirror_version": MIRROR_VERSION,
                 "client_timestamp": now,
                 "variant": variant,
                 "session_type": session_type,
                 "auth_method": auth_method,
-                "start_time": now,
+                "screensaver_mode": screensaver_mode or "",
+                "from_screensaver": bool(from_screensaver),
+                "time_to_auth_sec": 0.0 if session_type != "user" else 0.1,
                 "duration_sec": 0.0,
                 "has_gesture": False,
+                "hand_seen": False,
                 "time_to_first_gesture_sec": 0.0,
                 "gesture_scroll_count": 0,
                 "gesture_tap_count": 0,
@@ -80,184 +98,162 @@ class TelemetryTracker:
                 "dwell_completed_count": 0,
                 "dwell_abandoned_count": 0,
                 "article_modal_opens": 0,
+                "notice_opens": 0,
                 "modal_read_time_sec": 0.0,
+                "kings_expands": 0,
+                "tutorial_shown": 0,
+                "tutorial_dismissed": 0,
+                "_start_time": now,
                 "_modal_open_start": None,
                 "_dwell_started": False,
             }
-            return self.current_session["variant"]
+            return variant
 
-    def update_auth_method(self, auth_method):
-        """Update or escalate auth method of the active session (e.g. from 'presence' to 'barcode')."""
+    def update_auth_method(self, auth_method, user_id=None):
+        """A guest visit became a signed-in one (face recognised or ID scanned)."""
         with self._lock:
-            if self.current_session:
-                self.current_session["auth_method"] = auth_method
-                if auth_method in ("barcode", "face"):
-                    self.current_session["session_type"] = "user"
-
-    @property
-    def current_variant(self):
-        with self._lock:
-            if self.current_session:
-                return self.current_session.get("variant", "A")
-            return "A"
-
-    def record_gesture(self, event_type, delta=0, region=None, **kwargs):
-        with self._lock:
-            if not self.current_session:
+            s = self.current_session
+            if not s:
                 return
-            now = time.time()
-            if not self.current_session["has_gesture"]:
-                self.current_session["has_gesture"] = True
-                self.current_session["time_to_first_gesture_sec"] = round(
-                    max(0.1, now - self.current_session["start_time"]), 2
-                )
-
-            if event_type in ("scroll", "fling"):
-                self.current_session["gesture_scroll_count"] += 1
-            elif event_type in ("tap", "click"):
-                self.current_session["gesture_tap_count"] += 1
-            elif event_type in ("wave", "swipe", "motion", "dwell", "enter_right", "enter_top_right"):
-                # Meaningful gesture act: ensure gesture counters reflect the user interaction
-                if self.current_session["gesture_scroll_count"] == 0 and self.current_session["gesture_tap_count"] == 0:
-                    self.current_session["gesture_tap_count"] = 1
-                else:
-                    self.current_session["gesture_tap_count"] += 1
-
-    def record_dwell_progress(self, progress):
-        with self._lock:
-            if not self.current_session:
-                return
-            now = time.time()
-            # Dwell attempt is a meaningful mid-air gesture interaction
-            if progress > 0.05:
-                if not self.current_session["has_gesture"]:
-                    self.current_session["has_gesture"] = True
-                    self.current_session["time_to_first_gesture_sec"] = round(
-                        max(0.1, now - self.current_session["start_time"]), 2
-                    )
-
-            if progress >= 0.25 and not self.current_session.get("_dwell_started", False):
-                self.current_session["_dwell_started"] = True
-            elif progress < 0.15 and self.current_session.get("_dwell_started", False):
-                self.current_session["_dwell_started"] = False
-                self.current_session["dwell_abandoned_count"] += 1
-
-    def record_timetable_toggle(self):
-        with self._lock:
-            if not self.current_session:
-                return
-            now = time.time()
-            if not self.current_session["has_gesture"]:
-                self.current_session["has_gesture"] = True
-                self.current_session["time_to_first_gesture_sec"] = round(
-                    max(0.1, now - self.current_session["start_time"]), 2
-                )
-            self.current_session["_dwell_started"] = False
-            self.current_session["timetable_toggle_count"] += 1
-            self.current_session["dwell_completed_count"] += 1
-
-    def record_modal_open(self):
-        with self._lock:
-            if not self.current_session:
-                return
-            self.current_session["article_modal_opens"] += 1
-            self.current_session["_modal_open_start"] = time.time()
-
-    def record_modal_close(self):
-        with self._lock:
-            if not self.current_session:
-                return
-            start = self.current_session.get("_modal_open_start")
-            if start:
-                self.current_session["modal_read_time_sec"] += round(
-                    time.time() - start, 2
-                )
-                self.current_session["_modal_open_start"] = None
+            s["auth_method"] = auth_method
+            if auth_method in ("barcode", "face"):
+                if s["session_type"] != "user":
+                    s["time_to_auth_sec"] = round(max(0.1, time.time() - s["_start_time"]), 2)
+                s["session_type"] = "user"
+                if user_id:
+                    s["user_id"] = user_id
 
     def end_session(self):
-        """End and flush current session asynchronously."""
-        payload = None
+        """End the visit and send it in the background."""
         with self._lock:
             payload = self._finalize_current_session_locked()
         if payload:
-            threading.Thread(
-                target=self._flush_payload, args=(payload,), daemon=True
-            ).start()
+            threading.Thread(target=self._flush_payload, args=(payload,), daemon=True).start()
+
+    # ── Events ───────────────────────────────────────────────────────────────
+
+    def _mark_gesture_locked(self):
+        s = self.current_session
+        s["hand_seen"] = True
+        if not s["has_gesture"]:
+            s["has_gesture"] = True
+            s["time_to_first_gesture_sec"] = round(max(0.1, time.time() - s["_start_time"]), 2)
+
+    def record_gesture(self, event_type, region=None, **_):
+        with self._lock:
+            if not self.current_session:
+                return
+            if event_type in ("scroll", "fling"):
+                self._mark_gesture_locked()
+                self.current_session["gesture_scroll_count"] += 1
+            elif event_type in ("tap", "click"):
+                self._mark_gesture_locked()
+                self.current_session["gesture_tap_count"] += 1
+
+    def record_hand_seen(self):
+        with self._lock:
+            if self.current_session:
+                self.current_session["hand_seen"] = True
+
+    def record_dwell_progress(self, progress):
+        with self._lock:
+            s = self.current_session
+            if not s:
+                return
+            if progress >= 0.25 and not s["_dwell_started"]:
+                s["_dwell_started"] = True
+                self._mark_gesture_locked()       # holding a dwell is deliberate
+            elif progress < 0.15 and s["_dwell_started"]:
+                s["_dwell_started"] = False
+                s["dwell_abandoned_count"] += 1
+
+    def record_timetable_toggle(self):
+        with self._lock:
+            s = self.current_session
+            if not s:
+                return
+            self._mark_gesture_locked()
+            s["_dwell_started"] = False
+            s["timetable_toggle_count"] += 1
+            s["dwell_completed_count"] += 1
+
+    def record_modal_open(self, kind="article"):
+        with self._lock:
+            s = self.current_session
+            if not s:
+                return
+            s["notice_opens" if kind == "notice" else "article_modal_opens"] += 1
+            s["_modal_open_start"] = time.time()
+
+    def record_modal_close(self):
+        with self._lock:
+            s = self.current_session
+            if s and s.get("_modal_open_start"):
+                s["modal_read_time_sec"] += round(time.time() - s["_modal_open_start"], 2)
+                s["_modal_open_start"] = None
+
+    def record_kings_expand(self):
+        with self._lock:
+            if self.current_session:
+                self.current_session["kings_expands"] += 1
+
+    def record_tutorial_shown(self):
+        with self._lock:
+            if self.current_session:
+                self.current_session["tutorial_shown"] += 1
+
+    def record_tutorial_dismissed(self):
+        with self._lock:
+            if self.current_session:
+                self.current_session["tutorial_dismissed"] += 1
+
+    # ── Sending ──────────────────────────────────────────────────────────────
 
     def _finalize_current_session_locked(self):
-        if not self.current_session:
+        s, self.current_session = self.current_session, None
+        if not s:
             return None
         now = time.time()
-        sess = self.current_session
-        self.current_session = None
-
-        if sess.get("_modal_open_start"):
-            sess["modal_read_time_sec"] += round(now - sess["_modal_open_start"], 2)
-
-        sess["duration_sec"] = round(now - sess["start_time"], 2)
-        sess.pop("start_time", None)
-        sess.pop("_modal_open_start", None)
-        sess.pop("_dwell_started", None)
-
-        # Filter out sub-second flickers / false camera triggers
-        if sess["duration_sec"] < 1.0:
+        if s.get("_modal_open_start"):
+            s["modal_read_time_sec"] += round(now - s["_modal_open_start"], 2)
+        s["duration_sec"] = round(now - s["_start_time"], 2)
+        s["modal_read_time_sec"] = round(s["modal_read_time_sec"], 2)
+        for key in [k for k in s if k.startswith("_")]:
+            del s[key]
+        if s["duration_sec"] < 1.0:          # a camera flicker, not a visit
             return None
-        return sess
+        return s
+
+    def _post(self, payload, timeout=3):
+        try:
+            res = requests.post(f"{self.api_url}/api/analytics/events", json=payload,
+                                headers=mirror_headers(), timeout=timeout)
+            return res.status_code == 200
+        except Exception:
+            return False
 
     def _flush_payload(self, payload):
-        sent = False
-        endpoints = [
-            f"{self.api_url}/api/analytics/events",
-            "http://localhost:8080/api/analytics/events",
-            "http://127.0.0.1:8080/api/analytics/events",
-        ]
-
-        for ep in endpoints:
-            try:
-                res = requests.post(ep, json=payload, timeout=3)
-                if res.status_code == 200:
-                    sent = True
-                    break
-            except Exception:
-                pass
-
-        if not sent:
-            try:
-                buffer = []
-                if os.path.exists(TELEMETRY_BUFFER_FILE):
-                    with open(TELEMETRY_BUFFER_FILE, "r") as f:
-                        buffer = json.load(f)
-                buffer.append(payload)
-                if len(buffer) > 200:
-                    buffer = buffer[-200:]
-                with open(TELEMETRY_BUFFER_FILE, "w") as f:
-                    json.dump(buffer, f)
-            except Exception:
-                pass
-        else:
+        if self._post(payload):
             self._flush_offline_buffer()
+            return
+        try:
+            buffer = []
+            if os.path.exists(TELEMETRY_BUFFER_FILE):
+                with open(TELEMETRY_BUFFER_FILE) as f:
+                    buffer = json.load(f)
+            buffer = (buffer + [payload])[-BUFFER_LIMIT:]
+            with open(TELEMETRY_BUFFER_FILE, "w") as f:
+                json.dump(buffer, f)
+        except Exception:
+            pass
 
     def _flush_offline_buffer(self):
         if not os.path.exists(TELEMETRY_BUFFER_FILE):
             return
         try:
-            with open(TELEMETRY_BUFFER_FILE, "r") as f:
+            with open(TELEMETRY_BUFFER_FILE) as f:
                 buffer = json.load(f)
-            if not buffer:
-                return
-            remaining = []
-            for item in buffer:
-                ok = False
-                for ep in [f"{self.api_url}/api/analytics/events", "http://localhost:8080/api/analytics/events"]:
-                    try:
-                        res = requests.post(ep, json=item, timeout=2)
-                        if res.status_code == 200:
-                            ok = True
-                            break
-                    except Exception:
-                        pass
-                if not ok:
-                    remaining.append(item)
+            remaining = [item for item in buffer if not self._post(item, timeout=2)]
             if remaining:
                 with open(TELEMETRY_BUFFER_FILE, "w") as f:
                     json.dump(remaining, f)

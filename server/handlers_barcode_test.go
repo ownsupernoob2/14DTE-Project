@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -43,51 +42,6 @@ func TestValidateBarcodeRejectsBadShapes(t *testing.T) {
 		if err := validateBarcode(code); err == nil {
 			t.Errorf("validateBarcode(%q) accepted an invalid ID", code)
 		}
-	}
-}
-
-// A traversal-shaped barcode must never escape the data directory, both because
-// validateBarcode rejects it and because the path is built from the user ID.
-func TestBarcodePathStaysInDataDir(t *testing.T) {
-	for _, userID := range []string{"auth0|abc123", "auth0/abc", "plain"} {
-		path := getBarcodePath(userID)
-		if filepath.Dir(filepath.Clean(path)) != "data" {
-			t.Errorf("getBarcodePath(%q) = %q, escaped the data dir", userID, path)
-		}
-	}
-}
-
-func TestFindUserByBarcodeMatchesNormalizedContent(t *testing.T) {
-	// findUserByBarcode reads the relative "data" dir, so run from a temp cwd.
-	chdirTemp(t)
-	if err := os.MkdirAll("data", 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Stored with a trailing newline, as an earlier write or manual edit might.
-	if err := os.WriteFile("data/auth0_abc_barcode.txt", []byte("KH-18234\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// A non-barcode file in the same dir must be ignored.
-	if err := os.WriteFile("data/auth0_abc_widgets.json", []byte(`{"x":1}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := findUserByBarcode("KH-18234"); got != "auth0_abc" {
-		t.Errorf("findUserByBarcode = %q, want %q", got, "auth0_abc")
-	}
-	// Typed lowercase resolves to the same owner after normalisation.
-	if got := findUserByBarcode(normalizeBarcode("kh-18234")); got != "auth0_abc" {
-		t.Errorf("lowercase lookup = %q, want %q", got, "auth0_abc")
-	}
-	if got := findUserByBarcode("KH-00000"); got != "" {
-		t.Errorf("unknown barcode resolved to %q, want empty", got)
-	}
-}
-
-func TestFindUserByBarcodeHandlesMissingDataDir(t *testing.T) {
-	chdirTemp(t)
-	if got := findUserByBarcode("KH-18234"); got != "" {
-		t.Errorf("expected no match with no data dir, got %q", got)
 	}
 }
 

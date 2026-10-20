@@ -21,7 +21,6 @@ All timing constants live in timing_config.py — edit them there.
 """
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -54,7 +53,7 @@ except ImportError:
 
 
 from barcode_reader import BarcodeReader
-from config import FACE_DATA_FILE, VISION_FILE
+from config import API_URL, CACHE_DIR, FACE_DATA_FILE, VISION_FILE, mirror_headers
 from timing_config import (
     IDLE_TIMEOUT_SEC,
     GUEST_IDLE_TIMEOUT_SEC,
@@ -69,7 +68,6 @@ from timing_config import (
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
-API_URL = os.environ.get('API_URL', 'https://api.smartmirror.me')
 
 STATE_IDLE  = "idle"
 STATE_GUEST = "guest"
@@ -91,66 +89,72 @@ server_online = True
 
 
 
-ENCODINGS_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exported_encodings.json")
+# The server's face index (128-number encodings + whose they are), cached so the
+# mirror recognises people straight away even while the server is offline.
+ENCODINGS_JSON_PATH = os.path.join(CACHE_DIR, "face_index.json")
+INDEX_REFRESH_SEC = 120     # pick up newly registered (or removed) faces
 
 faiss_index = None
 numpy_vectors = None
 user_map = []
 index_loaded = False
 server_online = True
+_index_lock = threading.Lock()
+
+
+def _install_index(data, source):
+    """Swap in a new index built from the server's {vectors, user_map} payload."""
+    global faiss_index, numpy_vectors, user_map, index_loaded
+    vectors = data.get("vectors") or []
+    users = data.get("user_map") or []
+    arr = np.array(vectors, dtype=np.float32) if vectors else None
+    index = None
+    if faiss is not None:
+        index = faiss.IndexFlatL2(128)
+        if arr is not None:
+            index.add(arr)
+    with _index_lock:
+        faiss_index, numpy_vectors, user_map = index, arr, list(users)
+        index_loaded = True
+    print(f"[FACES] {len(vectors)} encodings for {len(set(users))} people loaded from {source}.", flush=True)
+
+
+def _sync_index():
+    """Fetch the latest index from the server; keep the current one on failure."""
+    global server_online
+    try:
+        res = requests.get(f"{API_URL}/api/download-index", headers=mirror_headers(), timeout=5)
+    except Exception:
+        server_online = False
+        return
+    if res.status_code == 401:
+        print("[FACES] The server rejected this mirror's key — set MIRROR_API_KEY in ~/.config/smart-mirror/env.", flush=True)
+        return
+    if res.status_code != 200:
+        print(f"[FACES] Could not refresh the face index (HTTP {res.status_code}); keeping the current one.", flush=True)
+        return
+    server_online = True
+    data = res.json()
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = ENCODINGS_JSON_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, ENCODINGS_JSON_PATH)
+    except Exception as e:
+        print(f"[FACES] Could not cache the index: {e}", flush=True)
+    _install_index(data, "the server")
 
 
 def download_and_load_index():
-    global faiss_index, numpy_vectors, user_map, index_loaded, server_online
-
-    # 1. Load from local cache immediately so camera starts without network delay
-    if os.path.exists(ENCODINGS_JSON_PATH):
+    """Load the cached index now, then refresh it from the server in the background."""
+    if not index_loaded and os.path.exists(ENCODINGS_JSON_PATH):
         try:
-            with open(ENCODINGS_JSON_PATH, 'r') as f:
-                data = json.load(f)
-            
-            vectors = data.get("vectors", [])
-            user_map = data.get("user_map", [])
-            
-            if vectors:
-                numpy_vectors = np.array(vectors, dtype=np.float32)
-                print(f"[FAISS] Loaded {len(numpy_vectors)} vectors into RAM.")
-            else:
-                numpy_vectors = None
-                print("[FAISS] Encodings file is empty.")
-            
-            if faiss is not None:
-                if vectors:
-                    dimension = 128
-                    faiss_index = faiss.IndexFlatL2(dimension)
-                    vectors_arr = np.array(vectors, dtype=np.float32)
-                    faiss_index.add(vectors_arr)
-                    print(f"[FAISS] Compiled index locally in RAM with {faiss_index.ntotal} vectors.")
-                else:
-                    faiss_index = faiss.IndexFlatL2(128)
-                    print("[FAISS] Encodings file is empty. Index left empty.")
-            else:
-                print("[FAISS] faiss module is not installed. Native matching in RAM is disabled (falling back to NumPy).")
-            index_loaded = True
+            with open(ENCODINGS_JSON_PATH) as f:
+                _install_index(json.load(f), "cache")
         except Exception as e:
-            print(f"[FAISS] Error compiling local index: {e}")
-
-    # 2. Attempt remote sync in background thread so offline server does not delay startup
-    def _sync():
-        global server_online
-        try:
-            res = requests.get(f"{API_URL}/api/download-index", timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                with open(ENCODINGS_JSON_PATH, 'w') as f:
-                    json.dump(data, f)
-                server_online = True
-            else:
-                server_online = False
-        except Exception:
-            server_online = False
-
-    threading.Thread(target=_sync, daemon=True).start()
+            print(f"[FACES] Cached index unreadable: {e}", flush=True)
+    threading.Thread(target=_sync_index, daemon=True).start()
 
 
 # The Haar cascade the fallback uses. Built once and shared: loading the XML
@@ -209,11 +213,11 @@ def verify_face_worker(frame, on_result):
     (or NumPy fallback) and local face encodings, then query the Go server using the
     lightweight user_id to fetch the widgets.
     """
-    global faiss_index, numpy_vectors, user_map, index_loaded, server_online
     try:
-        # Ensure index is loaded
         if not index_loaded:
             download_and_load_index()
+        with _index_lock:       # one consistent index, even if a refresh lands mid-match
+            index, vectors, users = faiss_index, numpy_vectors, user_map
 
         # Detect all face locations in the frame first
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -225,10 +229,10 @@ def verify_face_worker(frame, on_result):
             on_result(None, [], None, server_online)
             return
 
-        if (faiss_index is None and numpy_vectors is None) or not user_map:
-            print("[FAISS] No local index/map loaded. Face detected, falling back to guest mode.")
-            # Face is present, but cannot match locally and server index is absent
-            on_result(None, [], False, False)
+        if (index is None and vectors is None) or not users:
+            # Nobody has registered a face yet (or the index hasn't arrived):
+            # this face is a guest. Says nothing about the server being down.
+            on_result(None, [], False, server_online)
             return
 
         if detector != "hog":
@@ -259,9 +263,9 @@ def verify_face_worker(frame, on_result):
 
         encoding = np.array(encodings[0], dtype=np.float32).reshape(1, -1)
 
-        if faiss_index is not None:
+        if index is not None:
             # Search index (1 nearest neighbor)
-            distances, indices = faiss_index.search(encoding, 1)
+            distances, indices = index.search(encoding, 1)
             dist = float(distances[0][0])
             idx = int(indices[0][0])
             # L2 distance returned by FAISS is squared Euclidean distance.
@@ -269,15 +273,15 @@ def verify_face_worker(frame, on_result):
             euclidean_dist = np.sqrt(dist) if dist >= 0 else 1.0
         else:
             # Fallback to pure NumPy distance calculation
-            diffs = numpy_vectors - encoding
+            diffs = vectors - encoding
             dists = np.linalg.norm(diffs, axis=1)
             idx = int(np.argmin(dists))
             euclidean_dist = float(dists[idx])
 
         print(f"[FAISS] Match query: index_idx={idx}, distance={euclidean_dist:.4f}")
 
-        if euclidean_dist < 0.40 and 0 <= idx < len(user_map):
-            matched_user_id = user_map[idx]
+        if euclidean_dist < 0.40 and 0 <= idx < len(users):
+            matched_user_id = users[idx]
             print(f"[FAISS] Match success: {matched_user_id}. Fetching widgets...")
 
             # Send lightweight text string (user_id) to fetch the student's widgets
@@ -285,6 +289,7 @@ def verify_face_worker(frame, on_result):
                 res = requests.post(
                     f"{API_URL}/api/verify-face",
                     json={"user_id": matched_user_id},
+                    headers=mirror_headers(),
                     timeout=4,
                 )
                 if res.status_code == 200:
@@ -322,6 +327,7 @@ def verify_barcode_worker(code, on_result):
         res = requests.post(
             f"{API_URL}/api/verify-barcode",
             json={"barcode": code},
+            headers=mirror_headers(),
             timeout=4,
         )
         if res.status_code == 200:
@@ -347,20 +353,6 @@ def verify_barcode_worker(code, on_result):
             barcode_state["busy"] = False
 
 
-def _parse_camera_target(target):
-    """Return integer index if target is an int or '/dev/videoN' / 'N', else raw target."""
-    if isinstance(target, int):
-        return target
-    if isinstance(target, str):
-        target_str = target.strip()
-        m = re.match(r'^/dev/video(\d+)$', target_str)
-        if m:
-            return int(m.group(1))
-        if target_str.isdigit():
-            return int(target_str)
-    return target
-
-
 def _try_open_capture(target):
     """Open VideoCapture trying index or string path across backends."""
     idx = _parse_camera_target(target)
@@ -378,16 +370,18 @@ def _try_open_capture(target):
         return None
 
     # 2. On Linux:
-    # Try V4L2 by integer index first (OpenCV V4L2 backend requires index in many builds)
-    if isinstance(idx, int):
-        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+    # Try V4L2 by device path first. On the Pi, OpenCV refuses the
+    # v4l2loopback device by index ("can't open camera by index") but
+    # opens /dev/video42 fine by path.
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
 
-    # Try V4L2 by device path string (e.g. /dev/video20)
-    if isinstance(target, str):
-        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+    # Then V4L2 by integer index
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
@@ -406,46 +400,66 @@ def _try_open_capture(target):
             return cap
         cap.release()
 
+    # OpenCV's V4L2 backend can refuse the Pi's v4l2loopback device even though
+    # ffmpeg reads it fine, so fall back to reading it through ffmpeg.
+    if sys.platform != 'win32' and isinstance(target, str) and target.startswith('/dev/video'):
+        try:
+            from loopback_capture import FFmpegPipeCapture
+            cap = FFmpegPipeCapture(target)
+            if cap.isOpened():
+                print(f"[CAMERA] OpenCV could not open {target}; reading it through ffmpeg instead.", flush=True)
+                return cap
+            cap.release()
+        except Exception as e:
+            print(f"[CAMERA] ffmpeg fallback failed: {e}", flush=True)
+
     return None
 
 
-def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
-       if rpi_mode:
-        target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
+def _parse_camera_target(target):
+    if isinstance(target, int):
+        return target
+    if isinstance(target, str):
+        target_str = target.strip()
+        m = re.match(r'^/dev/video(\d+)$', target_str)
+        if m:
+            return int(m.group(1))
+        if target_str.isdigit():
+            return int(target_str)
+    return target
 
-    mode_str = f"RPi mode (loopback {target})" if rpi_mode else f"Desktop mode (camera {camera_id})"
-    print(f"[CAMERA] {mode_str} — connecting to camera...", flush=True)
+
+def open_camera(rpi_mode: bool, camera_id: int) -> cv2.VideoCapture:
+    if rpi_mode:
+        target = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
+    else:
+        target = camera_id
+
+    idx = _parse_camera_target(target)
+    print(f"[CAMERA] Connecting to camera device {target} (index {idx})...", flush=True)
 
     max_attempts = 10 if rpi_mode else 3
-    cap = None
     for attempt in range(1, max_attempts + 1):
         cap = _try_open_capture(target)
-        if cap is not None and cap.isOpened():
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-            # Test frame read — v4l2loopback requires ffmpeg actively writing before read succeeds
+        if cap is not None and cap.isOpened():
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             ret, frame = cap.read()
             if ret and frame is not None:
-                print(f"[CAMERA] Opened successfully on attempt {attempt}.", flush=True)
+                print(f"[CAMERA] Successfully opened camera on attempt {attempt}.", flush=True)
                 return cap
             cap.release()
-            cap = None
 
         if attempt < max_attempts:
-            print(f"[CAMERA] Waiting for camera {target} to become ready (attempt {attempt}/{max_attempts})...", flush=True)
             time.sleep(1.0)
 
     print(f"[ERROR] Could not open camera {target} after {max_attempts} attempts.", flush=True)
-    if rpi_mode:
-        print(f"[CAMERA] Hint: Ensure start_smart_mirror.sh is running with rpicam-vid / ffmpeg feeding {target}.", flush=True)
     sys.exit(1)
-
+    
 def write_face_status(state, detected, faces_count,
                       session_user_id, session_user_name,
                       session_widgets, in_grace, auth_method=AUTH_FACE,
-                      server_online=True):
+                      server_online=True, last_face_time=0.0):
     """Atomically write the state JSON consumed by smart_mirror_pro.py.
 
     The .tmp file is placed in the same directory as the target so that
@@ -479,6 +493,9 @@ def write_face_status(state, detected, faces_count,
         "timestamp":     time.time(),
         "widgets":       session_widgets if is_recognised else [],
         "in_grace":      in_grace,
+        # When a face was last seen. The mirror polls far slower than this file
+        # is written, so it uses this to catch a face that was only there briefly.
+        "last_face_time": last_face_time,
         # How this session was established, so the mirror can label it.
         "auth_method":   final_auth,
         "server_online": bool(server_online),
@@ -551,6 +568,9 @@ def main():
     print(f"  Status file: {FACE_DATA_FILE}")
 
     cap = open_camera(args.rpi, args.camera_id)
+    from loopback_capture import FFmpegPipeCapture, LatestFrameReader
+    if not isinstance(cap, FFmpegPipeCapture):      # always work on the newest frame
+        cap = LatestFrameReader(cap)
 
     # ── Barcode sign-in (camera decoding is off by default since physical scanner acts as keyboard) ──
     barcode_reader = None
@@ -608,8 +628,10 @@ def main():
     last_api_call      = 0.0
     last_heartbeat     = 0.0
     last_server_check  = 0.0
+    last_index_sync    = time.time()   # download_and_load_index() just ran
     unrecognised_since = None   # when the unrecognised streak started
     barcode_until      = 0.0    # a scan holds the dashboard until this time
+    barcode_active     = False
 
     detected           = False
     faces_count        = 0
@@ -770,6 +792,11 @@ def main():
                         server_online = False
                 threading.Thread(target=_check_health, daemon=True).start()
 
+            # ── Pick up faces registered (or removed) since startup ─────────
+            if now - last_index_sync >= INDEX_REFRESH_SEC:
+                last_index_sync = now
+                threading.Thread(target=_sync_index, daemon=True).start()
+
             # ── Timer-driven state transitions ───────────────────────────────
             # A live barcode session outranks the face timers: the student made a
             # deliberate gesture to sign in, so it holds for its full duration
@@ -835,7 +862,8 @@ def main():
             write_face_status(state, detected, faces_count,
                               session_user_id, session_user_name,
                               session_widgets, in_grace, auth_method,
-                              server_online=server_online)
+                              server_online=server_online,
+                              last_face_time=last_face_time)
 
             # ── Periodic console log ─────────────────────────────────────────
             if frame_counter % 90 == 0:

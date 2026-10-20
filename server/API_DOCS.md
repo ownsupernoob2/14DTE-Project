@@ -1,417 +1,73 @@
-# Smart Mirror API Documentation
-
-## Base URL
-```
-http://localhost:8080
-```
-
-## Authentication
-All protected endpoints require a valid JWT token in the Authorization header:
-```
-Authorization: Bearer <jwt_token>
-```
-
-## Response Format
-All endpoints return JSON responses with the following structure:
-
-### Success Response
-```json
-{
-  "data": { /* response data */ },
-  "message": "Optional message",
-  "timestamp": "2024-04-24T12:00:00Z"
-}
-```
-
-### Error Response
-```json
-{
-  "error": "Error 400",
-  "message": "Description of error",
-  "code": 400
-}
-```
-
----
-
-## Endpoints
-
-### Health Check
-Check if the API is running.
-
-```http
-GET /health
-```
-
-**Response:**
-```json
-{
-  "status": "ok"
-}
-```
-
----
-
-## Authentication Endpoints
-
-### Login
-Authenticate user and get JWT token.
-
-```http
-POST /auth/login
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "token": "eyJhbGc...",
-    "expires_in": 3600
-  }
-}
-```
-
-**Errors:**
-- `401 Unauthorized` - Invalid credentials
-- `400 Bad Request` - Missing required fields
-
----
-
-### Register
-Create a new user account.
-
-```http
-POST /auth/register
-Content-Type: application/json
-
-{
-  "email": "newuser@example.com",
-  "password": "password123",
-  "name": "John Doe"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "data": {
-    "id": "user-123",
-    "email": "newuser@example.com",
-    "name": "John Doe"
-  }
-}
-```
-
-**Errors:**
-- `400 Bad Request` - Invalid input or user already exists
-- `422 Unprocessable Entity` - Password too weak
-
----
-
-### Refresh Token
-Get a new JWT token using refresh token.
-
-```http
-POST /auth/refresh
-Content-Type: application/json
-
-{
-  "refresh_token": "previous_refresh_token"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "token": "eyJhbGc...",
-    "refresh_token": "new_refresh_token",
-    "expires_in": 3600
-  }
-}
-```
-
----
-
-## User Endpoints (Protected)
-
-### Get Current User
-Get information about the authenticated user.
-
-```http
-GET /api/users/me
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "user-123",
-    "email": "user@example.com",
-    "name": "John Doe"
-  }
-}
-```
-
----
-
-### Get User by ID
-Get information about a specific user.
-
-```http
-GET /api/users/:id
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "user-123",
-    "email": "user@example.com",
-    "name": "John Doe"
-  }
-}
-```
-
----
-
-### Update User
-Update user profile information.
-
-```http
-PUT /api/users/:id
-Authorization: Bearer <jwt_token>
-Content-Type: application/json
-
-{
-  "name": "Jane Doe",
-  "email": "newemail@example.com"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "user-123",
-    "email": "newemail@example.com",
-    "name": "Jane Doe"
-  }
-}
-```
-
----
-
-## Dashboard Endpoints (Protected)
-
-### Get Dashboard
-Get the user's dashboard with all widgets.
-
-```http
-GET /api/dashboard
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "dashboard-123",
-    "user_id": "user-123",
-    "widgets": [
-      {
-        "id": "widget-1",
-        "type": "clock",
-        "x": 100,
-        "y": 150,
-        "data": {}
-      }
-    ]
-  }
-}
-```
-
----
-
-### Get All Widgets
-Get all widgets for the current user's dashboard.
-
-```http
-GET /api/dashboard/widgets
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": [
-    {
-      "id": "widget-1",
-      "type": "clock",
-      "x": 100,
-      "y": 150
-    },
-    {
-      "id": "widget-2",
-      "type": "weather",
-      "x": 350,
-      "y": 200
-    }
-  ]
-}
-```
-
----
-
-### Create Widget
-Add a new widget to the dashboard.
-
-```http
-POST /api/dashboard/widgets
-Authorization: Bearer <jwt_token>
-Content-Type: application/json
-
-{
-  "type": "clock",
-  "x": 100,
-  "y": 150,
-  "data": {}
-}
-```
-
-**Widget Types:**
-- `clock` - Time display
-- `weather` - Weather information
-- `calendar` - Calendar view
-- `note` - Text note
-
-**Response:** `201 Created`
-```json
-{
-  "data": {
-    "id": "widget-123",
-    "type": "clock",
-    "x": 100,
-    "y": 150
-  }
-}
-```
-
----
-
-### Update Widget
-Update a widget's position and properties.
-
-```http
-PUT /api/dashboard/widgets/:id
-Authorization: Bearer <jwt_token>
-Content-Type: application/json
-
-{
-  "x": 200,
-  "y": 300,
-  "data": {}
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "widget-123",
-    "type": "clock",
-    "x": 200,
-    "y": 300
-  }
-}
-```
-
----
-
-### Delete Widget
-Remove a widget from the dashboard.
-
-```http
-DELETE /api/dashboard/widgets/:id
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": {
-    "id": "widget-123",
-    "message": "Widget deleted"
-  }
-}
-```
-
----
-
-## Status Codes
-
-| Code | Meaning |
-|------|---------|
-| 200 | OK - Request succeeded |
-| 201 | Created - Resource created successfully |
-| 400 | Bad Request - Invalid input |
-| 401 | Unauthorized - Missing or invalid token |
-| 403 | Forbidden - Access denied |
-| 404 | Not Found - Resource not found |
-| 422 | Unprocessable Entity - Validation failed |
-| 500 | Internal Server Error |
-
----
-
-## Error Examples
-
-### Missing Authorization Header
-```json
-{
-  "error": "Error 401",
-  "message": "missing or malformed jwt",
-  "code": 401
-}
-```
-
-### Invalid Token
-```json
-{
-  "error": "Error 401",
-  "message": "invalid token",
-  "code": 401
-}
-```
-
-### Not Found
-```json
-{
-  "error": "Error 404",
-  "message": "user not found",
-  "code": 404
-}
-```
-
----
-
-## Rate Limiting
-Currently no rate limiting. This should be added before production deployment.
-
-## CORS
-CORS is enabled for all origins. In production, restrict to specific domains.
-
-## Future Enhancements
-- [ ] WebSocket support for real-time updates
-- [ ] File upload endpoints
-- [ ] Widget sharing
-- [ ] Dashboard templates
-- [ ] Analytics endpoints
-- [ ] Admin endpoints
+# Smart Mirror API
+
+Base URL: `https://api.smartmirror.me` (or `http://localhost:8080` in development).
+
+Every route belongs to one of four groups, which decides who may call it:
+
+| Group | How a caller proves itself |
+|---|---|
+| **Public** | Nothing. |
+| **Mirror** | `X-Mirror-Key: <MIRROR_API_KEY>` — the shared secret in the server's `.env` and each Pi's `~/.config/smart-mirror/env`. While the key is unset on the server these routes are open (a warning is logged). |
+| **User** | `Authorization: Bearer <Auth0 access token>`. The account row is created on first use. |
+| **Admin** | A user token whose Auth0 email is verified and listed in `ADMIN_EMAILS`. |
+
+Errors are JSON: `{"error": "message a person can read"}`.
+
+## Public
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/health`, `/api/health` | `{status, version}` |
+| GET | `/api/version` | `{version, service}` |
+| GET | `/api/notices` | Today's school notices |
+| GET | `/api/notices/config` | Notice filters the mirrors apply |
+| GET | `/api/kings-week` | King's Week articles |
+| GET | `/api/banner` | `{message}` — campus banner, empty when none |
+| GET | `/api/analytics/config` | `{mode, active_variant}` — A/B variant to serve |
+| GET | `/api/screensaver` | `{mode: demo\|slideshow\|logo, slide_seconds, slides: [img], logo: img\|null}` |
+| GET | `/api/screensaver/files/<sha256>.<ext>` | An uploaded screensaver image (immutable) |
+| GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. |
+
+## Mirror
+
+| Method | Path | Body → Returns |
+|---|---|---|
+| GET | `/api/download-index` | `{vectors: [[128 floats]], user_map: [user_id]}` — every enrolled face |
+| POST | `/api/verify-face` | `{user_id}` (matched locally) → `{user_id, user_name, language, widgets, config}` |
+| POST | `/api/verify-barcode` | `{barcode}` → same as verify-face. Rate limited per IP. |
+| POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go) |
+| GET | `/api/users/language?user_id=\|barcode=` | `{language}` |
+
+## User
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/users/me` | `{id, email, name, provider, has_face, has_barcode, is_admin, messages, contact_email}` |
+| POST | `/api/users/me/messages/seen` | Dismiss removal notices |
+| DELETE | `/api/users/me/data` | Delete your face scan, student ID, timetable link, layout and language |
+| POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}`. 409 if the face belongs to another account, 429 within 24 h of the last scan, 503 if the server has no face Python. |
+| DELETE | `/api/faces/me` | Delete your face scan |
+| GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
+| GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |
+| GET / POST / DELETE | `/api/timetable/ics` | `{ics_url}` — must be a King's High calendar link |
+| GET | `/api/dashboard`, `/api/dashboard/widgets` | Your mirror layout |
+| POST / PUT / DELETE | `/api/dashboard/widgets[/:id]`, PUT `/api/dashboard/widgets/bulk` | Edit it |
+
+## Admin
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/admin/users?q=` | Everyone signed up: email, sign-in method, student ID, face scan, timetable, session count. `q` searches name, email, student ID. |
+| DELETE | `/api/admin/users/:id` | Delete the account and its data; sessions stay, anonymised. Also deletes the Auth0 login when `AUTH0_MGMT_CLIENT_ID/SECRET` are set. |
+| DELETE | `/api/admin/users/:id/:kind` | `kind` = `face`, `barcode`, `timetable` or `dashboard`. The student is told next time they sign in. |
+| GET | `/api/admin/analytics` | Visit summary, A/B comparison, recent sessions |
+| GET | `/api/admin/face-audit` | Blocked duplicate-face attempts |
+| POST | `/api/analytics/config` | `{mode: auto\|force_a\|force_b\|hourly\|daily}` |
+| POST | `/api/notices/config` | Notice filters for the mirrors |
+| POST | `/api/notices/fetch` | Re-fetch today's notices now |
+| POST | `/api/admin/screensaver` | `{mode, slide_seconds}` |
+| POST | `/api/admin/screensaver/images?kind=slide\|logo` | multipart `files` (JPEG/PNG/WebP, ≤10 MB, ≤40 slides) |
+| DELETE | `/api/admin/screensaver/images/:id` | |
+| POST | `/api/admin/banner` | `{message}`. Also accepted with `X-Admin-Token: <ADMIN_TOKEN>` (the Windows updater). |
+
+Every admin change is recorded in the `admin_audit` table.

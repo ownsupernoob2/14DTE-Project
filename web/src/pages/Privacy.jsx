@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { CONTACT_EMAIL } from '../config'
 
 const PRIVACY_TEXT = `Privacy Policy & Terms of Use
 
-Last updated: June 2026
+Last updated: October 2026
 
 1. Data Collection & Processing
 Smart Mirror collects facial image data solely for the purpose of identifying registered users at the physical mirror terminal. Images are captured through your device camera during the registration process to construct a unique signature.
@@ -22,7 +23,16 @@ We do not sell, share, or disclose your facial data or encodings to any third pa
 You may request deletion of your facial encoding at any time through your account settings using our instant-delete feature. Upon deletion, all related signatures are permanently erased.
 
 6. Voluntary Participation & No Penalties
-Using the mirror and personalising it by signing up is entirely optional. There are no penalties or academic impacts whatsoever if you choose not to use the mirror's face recognition feature. Alternative registration and identification methods (like barcode scanning) are available.`;
+Using the mirror and personalising it by signing up is entirely optional. There are no penalties or academic impacts whatsoever if you choose not to use the mirror's face recognition feature. Alternative registration and identification methods (like barcode scanning) are available.
+
+7. Mirror Usage Statistics
+When you use the mirror, we record how the visit went (for example its length, whether gestures were used, and whether you signed in by face or student ID) to improve the mirror. These records are linked to your account and are only visible to the mirror's administrators. If your account is deleted, they are kept without your name attached.
+
+8. Removal by Administrators
+Administrators may remove your face scan, student ID, timetable link or account, for example if a scan was registered by mistake. If they do, you will see a message the next time you sign in.
+
+9. Contact
+Questions about your data, or a removal you think was a mistake: ${CONTACT_EMAIL}`;
 
 export default function Privacy() {
   const navigate = useNavigate()

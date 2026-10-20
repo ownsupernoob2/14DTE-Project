@@ -32,11 +32,43 @@ class TestGestureTrailOverlay(unittest.TestCase):
         self.assertTrue(self.trail.is_empty())
         self.assertFalse(self.trail.isVisible())
 
-    def test_add_point_activates_and_tracks(self):
+    def test_add_point_shows_the_cursor_where_the_hand_is(self):
         self.trail.add_point(100, 200, pinched=False)
         self.assertFalse(self.trail.is_empty())
         self.assertTrue(self.trail.isVisible())
-        self.assertEqual(len(self.trail._points), 1)
+        self.assertEqual(self.trail.head(), (100.0, 200.0))
+
+    def _run(self, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            time.sleep(0.004)
+            self.trail._tick()
+
+    def test_the_cursor_glides_between_reports_instead_of_stepping(self):
+        # A hand moving right at a steady 600 px/s, reported 16 times a second.
+        x = 100.0
+        for _ in range(4):
+            self.trail.add_point(x, 300)
+            self._run(1 / 16)
+            x += 600 / 16
+        before = self.trail.head()[0]
+        self._run(0.03)                       # no new report yet
+        self.assertGreater(self.trail.head()[0], before)
+
+    def test_the_cursor_settles_on_a_still_hand(self):
+        for _ in range(5):
+            self.trail.add_point(400, 300)
+            self._run(1 / 16)
+        hx, hy = self.trail.head()
+        self.assertAlmostEqual(hx, 400, delta=1.0)
+        self.assertAlmostEqual(hy, 300, delta=1.0)
+
+    def test_losing_the_hand_fades_the_cursor_away(self):
+        self.trail.add_point(100, 100)
+        self.trail.fade_out()
+        self._run(0.4)
+        self.assertTrue(self.trail.is_empty())
+        self.assertFalse(self.trail.isVisible())
 
     def test_pinch_triggers_ripple(self):
         self.trail.add_point(100, 200, pinched=False)
@@ -75,23 +107,45 @@ class TestNoticesCardPinchAndHighlight(unittest.TestCase):
     def test_cards_registered(self):
         self.assertEqual(len(self.notices.cards), 2)
 
-    def test_card_hover_and_select_border(self):
-        card = self.notices.cards[0]
-        # Resting state: 1px border on card, 3px only on :hover pseudo-state
-        card.set_selected(False)
-        self.assertIn("border: 1px solid", card.styleSheet())
-        self.assertIn("#NoticeCard:hover", card.styleSheet())
+    def _settle_border(self, card):
+        for _ in range(60):
+            if not card._bw_timer.isActive():
+                break
+            card._tick_border()
 
-        # Selected state: direct 3px solid #ffffff on #NoticeCard
+    def test_selecting_a_card_animates_a_white_border_in_and_out(self):
+        card = self.notices.cards[0]
+        self.assertEqual(card._bw, 0.0)
         card.set_selected(True)
-        self.assertIn("border: 3px solid #ffffff;", card.styleSheet())
+        self.assertTrue(card._bw_timer.isActive())
+        card._tick_border()
+        self.assertGreater(card._bw, 0.0)                 # growing, not snapped
+        self.assertLess(card._bw, 3.0)
+        self._settle_border(card)
+        self.assertEqual(card._bw, 3.0)
+        card.set_selected(False)
+        self._settle_border(card)
+        self.assertEqual(card._bw, 0.0)
+        card.grab()                                       # paints without error
+
+    def test_reselecting_the_same_card_does_no_work(self):
+        # select_at_point runs on every gesture packet; restyling every card each
+        # time was a source of UI lag.
+        card = self.notices.cards[0]
+        card.set_selected(True)
+        self._settle_border(card)
+        style = card.styleSheet()
+        card.set_selected(True)
+        self.assertFalse(card._bw_timer.isActive())
+        self.assertEqual(card.styleSheet(), style)
 
     def test_select_at_point(self):
         self.notices.setGeometry(0, 0, 400, 600)
         selected = self.notices.select_at_point(0.25, 0.20)
         self.assertIsNotNone(selected)
         self.assertEqual(self.notices.selected_index, 0)
-        self.assertIn("3px solid #ffffff", selected.styleSheet())
+        self.assertTrue(selected.selected)
+        self.assertFalse(self.notices.cards[1].selected)
 
     def test_activate_selected_opens_and_closes_modal(self):
         self.notices.select_index(0)

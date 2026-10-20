@@ -1,13 +1,15 @@
 package main
 
 import (
-	"bytes"
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,378 +17,228 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// FaceRequest is used by the legacy single-image upload and verify endpoints.
-type FaceRequest struct {
-	Image  string `json:"image,omitempty"`
-	UserID string `json:"user_id,omitempty"`
-}
+const (
+	faceRetrainCooldown = 24 * time.Hour
+	faceMaxImages       = 15
+	faceMaxImageBytes   = 3 << 20
+	// Two different people's encodings are almost never this close; a new scan
+	// this near an existing one is the same face on a second account.
+	faceCollisionDistance = 0.38
+)
 
-// TrainRequest accepts a batch of up to 10 base64-encoded images.
 type TrainRequest struct {
 	Images []string `json:"images"`
 }
 
-type faceMeta struct {
-	TrainedAt int64 `json:"trained_at"`
+func faceUnavailable(c echo.Context) error {
+	return c.JSON(http.StatusServiceUnavailable, map[string]string{
+		"error": "Face scanning is unavailable on the server right now. Please try again later or contact " + ContactEmail + ".",
+	})
 }
 
-const faceRetrainCooldown = 24 * time.Hour
-
-func safeUserIDFromToken(c echo.Context) string {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
-		return ""
-	}
-	safeUserID := strings.ReplaceAll(userID, "|", "_")
-	safeUserID = strings.ReplaceAll(safeUserID, "/", "_")
-	return safeUserID
-}
-
-func faceMetaPath(safeUserID string) string {
-	return fmt.Sprintf("encodings/%s.meta.json", safeUserID)
-}
-
-func facePicklePath(safeUserID string) string {
-	return fmt.Sprintf("encodings/%s.pickle", safeUserID)
-}
-
-func readFaceMeta(safeUserID string) (faceMeta, bool) {
-	data, err := os.ReadFile(faceMetaPath(safeUserID))
-	if err != nil {
-		return faceMeta{}, false
-	}
-	var meta faceMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return faceMeta{}, false
-	}
-	return meta, true
-}
-
-func writeFaceMeta(safeUserID string) error {
-	meta := faceMeta{TrainedAt: time.Now().Unix()}
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(faceMetaPath(safeUserID), data, 0644)
-}
-
-// trainFace receives up to 10 base64 images, saves them temporarily, runs train.py
-// to build a face encoding pickle, then deletes the raw images.
-// The encoding is saved to encodings/<user_id>.pickle.
+// POST /api/faces/train — up to 15 photos in, one stored set of encodings out.
+// Photos are written to a private temp folder for train.py and deleted straight
+// after; only the 128-number encodings are kept.
 func trainFace(c echo.Context) error {
-	safeUserID := safeUserIDFromToken(c)
-	if safeUserID == "" {
-		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
-	}
+	userID := getUserIDFromToken(c)
 
-	// Enforce 24h cooldown when updating an existing encoding
-	picklePath := facePicklePath(safeUserID)
-	if _, err := os.Stat(picklePath); err == nil {
-		if meta, ok := readFaceMeta(safeUserID); ok {
-			trainedAt := time.Unix(meta.TrainedAt, 0)
-			if time.Since(trainedAt) < faceRetrainCooldown {
-				retryAfter := faceRetrainCooldown - time.Since(trainedAt)
-				hours := int(retryAfter.Hours())
-				if hours < 1 {
-					hours = 1
-				}
-				return c.JSON(429, map[string]interface{}{
-					"error": fmt.Sprintf("Face scan was updated recently. You can update again in about %d hour(s). To register a new scan sooner, delete your face data in Settings first.", hours),
-				})
-			}
+	var trainedAt int64
+	if err := db.QueryRow(`SELECT trained_at FROM faces WHERE user_id = ?`, userID).Scan(&trainedAt); err == nil {
+		if wait := faceRetrainCooldown - time.Since(time.Unix(trainedAt, 0)); wait > 0 {
+			hours := int(math.Ceil(wait.Hours()))
+			return c.JSON(http.StatusTooManyRequests, map[string]string{
+				"error": fmt.Sprintf("Your face scan was updated recently. You can update it again in about %d hour(s), or delete it in Settings and scan again now.", hours),
+			})
 		}
 	}
 
 	var req TrainRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+	if err := c.Bind(&req); err != nil || len(req.Images) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "No photos were received"})
+	}
+	if len(req.Images) > faceMaxImages {
+		req.Images = req.Images[:faceMaxImages]
 	}
 
-	if len(req.Images) == 0 {
-		return c.JSON(400, map[string]string{"error": "No images provided"})
+	py := facePython()
+	if py == nil {
+		return faceUnavailable(c)
 	}
 
-	// Sanitise userID for use as a directory name (Auth0 sub looks like "auth0|abc123")
-	tempDir := fmt.Sprintf("temp/%s", safeUserID)
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return c.JSON(500, map[string]string{"error": "Could not create temp directory"})
+	workDir, err := os.MkdirTemp("", "face-scan-")
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not process the scan"})
 	}
-	// Always clean up temp images when we're done
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(workDir)
 
-	// Decode and save each image
 	saved := 0
 	for i, img := range req.Images {
-		b64data := img
-		if idx := strings.Index(b64data, ","); idx != -1 {
-			b64data = b64data[idx+1:]
+		if idx := strings.Index(img, ","); idx != -1 {
+			img = img[idx+1:]
 		}
-		imgBytes, err := base64.StdEncoding.DecodeString(b64data)
-		if err != nil {
-			log.Printf("Skipping image %d: base64 decode error: %v", i, err)
+		raw, err := base64.StdEncoding.DecodeString(img)
+		if err != nil || len(raw) == 0 || len(raw) > faceMaxImageBytes {
 			continue
 		}
-		filepath := fmt.Sprintf("%s/frame_%d.jpg", tempDir, i)
-		if err := os.WriteFile(filepath, imgBytes, 0644); err != nil {
-			log.Printf("Skipping image %d: write error: %v", i, err)
+		if ct := http.DetectContentType(raw); ct != "image/jpeg" && ct != "image/png" {
 			continue
 		}
-		saved++
+		if os.WriteFile(filepath.Join(workDir, fmt.Sprintf("frame_%02d.jpg", i)), raw, 0600) == nil {
+			saved++
+		}
 	}
-
 	if saved == 0 {
-		return c.JSON(400, map[string]string{"error": "No valid images could be decoded"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "None of the photos could be read"})
 	}
 
-	outputPickle := facePicklePath(safeUserID)
-
-	// Run the Python training script
-	cmd := exec.Command(getPythonCmd(), "train.py", tempDir, outputPickle)
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-
-	if err := cmd.Run(); err != nil {
-		errStr := strings.TrimSpace(errOut.String())
-		if errStr == "" {
-			errStr = strings.TrimSpace(out.String())
+	outPath := filepath.Join(workDir, "encodings.json")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 3*time.Minute)
+	defer cancel()
+	cmd := py.command(ctx, "train.py", workDir, outPath)
+	out, err := cmd.CombinedOutput()
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if err != nil || !strings.HasPrefix(last, "OK:") {
+		log.Printf("[FACE] train.py failed for %s: %v: %s", userID, err, strings.TrimSpace(string(out)))
+		if strings.HasPrefix(last, "ERROR:") {
+			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": strings.TrimPrefix(last, "ERROR:")})
 		}
-		if errStr == "" {
-			errStr = err.Error()
-		}
-		log.Printf("train.py error: %v, stderr: %s", err, errOut.String())
-
-		if strings.Contains(errStr, "COLLISION") {
-			return c.JSON(409, map[string]string{
-				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
-			})
-		}
-		return c.JSON(500, map[string]string{"error": "Training failed: " + errStr})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "The face scan could not be processed. Please try again."})
 	}
 
-	output := strings.TrimSpace(out.String())
+	var result struct {
+		Encodings [][]float64 `json:"encodings"`
+		Median    []float64   `json:"median"`
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil || json.Unmarshal(data, &result) != nil || len(result.Encodings) == 0 {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "The face scan could not be processed. Please try again."})
+	}
 
-	lines := strings.Split(output, "\n")
-	lastLine := strings.TrimSpace(lines[len(lines)-1])
-
-	if !strings.HasPrefix(lastLine, "OK:") {
-		if strings.Contains(output, "COLLISION") {
-			return c.JSON(409, map[string]string{
-				"error": "This face is already registered to another student account. If you believe this is an error, please verify your Student ID barcode first.",
-			})
-		}
-		return c.JSON(500, map[string]string{
-			"error": "Training failed: " + output,
+	if other, dist := closestOtherFace(userID, result.Median); other != "" && dist < faceCollisionDistance {
+		db.Exec(`INSERT INTO face_collisions(at, attempted_user, matched_user, distance) VALUES(?, ?, ?, ?)`,
+			time.Now().Unix(), userID, other, dist)
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error": "This face is already registered to another account. If you think this is a mistake, contact " + ContactEmail + ".",
 		})
 	}
 
-	framesUsed := 0
-	fmt.Sscanf(strings.TrimPrefix(output, "OK:"), "%d", &framesUsed)
-
-	if err := writeFaceMeta(safeUserID); err != nil {
-		log.Printf("Failed to write face meta for %s: %v", safeUserID, err)
+	encJSON, _ := json.Marshal(result.Encodings)
+	_, err = db.Exec(`INSERT INTO faces(user_id, encodings, frames, trained_at) VALUES(?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET encodings = excluded.encodings, frames = excluded.frames, trained_at = excluded.trained_at`,
+		userID, string(encJSON), len(result.Encodings), time.Now().Unix())
+	if err != nil {
+		log.Printf("[FACE] saving encodings for %s: %v", userID, err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not save the face scan"})
 	}
 
-	log.Printf("Face training complete for user %s: %d frames used, pickle at %s", safeUserID, framesUsed, outputPickle)
-
-	// Recompile FAISS index (export encodings) in background
-	exec.Command(getPythonCmd(), "export_encodings.py").Start()
-
-	return c.JSON(200, map[string]interface{}{
+	log.Printf("[FACE] %s scanned: %d frames kept", userID, len(result.Encodings))
+	return c.JSON(http.StatusOK, map[string]interface{}{
 		"status":      "trained",
-		"frames_used": framesUsed,
-		"user_id":     safeUserID,
+		"frames_used": len(result.Encodings),
 	})
 }
 
-// deleteFace removes the user's face encoding pickle file
-func deleteFace(c echo.Context) error {
-	safeUserID := safeUserIDFromToken(c)
-	if safeUserID == "" {
-		return c.JSON(401, map[string]string{"error": "Could not identify user from token"})
-	}
-
-	picklePath := facePicklePath(safeUserID)
-	if err := os.Remove(picklePath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete face encoding for %s: %v", safeUserID, err)
-		return c.JSON(500, map[string]string{"error": "Failed to delete face scan"})
-	}
-
-	metaPath := faceMetaPath(safeUserID)
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete face meta for %s: %v", safeUserID, err)
-	}
-
-	// Recompile FAISS index (export encodings) in background
-	exec.Command(getPythonCmd(), "export_encodings.py").Start()
-
-	return c.JSON(200, map[string]string{"message": "Face scan deleted successfully"})
-}
-
-// uploadFace is the legacy single-image face upload, kept for backward compat.
-func uploadFace(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
-		userID = "user-123"
-	}
-
-	var req FaceRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request"})
-	}
-
-	b64data := req.Image
-	if idx := strings.Index(b64data, ","); idx != -1 {
-		b64data = b64data[idx+1:]
-	}
-
-	imgBytes, err := base64.StdEncoding.DecodeString(b64data)
+// closestOtherFace returns the other user whose encodings come nearest to probe.
+func closestOtherFace(userID string, probe []float64) (string, float64) {
+	rows, err := db.Query(`SELECT user_id, encodings FROM faces WHERE user_id != ?`, userID)
 	if err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid base64 image"})
+		return "", math.Inf(1)
 	}
-
-	filepath := fmt.Sprintf("faces/%s.jpg", userID)
-	if err := os.WriteFile(filepath, imgBytes, 0644); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to save image"})
-	}
-
-	return c.JSON(200, map[string]string{"message": "Face registered successfully"})
-}
-
-func verifyFace(c echo.Context) error {
-	var req FaceRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request"})
-	}
-
-	if req.UserID != "" {
-		if req.UserID == "idle" || req.UserID == "unknown" {
-			return c.JSON(401, map[string]string{"error": "Face not recognised"})
+	defer rows.Close()
+	best, bestDist := "", math.Inf(1)
+	for rows.Next() {
+		var other, raw string
+		var encs [][]float64
+		if rows.Scan(&other, &raw) != nil || json.Unmarshal([]byte(raw), &encs) != nil {
+			continue
 		}
-		return c.JSON(200, map[string]interface{}{
-			"user_id": req.UserID,
-			"widgets": getWidgetsForUser(req.UserID),
-			"config":  getDashboardConfigForUser(req.UserID),
-		})
-	}
-
-	b64data := req.Image
-	if idx := strings.Index(b64data, ","); idx != -1 {
-		b64data = b64data[idx+1:]
-	}
-
-	if b64data == "bypass" {
-		return c.JSON(200, map[string]interface{}{
-			"user_id": "bypass_user",
-			"widgets": getWidgetsForUser("bypass_user"),
-			"config":  getDashboardConfigForUser("bypass_user"),
-		})
-	}
-
-	imgBytes, err := base64.StdEncoding.DecodeString(b64data)
-	if err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid base64 image"})
-	}
-
-	tempPath := "temp/verify.jpg"
-	if err := os.WriteFile(tempPath, imgBytes, 0644); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to save temp image"})
-	}
-	defer os.Remove(tempPath)
-
-	// Run Python verification script against the encodings directory
-	cmd := exec.Command(getPythonCmd(), "verify.py", tempPath, "encodings")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err = cmd.Run()
-	if err != nil {
-		log.Println("Python verify error:", err)
-		return c.JSON(500, map[string]string{"error": "Verification failed"})
-	}
-
-	output := strings.TrimSpace(out.String())
-
-	if output == "NO_FACE" {
-		return c.JSON(401, map[string]string{"error": "No face detected"})
-	}
-
-	if strings.HasPrefix(output, "MATCH:") {
-		matchedUserID := strings.TrimPrefix(output, "MATCH:")
-		if matchedUserID == "unknown" {
-			return c.JSON(401, map[string]string{"error": "Face not recognised"})
-		}
-
-		return c.JSON(200, map[string]interface{}{
-			"user_id": matchedUserID,
-			"widgets": getWidgetsForUser(matchedUserID),
-			"config":  getDashboardConfigForUser(matchedUserID),
-		})
-	}
-
-	return c.JSON(401, map[string]string{"error": "Face not recognised"})
-}
-
-func downloadIndex(c echo.Context) error {
-	exportFile := "encodings/exported_encodings.json"
-
-	// If exported file does not exist, compile it
-	if _, err := os.Stat(exportFile); os.IsNotExist(err) {
-		cmd := exec.Command(getPythonCmd(), "export_encodings.py")
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return c.JSON(500, map[string]string{
-				"error":  "Failed to export encodings: " + err.Error(),
-				"stderr": stderr.String(),
-			})
-		}
-	}
-
-	data, err := os.ReadFile(exportFile)
-	if err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to read exported encodings file"})
-	}
-
-	var payload struct {
-		Vectors [][]float32 `json:"vectors"`
-		UserMap []string    `json:"user_map"`
-	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return c.JSON(500, map[string]string{"error": "Failed to parse exported encodings"})
-	}
-
-	return c.JSON(200, payload)
-}
-
-// GET /api/admin/face-audit
-// Allows admin (marminamina3@gmail.com) to trace enrolled faces and collision logs.
-func getFaceAuditLog(c echo.Context) error {
-	if !verifyAdminAccess(c) {
-		return c.JSON(403, map[string]string{
-			"error": "Forbidden: Admin access restricted to " + DefaultAdminEmail,
-		})
-	}
-
-	collisionPath := filepath.Join(dataDir, "face_collisions.json")
-	var collisions []map[string]interface{}
-	if data, err := os.ReadFile(collisionPath); err == nil {
-		json.Unmarshal(data, &collisions)
-	}
-
-	var enrolledUsers []string
-	if files, err := os.ReadDir("encodings"); err == nil {
-		for _, f := range files {
-			if strings.HasSuffix(f.Name(), ".pickle") {
-				enrolledUsers = append(enrolledUsers, strings.TrimSuffix(f.Name(), ".pickle"))
+		for _, e := range encs {
+			if d := euclidean(probe, e); d < bestDist {
+				best, bestDist = other, d
 			}
 		}
 	}
+	return best, bestDist
+}
 
-	return c.JSON(200, map[string]interface{}{
-		"total_enrolled": len(enrolledUsers),
-		"enrolled_users": enrolledUsers,
-		"collisions":     collisions,
-	})
+func euclidean(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return math.Inf(1)
+	}
+	var s float64
+	for i := range a {
+		d := a[i] - b[i]
+		s += d * d
+	}
+	return math.Sqrt(s)
+}
+
+// DELETE /api/faces/me
+func deleteFace(c echo.Context) error {
+	if _, err := db.Exec(`DELETE FROM faces WHERE user_id = ?`, getUserIDFromToken(c)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete face scan"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Face scan deleted"})
+}
+
+// GET /api/download-index (mirror) — every stored encoding with its owner, for
+// the mirror's local matcher.
+func downloadIndex(c echo.Context) error {
+	rows, err := db.Query(`SELECT user_id, encodings FROM faces ORDER BY user_id`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not read face index"})
+	}
+	defer rows.Close()
+	vectors := [][]float64{}
+	userMap := []string{}
+	for rows.Next() {
+		var uid, raw string
+		var encs [][]float64
+		if rows.Scan(&uid, &raw) != nil || json.Unmarshal([]byte(raw), &encs) != nil {
+			continue
+		}
+		for _, e := range encs {
+			vectors = append(vectors, e)
+			userMap = append(userMap, uid)
+		}
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"vectors": vectors, "user_map": userMap})
+}
+
+// POST /api/verify-face (mirror) — the mirror matched a face locally and asks
+// for that user's dashboard.
+func verifyFace(c echo.Context) error {
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.Bind(&req); err != nil || req.UserID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id required"})
+	}
+	var one int
+	if err := db.QueryRow(`SELECT 1 FROM faces WHERE user_id = ?`, req.UserID).Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Face not recognised"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Lookup failed"})
+	}
+	return c.JSON(http.StatusOK, mirrorUserPayload(req.UserID, "face"))
+}
+
+func mirrorUserPayload(userID, authMethod string) map[string]interface{} {
+	cfg := getDashboardConfigForUser(userID)
+	widgets := []Widget{}
+	for _, s := range cfg.Slots {
+		widgets = append(widgets, s.Widget)
+	}
+	var name, language string
+	db.QueryRow(`SELECT name, language FROM users WHERE id = ?`, userID).Scan(&name, &language)
+	return map[string]interface{}{
+		"user_id":     userID,
+		"user_name":   name,
+		"language":    language,
+		"widgets":     widgets,
+		"config":      cfg,
+		"auth_method": authMethod,
+	}
 }

@@ -39,6 +39,15 @@ Ensure the Windows host machine has:
 1. **Git for Windows**: Installed and available in PATH (`git --version`).
 2. **Go (Golang)**: Go 1.20+ installed and in PATH (`go version`).
 3. **PowerShell 5.1 or PowerShell 7+**.
+4. **Python 3.10, 3.11 or 3.12** for face scans, installed *for all users* from python.org. `run-and-update.ps1` runs `setup-face-python.ps1` at start and after each update, which creates `server\.venv` with face_recognition. Run it by hand once to check:
+   ```powershell
+   cd server
+   powershell -ExecutionPolicy Bypass -File .\setup-face-python.ps1
+   ```
+
+Settings live in `server\.env` (see `.env.example`): `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `ADMIN_EMAILS`, `MIRROR_API_KEY` (the same value goes on every mirror), `ADMIN_TOKEN`, and optionally `AUTH0_MGMT_CLIENT_ID` / `AUTH0_MGMT_CLIENT_SECRET` so deleting a user also deletes their Auth0 login.
+
+All data is in `server\data\smartmirror.db` (SQLite) plus `server\data\screensaver\`. Back up the `data` folder.
 
 ---
 

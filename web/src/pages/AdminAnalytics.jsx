@@ -1,20 +1,23 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
-
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
-const AUTHORIZED_ADMIN_EMAIL = 'marminamina3@gmail.com'
+import UsersPanel from '../components/admin/UsersPanel'
+import ScreensaverPanel from '../components/admin/ScreensaverPanel'
+import MirrorNoticePanel from '../components/admin/MirrorNoticePanel'
+import { useMe } from '../contexts/MeContext'
+import { API_URL } from '../config'
 
 export default function AdminAnalytics() {
-  const { user, isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently } = useAuth0()
+  const { isLoading: isAuthLoading } = useAuth0()
+  const { me, meChecked, isAdmin, authFetch, contactEmail } = useMe()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedVariantFilter, setSelectedVariantFilter] = useState('ALL') // 'ALL', 'A', 'B'
-  const [activeTab, setActiveTab] = useState('overview') // 'overview', 'hourly', 'sessions', 'biometrics'
+  const [activeTab, setActiveTab] = useState('overview') // overview | users | screensaver | hourly | sessions | biometrics
   const [auditData, setAuditData] = useState(null)
   const [abConfig, setAbConfig] = useState(() => {
     try {
@@ -38,8 +41,6 @@ export default function AdminAnalytics() {
   const [savingConfig, setSavingConfig] = useState(false)
   const [configFeedback, setConfigFeedback] = useState('')
 
-  const userEmail = (user?.email || '').toLowerCase().trim()
-  const isAdmin = userEmail === AUTHORIZED_ADMIN_EMAIL
 
   const fetchAnalytics = async (isManual = false) => {
     if (isManual) setRefreshing(true)
@@ -47,16 +48,7 @@ export default function AdminAnalytics() {
     setError(null)
 
     try {
-      const token = await getAccessTokenSilently().catch(() => '')
-      const headers = {
-        'Content-Type': 'application/json',
-        'X-Admin-Email': userEmail || AUTHORIZED_ADMIN_EMAIL,
-      }
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const res = await fetch(`${API_URL}/api/admin/analytics`, { headers })
+      const res = await authFetch('/api/admin/analytics')
       if (!res.ok) {
         if (res.status === 403) {
           throw new Error('Unauthorized: This dashboard is restricted to administrator accounts.')
@@ -69,7 +61,7 @@ export default function AdminAnalytics() {
 
       // Fetch dynamic A/B test config safely
       try {
-        const cfgRes = await fetch(`${API_URL}/api/analytics/config`, { headers })
+        const cfgRes = await fetch(`${API_URL}/api/analytics/config`)
         if (cfgRes.ok) {
           const cfgJson = await cfgRes.json()
           if (cfgJson && typeof cfgJson === 'object') {
@@ -85,7 +77,7 @@ export default function AdminAnalytics() {
 
       // Fetch biometric collision & account audit data safely
       try {
-        const auditRes = await fetch(`${API_URL}/api/admin/face-audit`, { headers })
+        const auditRes = await authFetch('/api/admin/face-audit')
         if (auditRes.ok) {
           const auditJson = await auditRes.json()
           setAuditData(auditJson)
@@ -120,16 +112,8 @@ export default function AdminAnalytics() {
     } catch { /* silent */ }
 
     try {
-      const token = await getAccessTokenSilently().catch(() => '')
-      const headers = {
-        'Content-Type': 'application/json',
-        'X-Admin-Email': userEmail || AUTHORIZED_ADMIN_EMAIL,
-      }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-
-      const res = await fetch(`${API_URL}/api/analytics/config`, {
+      const res = await authFetch('/api/analytics/config', {
         method: 'POST',
-        headers,
         body: JSON.stringify({ mode: newMode }),
       })
       if (res.ok) {
@@ -158,7 +142,8 @@ export default function AdminAnalytics() {
     if (isAdmin) {
       fetchAnalytics()
     }
-  }, [isAdmin, userEmail])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin])
 
   // Filtered recent sessions
   const filteredSessions = useMemo(() => {
@@ -182,7 +167,7 @@ export default function AdminAnalytics() {
   }
 
   // Guard: Auth Loading
-  if (isAuthLoading) {
+  if (isAuthLoading || (!me && !meChecked)) {
     return (
       <div className="min-h-screen bg-[#000000] text-white flex items-center justify-center font-mono">
         <div className="flex flex-col items-center gap-3">
@@ -193,38 +178,9 @@ export default function AdminAnalytics() {
     )
   }
 
-  // Guard: Unauthorized Access
+  // Not an admin (or the server couldn't confirm it): back to the home page.
   if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-[#000000] text-white flex flex-col font-mono">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center p-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="max-w-md w-full bg-[#0a0a0a] border border-[#331111] rounded-none p-8 text-center shadow-2xl relative"
-          >
-            <div className="w-16 h-16 mx-auto mb-5 rounded-none bg-red-950/40 border border-red-500/30 flex items-center justify-center text-red-400">
-              <span className="material-symbols-outlined text-3xl">shield_lock</span>
-            </div>
-            <h1 className="text-xl font-bold text-white mb-2 uppercase tracking-tight">Admin Restricted Area</h1>
-            <p className="text-xs text-[#888888] mb-6 leading-relaxed uppercase tracking-wider">
-              This analytics and A/B hypothesis verification portal is restricted strictly to authorized mirror administrators.
-            </p>
-            <div className="bg-[#121212] border border-[#222222] rounded-none p-3 text-xs text-[#777777] mb-6 font-mono break-all">
-              Authenticated as: <span className="text-white font-medium">{user?.email || 'Guest'}</span>
-            </div>
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center justify-center gap-2 w-full py-3 px-4 bg-white text-black hover:bg-[#e0e0e0] text-xs font-bold uppercase tracking-wider rounded-none transition-colors"
-            >
-              <span className="material-symbols-outlined text-base">arrow_back</span>
-              Return to Dashboard
-            </Link>
-          </motion.div>
-        </div>
-      </div>
-    )
+    return <Navigate to="/" replace />
   }
 
   return (
@@ -242,7 +198,7 @@ export default function AdminAnalytics() {
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-none text-[10px] font-mono text-[#888888] bg-[#0e0e0e] border border-[#222222]">
                 <span className="material-symbols-outlined text-xs text-[#aaaaaa]">person</span>
-                {AUTHORIZED_ADMIN_EMAIL}
+                {me?.email}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight uppercase">
@@ -463,6 +419,9 @@ export default function AdminAnalytics() {
             <div className="flex items-center gap-2 border-b border-[#222222] pb-3">
               {[
                 { id: 'overview', label: 'A/B Battle Card' },
+                { id: 'users', label: 'Users' },
+                { id: 'screensaver', label: 'Screensaver' },
+                { id: 'notice', label: 'Mirror Notice' },
                 { id: 'hourly', label: 'Hourly Peak Distribution' },
                 { id: 'sessions', label: `Recent Session Feed (${data.recent_sessions?.length || 0})` },
                 { id: 'biometrics', label: 'Biometric Audit & Collisions' },
@@ -482,6 +441,10 @@ export default function AdminAnalytics() {
             </div>
 
             {/* ── TAB 1: A/B TESTING DEEP-DIVE BATTLE CARD ───────────────── */}
+            {activeTab === 'users' && <UsersPanel />}
+            {activeTab === 'screensaver' && <ScreensaverPanel />}
+            {activeTab === 'notice' && <MirrorNoticePanel />}
+
             {activeTab === 'overview' && (
               <section className="flex flex-col gap-6">
                 {/* Hypothesis Status Card */}
@@ -954,8 +917,8 @@ export default function AdminAnalytics() {
                       <span className="text-[11px] uppercase font-mono tracking-wider font-bold">Admin Escalation</span>
                       <span className="material-symbols-outlined text-lg text-white">mail</span>
                     </div>
-                    <div className="text-xs font-bold text-white font-mono truncate" title="marminamina3@gmail.com">
-                      marminamina3@gmail.com
+                    <div className="text-xs font-bold text-white font-mono truncate" title={contactEmail}>
+                      {contactEmail}
                     </div>
                     <p className="text-[11px] text-[#666666] mt-1 font-mono uppercase">Primary contact</p>
                   </div>
@@ -1016,7 +979,7 @@ export default function AdminAnalytics() {
                                 </span>
                               </td>
                               <td className="py-3 px-3 text-right text-[#888888] text-[11px]">
-                                {col.contact_email || 'marminamina3@gmail.com'}
+                                {col.contact_email || contactEmail}
                               </td>
                             </tr>
                           ))}
@@ -1026,41 +989,23 @@ export default function AdminAnalytics() {
                   )}
                 </div>
 
-                {/* Enrolled Accounts Grid */}
-                <div className="bg-[#0c0c0c] border border-[#222222] rounded-none p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <span className="material-symbols-outlined text-white text-lg">badge</span>
-                        Registered Biometric Encodings
-                      </h3>
-                      <p className="text-xs text-[#888888] mt-0.5 uppercase tracking-wider">
-                        Students currently registered with 128-dimensional facial embeddings for instant mirror unlock
-                      </p>
-                    </div>
-                    <span className="text-xs font-mono text-white bg-[#141414] px-2.5 py-1 rounded-none border border-[#222222]">
-                      {auditData?.enrolled_users?.length || 0} enrolled
-                    </span>
+                {/* Enrolled faces: who they are lives in the Users tab */}
+                <div className="bg-[#0c0c0c] border border-[#222222] rounded-none p-6 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <span className="material-symbols-outlined text-white text-lg">badge</span>
+                      Registered Face Scans
+                    </h3>
+                    <p className="text-xs text-[#888888] mt-0.5 uppercase tracking-wider">
+                      See and remove individual scans in the Users tab
+                    </p>
                   </div>
-
-                  {!auditData?.enrolled_users || auditData.enrolled_users.length === 0 ? (
-                    <div className="py-8 text-center text-[#666666] font-mono text-xs">
-                      No facial encodings found in server storage.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5 font-mono text-xs">
-                      {auditData.enrolled_users.map((uid, idx) => (
-                        <div
-                          key={idx}
-                          className="px-3 py-2 rounded-none bg-[#121212] border border-[#222222] text-[#cccccc] flex items-center gap-2 overflow-hidden"
-                          title={uid}
-                        >
-                          <span className="w-1.5 h-1.5 rounded-none bg-white shrink-0" />
-                          <span className="truncate">{uid}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => setActiveTab('users')}
+                    className="text-xs font-mono text-white bg-[#141414] px-3 py-1.5 rounded-none border border-[#333333] hover:border-white cursor-pointer"
+                  >
+                    {auditData?.total_enrolled || 0} enrolled →
+                  </button>
                 </div>
               </section>
             )}

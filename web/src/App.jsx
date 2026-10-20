@@ -8,11 +8,12 @@ import Privacy from './pages/Privacy'
 import AdminAnalytics from './pages/AdminAnalytics'
 import { ServerStatusProvider, useServerStatus } from './contexts/ServerStatusContext'
 import { LanguageProvider } from './contexts/LanguageContext'
+import { MeProvider } from './contexts/MeContext'
+import AccountMessages from './components/AccountMessages'
+import { API_URL } from './config'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { useState, useEffect } from 'react'
-
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
 function ServerDownNotice() {
   const { isServerUp } = useServerStatus()
@@ -73,9 +74,11 @@ function App() {
 
   return (
     <LanguageProvider>
+      <MeProvider>
       <ServerStatusProvider>
         <Router>
           <ServerDownNotice />
+          {isAuthenticated && <AccountMessages />}
           <Routes>
             <Route path="/login" element={!isAuthenticated ? <Login /> : <Navigate to="/dashboard" />} />
             <Route path="/privacy" element={<Privacy />} />
@@ -104,16 +107,17 @@ function App() {
             />
             <Route
               path="/admin"
-              element={isAuthenticated ? <AdminAnalytics /> : <Navigate to="/login" />}
+              element={isAuthenticated ? <AdminAnalytics /> : <Navigate to="/" replace />}
             />
 
-            <Route path="*" element={<Navigate to="/dashboard" />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <div className="fixed bottom-2 right-3 text-[#333333] text-[11px] font-mono tracking-wider select-none pointer-events-none z-40">
             {versionCode}
           </div>
         </Router>
       </ServerStatusProvider>
+      </MeProvider>
     </LanguageProvider>
   )
 }

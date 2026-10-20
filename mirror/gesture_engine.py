@@ -52,8 +52,11 @@ GESTURE_STATUS_FILE = os.path.join(
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "gesture_recognizer.task")
 
-# The Pi reads the v4l2loopback device that start_smart_mirror.sh feeds (/dev/video20).
-RPI_CAMERA = os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video42")
+# The Pi reads its own v4l2loopback device that start_smart_mirror.sh feeds.
+# v4l2loopback only lets one reader stream at a time, so the face daemon gets
+# /dev/video42 and this daemon gets a second copy of the feed on /dev/video43.
+RPI_CAMERA = (os.environ.get("MIRROR_GESTURE_DEV")
+              or os.environ.get("MIRROR_LOOPBACK_DEV", "/dev/video43"))
 
 
 def default_flip():
@@ -96,6 +99,53 @@ HAND_LOST_SEC       = 0.4    # no landmarks for this long -> hand is gone
 
 POSITION_QUANTUM    = 1.0 / 96
 
+# Cursor smoothing (One Euro filter, positions in 0–1 screen units). A resting
+# hand is smoothed down to MIN_CUTOFF Hz so landmark jitter disappears; the
+# cutoff rises with speed (BETA), so a moving hand is followed with almost no
+# lag. Raise MIN_CUTOFF for a twitchier cursor, BETA for less lag on fast moves.
+CURSOR_MIN_CUTOFF   = 1.2
+CURSOR_BETA         = 6.0
+CURSOR_D_CUTOFF     = 1.0
+
+# Picking the hand to follow. A hand whose back faces the camera (by more than
+# this fraction of a fully turned hand) is ignored, as long as MediaPipe is at
+# least BACKHAND_MIN_LABEL_SCORE sure which hand it is.
+BACKHAND_REJECT          = 0.25
+BACKHAND_MIN_LABEL_SCORE = 0.6
+CURRENT_HAND_BONUS       = 1.35   # stickiness, so two similar hands don't trade control
+
+
+class OneEuroFilter:
+    """Speed-adaptive low-pass filter (Casiez et al., CHI 2012)."""
+
+    def __init__(self, min_cutoff=CURSOR_MIN_CUTOFF, beta=CURSOR_BETA, d_cutoff=CURSOR_D_CUTOFF):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self.reset()
+
+    def reset(self):
+        self._x = None
+        self._dx = 0.0
+        self._t = None
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x, t):
+        if self._x is None or self._t is None or t <= self._t:
+            self._x, self._t = x, t
+            return x
+        dt = t - self._t
+        self._t = t
+        dx = (x - self._x) / dt
+        self._dx += self._alpha(self.d_cutoff, dt) * (dx - self._dx)
+        cutoff = self.min_cutoff + self.beta * abs(self._dx)
+        self._x += self._alpha(cutoff, dt) * (x - self._x)
+        return self._x
+
 
 def classify_region(x):
     if x < REGION_LEFT_EDGE:
@@ -136,16 +186,18 @@ def _try_open_capture(target):
         return None
 
     # 2. On Linux:
-    # Try V4L2 by integer index first
-    if isinstance(idx, int):
-        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+    # Try V4L2 by device path first. On the Pi, OpenCV refuses the
+    # v4l2loopback device by index ("can't open camera by index") but
+    # opens /dev/video42 fine by path.
+    if isinstance(target, str):
+        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
 
-    # Try V4L2 by device path string (e.g. /dev/video20)
-    if isinstance(target, str):
-        cap = cv2.VideoCapture(target, cv2.CAP_V4L2)
+    # Then V4L2 by integer index
+    if isinstance(idx, int):
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
         if cap.isOpened():
             return cap
         cap.release()
@@ -163,6 +215,19 @@ def _try_open_capture(target):
         if cap.isOpened():
             return cap
         cap.release()
+
+    # OpenCV's V4L2 backend can refuse the Pi's v4l2loopback device even though
+    # ffmpeg reads it fine, so fall back to reading it through ffmpeg.
+    if sys.platform != 'win32' and isinstance(target, str) and target.startswith('/dev/video'):
+        try:
+            from loopback_capture import FFmpegPipeCapture
+            cap = FFmpegPipeCapture(target)
+            if cap.isOpened():
+                print(f"[CAMERA] OpenCV could not open {target}; reading it through ffmpeg instead.", flush=True)
+                return cap
+            cap.release()
+        except Exception as e:
+            print(f"[CAMERA] ffmpeg fallback failed: {e}", flush=True)
 
     return None
 
@@ -183,6 +248,8 @@ class GestureEngine:
         self.hand_x = 0.0
         self.hand_y = 0.0
         self.last_seen = 0.0
+        self._filter_x = OneEuroFilter()
+        self._filter_y = OneEuroFilter()
 
         self.pinched = False
         self.pinch_start = None
@@ -204,6 +271,7 @@ class GestureEngine:
         self.right_dwell_progress = 0.0
 
         self.seq = 0
+        self.fps = 0.0               # smoothed processing rate, for the mirror's debug panel
         self.last_write = 0.0
         self.last_payload = None
 
@@ -241,56 +309,67 @@ class GestureEngine:
         return self._distance(lm[0], lm[9])
 
     @staticmethod
-    def is_backhand(lm, handedness='Right', flip=False):
-        """Reject backhand (knuckle-facing) views.
+    def palm_facing(lm, handedness='Right'):
+        """How squarely the palm faces the camera: +1 palm on, -1 back on, ~0 side on.
 
-        MediaPipe handedness labels can be unreliable when the camera image is
-        not mirrored (flip=False), so we compute nz for BOTH hand orientations
-        and only reject if BOTH indicate a backhand.  This prevents false
-        rejection of left-hand palm views.
+        The wrist → middle-knuckle and index → pinky knuckle vectors span the
+        palm; the sign of their cross product says which way it faces, and which
+        sign means "palm" depends on whether it is a left or a right hand.
+        MediaPipe labels hands from how they look in the image, so the label and
+        the geometry swap together when the frame is mirrored — the answer is
+        the same with or without --flip.
         """
         if not lm or len(lm) < 18:
+            return 1.0
+        ux, uy = lm[9].x - lm[0].x, lm[9].y - lm[0].y
+        vx, vy = lm[17].x - lm[5].x, lm[17].y - lm[5].y
+        cross = ux * vy - uy * vx
+        span = math.hypot(ux, uy) * math.hypot(vx, vy)
+        if span <= 1e-9:
+            return 0.0
+        facing = cross / span
+        # Sign checked against the real camera: for a hand MediaPipe labels
+        # 'Right', a negative cross product is the palm side.
+        return -facing if handedness == 'Right' else facing
+
+    @classmethod
+    def is_backhand(cls, lm, handedness='Right', label_score=1.0):
+        """True when the back of the hand faces the camera.
+
+        Only trusted when MediaPipe is reasonably sure which hand it is looking
+        at — with the label wrong the answer flips, and a real palm is worse to
+        lose than a back of hand is to keep.
+        """
+        if handedness not in ('Left', 'Right') or label_score < BACKHAND_MIN_LABEL_SCORE:
             return False
-        ux = lm[9].x - lm[0].x
-        uy = lm[9].y - lm[0].y
+        return cls.palm_facing(lm, handedness) < -BACKHAND_REJECT
 
-        # Cross-product assuming "Right" labelling (pinky-index vector)
-        vx_r = lm[17].x - lm[5].x
-        vy_r = lm[17].y - lm[5].y
-        nz_r = ux * vy_r - uy * vx_r
-
-        # Cross-product assuming "Left" labelling (index-pinky vector)
-        vx_l = lm[5].x - lm[17].x
-        vy_l = lm[5].y - lm[17].y
-        nz_l = ux * vy_l - uy * vx_l
-
-        if flip:
-            nz_r = -nz_r
-            nz_l = -nz_l
-
-        # Use the signed value that matches the reported handedness for primary check
-        is_right = (handedness == 'Right')
-        nz_primary   = nz_r if is_right else nz_l
-        nz_secondary = nz_l if is_right else nz_r
-
-        # Only reject if BOTH orientations indicate backhand (very conservative)
-        BACKHAND_THRESHOLD = -0.015
-        return nz_primary < BACKHAND_THRESHOLD and nz_secondary < BACKHAND_THRESHOLD
+    @staticmethod
+    def _in_frame(lm, margin=0.02):
+        """Share of the 21 landmarks inside the frame — a cut-off hand tracks badly."""
+        inside = sum(1 for p in lm if -margin <= p.x <= 1 + margin and -margin <= p.y <= 1 + margin)
+        return inside / len(lm) if lm else 0.0
 
     def select_best_hand(self, hand_landmarks_list, handedness_list=None):
+        """The clearest palm in view: big (close), facing the camera, fully in frame.
+
+        Backs of hands are dropped, and the hand already in control keeps it
+        unless another is clearly better, so control doesn't flicker between two
+        similar hands.
+        """
         if not hand_landmarks_list:
             return None, None
 
         candidates = []
         for idx, lm in enumerate(hand_landmarks_list):
-            h_name = 'Right'
+            h_name = None            # unknown: never judged palm or back
             h_score = 1.0
             if handedness_list and idx < len(handedness_list) and handedness_list[idx]:
                 cat = handedness_list[idx][0]
                 h_name = getattr(cat, 'category_name', 'Right')
                 h_score = getattr(cat, 'score', 1.0)
 
-            if self.is_backhand(lm, h_name, flip=getattr(self, 'flip', False)):
+            if self.is_backhand(lm, h_name, h_score):
                 continue
 
             cx, cy = self._palm_center(lm)
@@ -301,14 +380,18 @@ class GestureEngine:
             if size < MIN_PALM_SIZE:
                 continue
 
-            composite_score = size * (h_score ** 0.5)
+            if h_name in ('Left', 'Right') and h_score >= BACKHAND_MIN_LABEL_SCORE:
+                facing = max(0.0, self.palm_facing(lm, h_name))
+            else:
+                facing = 0.5
+            score = size * (0.5 + 0.5 * facing) * (h_score ** 0.5) * self._in_frame(lm)
 
             if self.present:
                 dist = math.hypot((cx - self.hand_x) * self.frame_aspect, cy - self.hand_y)
-                if dist < 0.28:
-                    composite_score *= 1.4
+                if dist < 0.15:
+                    score *= CURRENT_HAND_BONUS
 
-            candidates.append((composite_score, lm, h_name))
+            candidates.append((score, lm, h_name))
 
         if not candidates:
             return None, None
@@ -335,12 +418,10 @@ class GestureEngine:
     def process_landmarks(self, lm, now):
         self.scroll_delta = 0
         x, y = self._palm_center(lm)
-        if self.present:
-            # Faster tracking: 0.80/0.20 blend responds more quickly than 0.95/0.05
-            self.hand_x = 0.80 * x + 0.20 * self.hand_x
-            self.hand_y = 0.80 * y + 0.20 * self.hand_y
-        else:
-            self.hand_x, self.hand_y = x, y
+        # The published cursor is filtered; region, dwell and drag use the raw
+        # palm so a gesture is judged on where the hand really is.
+        self.hand_x = self._filter_x(x, now)
+        self.hand_y = self._filter_y(y, now)
         self.present = True
         self.last_seen = now
 
@@ -447,6 +528,8 @@ class GestureEngine:
             return False
         self.present = False
         self.region = None
+        self._filter_x.reset()
+        self._filter_y.reset()
         self.pinched = False
         self.pinch_start = None
         self.drag_start_y = None
@@ -504,6 +587,7 @@ class GestureEngine:
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
                         "seq":                  self.seq,
+                        "fps":                  round(self.fps, 1),
                         "timestamp":            now,
                     }
                     self._udp_sock.sendto(json.dumps(live_data).encode('utf-8'), ("127.0.0.1", GESTURE_UDP_PORT))
@@ -527,6 +611,7 @@ class GestureEngine:
             "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
             "seq":                  self.seq,
+            "fps":                  round(self.fps, 1),
             "timestamp":            now,
         }
 
@@ -597,10 +682,11 @@ class GestureEngine:
                         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     except Exception:
                         pass
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FPS, 30)
+                if not is_linux_loopback:      # the loopback has a fixed size
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  480)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
 
                 ret, frame = cap.read()
                 if ret and frame is not None:
@@ -621,14 +707,26 @@ class GestureEngine:
               f"Regions: left<{REGION_LEFT_EDGE} right>{REGION_RIGHT_EDGE}.")
         print(f"[GESTURE] Horizontal flip: {'on' if self.flip else 'off'}.")
 
+        from loopback_capture import FFmpegPipeCapture, LatestFrameReader
+        if not isinstance(cap, FFmpegPipeCapture):   # that one already keeps only the newest
+            cap = LatestFrameReader(cap)
+
         start = time.time()
         last_stamp_ms = -1
+        stats_since, stats_frames, stats_busy = time.time(), 0, 0.0
+        last_frame_at = 0.0
         try:
             while self.running:
                 ret, frame = cap.read()
                 if not ret:
-                    time.sleep(0.03)
+                    time.sleep(0.01)
                     continue
+                t_frame = time.time()
+                if last_frame_at:
+                    gap = t_frame - last_frame_at
+                    if gap > 0:
+                        self.fps = 0.9 * self.fps + 0.1 * (1.0 / gap) if self.fps else 1.0 / gap
+                last_frame_at = t_frame
 
                 if self.flip:
                     frame = cv2.flip(frame, 1)
@@ -661,6 +759,13 @@ class GestureEngine:
 
                 if event:
                     print(f"[GESTURE] {event} region={self.region} delta={self.scroll_delta}")
+
+                stats_frames += 1
+                stats_busy += time.time() - t_frame
+                if t_frame - stats_since >= 10.0:
+                    print(f"[GESTURE] {stats_frames / (t_frame - stats_since):.1f} fps, "
+                          f"{1000 * stats_busy / stats_frames:.0f} ms per frame", flush=True)
+                    stats_since, stats_frames, stats_busy = t_frame, 0, 0.0
         except KeyboardInterrupt:
             pass
         finally:

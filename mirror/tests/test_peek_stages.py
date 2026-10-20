@@ -11,6 +11,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+os.environ.setdefault('MIRROR_SCREENSAVER_SYNC', '0')
 
 import requests
 
@@ -73,7 +74,8 @@ def gesture(region='right', event=None, x=0.85, y=0.5, delta=0, present=True, ri
 
 def settle(mirror):
     anims = []
-    for extra in (mirror._timetable_anim, mirror._anim_in, mirror._anim_out, mirror._demo_anim):
+    for extra in (mirror._timetable_anim, getattr(mirror, '_kings_anim', None),
+                  mirror._anim_in, mirror._anim_out, mirror._demo_anim):
         if extra is not None:
             anims.append(extra)
     if mirror.kings_widget is not None:
@@ -117,9 +119,14 @@ def close_mirror(mirror):
     for timer in (mirror.poll_timer, mirror.gesture_timer, mirror.banner_timer,
                   mirror.timetable_display_timer, mirror._momentum_timer):
         timer.stop()
-    for anim in (mirror._timetable_anim, mirror._anim_in, mirror._anim_out, mirror._demo_anim):
+    for anim in (mirror._timetable_anim, mirror._anim_in, mirror._anim_out, mirror._demo_anim,
+                 mirror._idle_demo_anim):
         if anim is not None:
             anim.stop()
+    for decoder in (mirror.demo_movie, getattr(mirror, 'idle_demo_movie', None)):
+        if decoder is not None:
+            decoder.shutdown()
+    mirror.gesture_receiver.stop()
     if mirror.kings_widget is not None:
         mirror.kings_widget.reset_gesture_state()
     mirror.hide()
@@ -270,3 +277,189 @@ class TestStateTransition(unittest.TestCase):
         settle(self.mirror)
         self.assertFalse(self.mirror.user_container.isVisible())
         self.assertFalse(self.mirror.guest_container.isVisible())
+
+
+def centre_of(mirror, widget):
+    """hand_x / hand_y pointing at the middle of `widget` as drawn."""
+    pos = widget.mapTo(mirror.central_widget, widget.rect().center())
+    return pos.x() / mirror.width(), pos.y() / mirror.height()
+
+
+class TestKingsWeekExpandsOnTap(unittest.TestCase):
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror._show_timetable(animate=False, is_initial_split=True)
+        app.processEvents()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_tapping_kings_week_in_the_split_view_expands_it(self):
+        x, y = centre_of(self.mirror, self.mirror.kings_widget)
+        self.mirror._handle_gesture(gesture(region='right', event='tap', x=x, y=y))
+        settle(self.mirror)
+        self.assertTrue(self.mirror._timetable_slid_away)
+        self.assertEqual(self.mirror.kings_widget.geometry().top(), 0)
+        self.assertEqual(self.mirror.kings_widget.height(), self.mirror.right_stack_container.height())
+
+    def test_tapping_the_timetable_half_does_not(self):
+        x, y = centre_of(self.mirror, self.mirror.timetable_widget)
+        self.mirror._handle_gesture(gesture(region='right', event='tap', x=x, y=y))
+        settle(self.mirror)
+        self.assertFalse(self.mirror._timetable_slid_away)
+
+    def test_the_guest_screen_expands_the_same_way(self):
+        m = self.mirror
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        self.assertFalse(m._guest_card_slid_away)
+        x, y = centre_of(m, m.guest_kings_widget)
+        m._handle_gesture(gesture(region='right', event='tap', x=x, y=y))
+        if m._guest_card_anim is not None:
+            m._guest_card_anim.setCurrentTime(m._guest_card_anim.duration())
+        app.processEvents()
+        self.assertTrue(m._guest_card_slid_away)
+
+
+class TestTutorialOverlay(unittest.TestCase):
+    def setUp(self):
+        self.mirror = make_mirror()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_the_tutorial_plays_over_a_dark_overlay_and_fades_away(self):
+        self.mirror._show_gesture_scrim()
+        settle(self.mirror)
+        self.assertTrue(self.mirror.gesture_demo_overlay.isVisible())
+        corner = self.mirror.gesture_demo_overlay.grab().toImage().pixelColor(2, 2)
+        self.assertLess(corner.lightness(), 40)
+        self.mirror._fade_out_gesture_scrim()
+        settle(self.mirror)
+        self.assertFalse(self.mirror.gesture_demo_overlay.isVisible())
+
+
+class TestIdleAttractLoop(unittest.TestCase):
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror.user_container.hide()
+        self.mirror._last_state = 'idle'
+        self.mirror._last_presence_time = 0.0
+        if self.mirror.idle_demo is None:
+            self.skipTest('assets/gesture_demo.mp4 missing')
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _finish_fade(self):
+        anim = self.mirror._idle_demo_anim
+        anim.setCurrentTime(anim.duration())
+        app.processEvents()
+
+    def test_an_empty_mirror_plays_the_demo_full_screen(self):
+        self.mirror._update_idle_demo()
+        demo = self.mirror.idle_demo
+        self.assertEqual(self.mirror._idle_demo_phase, 'playing')
+        self.assertTrue(demo.isVisible())
+        self.assertEqual(demo.geometry(), self.mirror.central_widget.rect())
+        self._finish_fade()
+        self.assertEqual(demo.effect.opacity(), 1.0)
+
+    def test_at_the_end_it_fades_out_waits_in_black_then_fades_back_in(self):
+        self.mirror._update_idle_demo()
+        self._finish_fade()
+        self.mirror._on_idle_demo_finished()
+        self.assertEqual(self.mirror._idle_demo_phase, 'ending')
+        self.assertEqual(self.mirror._idle_demo_anim.duration(), 500)       # 0.5 s fade out
+        self._finish_fade()
+        self.assertEqual(self.mirror._idle_demo_phase, 'gap')               # black screen
+        self.assertEqual(self.mirror.idle_demo.effect.opacity(), 0.0)
+        self.assertEqual(self.mirror._idle_gap_timer.interval(), 5000)
+        self.assertTrue(self.mirror._idle_gap_timer.isActive())
+        self.mirror._idle_gap_timer.stop()
+        self.mirror._end_idle_gap()
+        self.assertEqual(self.mirror._idle_demo_phase, 'playing')
+        self.assertEqual(self.mirror._idle_demo_anim.duration(), 500)       # 0.5 s fade in
+        self._finish_fade()
+        self.assertEqual(self.mirror.idle_demo.effect.opacity(), 1.0)
+
+    def test_someone_arriving_during_the_black_pause_cancels_it(self):
+        self.mirror._update_idle_demo()
+        self._finish_fade()
+        self.mirror._on_idle_demo_finished()
+        self._finish_fade()
+        self.mirror._handle_gesture(gesture(present=True))
+        self.assertEqual(self.mirror._idle_demo_phase, 'off')
+        self.assertFalse(self.mirror._idle_gap_timer.isActive())
+        self.assertFalse(self.mirror.idle_demo.isVisible())
+
+    def test_a_hand_even_briefly_fades_it_away_and_it_stays_away(self):
+        self.mirror._update_idle_demo()
+        self._finish_fade()
+        self.mirror._handle_gesture(gesture(present=True))
+        self.assertEqual(self.mirror._idle_demo_phase, 'leaving')
+        self._finish_fade()
+        self.assertEqual(self.mirror._idle_demo_phase, 'off')
+        self.assertFalse(self.mirror.idle_demo.isVisible())
+        self.mirror._update_idle_demo()                 # hand gone, but only just
+        self.assertEqual(self.mirror._idle_demo_phase, 'off')
+
+    def test_a_face_seen_between_polls_still_counts(self):
+        self.mirror._update_idle_demo()
+        import json, time
+        with open(smp.FACE_DATA_FILE, 'w') as f:
+            json.dump({'state': 'idle', 'detected': False, 'last_face_time': time.time() - 0.3,
+                       'timestamp': time.time()}, f)
+        self.mirror._update_inputs()
+        self.assertEqual(self.mirror._idle_demo_phase, 'leaving')
+
+    def test_it_comes_back_once_nobody_has_been_seen_for_a_while(self):
+        import time
+        self.mirror._last_presence_time = time.time() - smp.IDLE_DEMO_RESUME_SEC - 0.1
+        self.mirror._update_idle_demo()
+        self.assertEqual(self.mirror._idle_demo_phase, 'playing')
+
+    def test_it_never_plays_over_a_signed_in_user(self):
+        self.mirror._last_state = 'user'
+        self.mirror._update_idle_demo()
+        self.assertEqual(self.mirror._idle_demo_phase, 'off')
+
+
+class TestMirrorNotice(unittest.TestCase):
+    def setUp(self):
+        self.mirror = make_mirror()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_the_notice_shows_for_users_and_guests_styled_by_level(self):
+        m = self.mirror
+        m._update_banner({"message": "Fire drill at 2pm", "level": "urgent"})
+        self.assertTrue(m.banner_frame.isVisible())
+        self.assertEqual(m.tag_lbl.text(), "URGENT")
+        self.assertEqual(m.banner_label.text(), "Fire drill at 2pm")
+        self.assertGreaterEqual(m.user_container.y(), m.banner_frame.geometry().bottom())  # no overlap
+
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        self.assertTrue(m.banner_frame.isVisible())
+
+        m._update_banner({"message": "Library closed", "level": "warning"})
+        self.assertEqual(m.tag_lbl.text(), "WARNING")
+
+    def test_it_is_hidden_while_the_mirror_is_idle_and_when_cleared(self):
+        m = self.mirror
+        m._update_banner({"message": "Hello", "level": "notice"})
+        m._transitioning = True
+        m._last_state = 'idle'
+        m._trigger_transition('idle', 'idle', {})
+        self.assertFalse(m.banner_frame.isVisible())
+        m._last_state = 'user'
+        m._refresh_banner()
+        self.assertTrue(m.banner_frame.isVisible())
+        m._update_banner({"message": "", "level": "notice"})
+        self.assertFalse(m.banner_frame.isVisible())

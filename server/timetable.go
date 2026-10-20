@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -262,104 +261,89 @@ func unfoldICSLines(body string) []string {
 	return lines
 }
 
-// ─── ICS URL helpers ──────────────────────────────────────────────────────────
-
-func getICSURLPath(userID string) string {
-	return fmt.Sprintf("data/%s_ics_url.txt", getSafeUserID(userID))
-}
-
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
-// getTimetable returns today's timetable events for the requesting user.
-// Works with a JWT token OR a ?user_id= query param (mirrors can call without auth).
+func icsURLOf(userID string) string {
+	var u string
+	db.QueryRow(`SELECT ics_url FROM users WHERE id = ?`, userID).Scan(&u)
+	return strings.TrimSpace(u)
+}
+
+// getTimetable returns this week's timetable. A signed-in user gets their own;
+// a mirror (with its key) may ask for any user with ?user_id=.
 func getTimetable(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
+	userID := ""
+	if bearerToken(c) != "" {
+		if err := validateRequestToken(c); err != nil {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Please sign in again."})
+		}
+		userID = getUserIDFromToken(c)
+	} else {
+		if !mirrorKeyValid(c) {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unknown mirror"})
+		}
 		userID = c.QueryParam("user_id")
 	}
 	if userID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id required"})
 	}
 
-	path := getICSURLPath(userID)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "No timetable URL configured"})
-	}
-
-	icsURL := strings.TrimSpace(string(data))
+	icsURL := icsURLOf(userID)
 	if icsURL == "" {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "No timetable URL configured"})
 	}
-
 	events, err := parseTimetable(icsURL)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch timetable: " + err.Error()})
 	}
 
-	// Read viewMode from saved widgets
 	viewMode := "today"
-	widgets := getWidgetsForUser(userID)
-	for _, w := range widgets {
-		if w.Type == "timetable" {
-			if dataMap, ok := w.Data.(map[string]interface{}); ok {
-				if vm, exists := dataMap["viewMode"]; exists {
-					if vmStr, isStr := vm.(string); isStr {
-						viewMode = vmStr
-					}
-				}
+	for _, w := range getWidgetsForUser(userID) {
+		if w.Type != "timetable" {
+			continue
+		}
+		if dataMap, ok := w.Data.(map[string]interface{}); ok {
+			if vm, ok := dataMap["viewMode"].(string); ok {
+				viewMode = vm
 			}
 		}
 	}
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"viewMode": viewMode,
-		"periods":  events,
-	})
+	return c.JSON(http.StatusOK, map[string]interface{}{"viewMode": viewMode, "periods": events})
 }
 
 // setTimetableURL saves the user's ICS calendar URL.
 func setTimetableURL(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-
 	var body struct {
 		ICSURL string `json:"ics_url"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
-
 	url := strings.TrimSpace(body.ICSURL)
 	if !isValidKingsHighICS(url) {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "URL must be a valid King's High School calendar link (e.g. https://kingshigh.school.kiwi/ics/23239-SOKKEUXX7P0OKX50E27H4H6L.ics)",
 		})
 	}
-
-	path := getICSURLPath(userID)
-	if err := os.WriteFile(path, []byte(url), 0644); err != nil {
+	if _, err := db.Exec(`UPDATE users SET ics_url = ? WHERE id = ?`, url, getUserIDFromToken(c)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save URL"})
 	}
-
 	return c.JSON(http.StatusOK, map[string]string{"message": "Timetable URL saved"})
 }
 
 // getMyTimetableURL returns the currently saved ICS URL for the user.
 func getMyTimetableURL(c echo.Context) error {
-	userID := getUserIDFromToken(c)
-	if userID == "" {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-
-	path := getICSURLPath(userID)
-	data, err := os.ReadFile(path)
-	if err != nil {
+	icsURL := icsURLOf(getUserIDFromToken(c))
+	if icsURL == "" {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "No timetable URL configured"})
 	}
-
-	icsURL := strings.TrimSpace(string(data))
 	return c.JSON(http.StatusOK, map[string]string{"ics_url": icsURL})
+}
+
+// deleteMyTimetableURL unlinks the user's timetable.
+func deleteMyTimetableURL(c echo.Context) error {
+	if _, err := db.Exec(`UPDATE users SET ics_url = '' WHERE id = ?`, getUserIDFromToken(c)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to unlink timetable"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Timetable unlinked"})
 }

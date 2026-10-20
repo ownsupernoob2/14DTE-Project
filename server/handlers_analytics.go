@@ -1,431 +1,389 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
 	"math"
-	"os"
+	"net/http"
 	"strings"
-	"sync"
 	"time"
-
 
 	"github.com/labstack/echo/v4"
 )
 
-const DefaultAdminEmail = "marminamina3@gmail.com"
-
-// SessionAnalyticsEvent represents telemetry recorded for a single user/guest session
+// SessionAnalyticsEvent is one mirror session, sent by the mirror when it ends.
 type SessionAnalyticsEvent struct {
 	SessionID            string  `json:"session_id"`
+	UserID               string  `json:"user_id,omitempty"`
+	MirrorID             string  `json:"mirror_id,omitempty"`
+	MirrorVersion        string  `json:"mirror_version,omitempty"`
 	ClientTimestamp      float64 `json:"client_timestamp"`
-	Variant              string  `json:"variant"` // "A" or "B"
+	Variant              string  `json:"variant"`      // "A" or "B"
 	SessionType          string  `json:"session_type"` // "user" or "guest"
-	AuthMethod           string  `json:"auth_method"` // "face", "barcode", "none"
+	AuthMethod           string  `json:"auth_method"`  // "face", "barcode", "presence"
+	ScreensaverMode      string  `json:"screensaver_mode,omitempty"`
 	DurationSec          float64 `json:"duration_sec"`
+	TimeToAuthSec        float64 `json:"time_to_auth_sec"`
 	HasGesture           bool    `json:"has_gesture"`
 	TimeToFirstGesture   float64 `json:"time_to_first_gesture_sec"`
+	HandSeen             bool    `json:"hand_seen"`
 	GestureScrollCount   int     `json:"gesture_scroll_count"`
 	GestureTapCount      int     `json:"gesture_tap_count"`
 	TimetableToggleCount int     `json:"timetable_toggle_count"`
 	DwellCompletedCount  int     `json:"dwell_completed_count"`
 	DwellAbandonedCount  int     `json:"dwell_abandoned_count"`
 	ArticleModalOpens    int     `json:"article_modal_opens"`
+	NoticeOpens          int     `json:"notice_opens"`
 	ModalReadTimeSec     float64 `json:"modal_read_time_sec"`
+	KingsExpands         int     `json:"kings_expands"`
+	TutorialShown        int     `json:"tutorial_shown"`
+	TutorialDismissed    int     `json:"tutorial_dismissed"`
+	FromScreensaver      bool    `json:"from_screensaver"`
 	CreatedAt            string  `json:"created_at"`
 }
 
 type VariantStats struct {
-	TotalSessions       int     `json:"total_sessions"`
-	SessionsWithGesture int     `json:"sessions_with_gesture"`
-	GestureAdoptionRate float64 `json:"gesture_adoption_rate"` // 0.0 - 100.0%
-	ZeroInteractionRate float64 `json:"zero_interaction_rate"` // % sessions with 0 gestures (touchscreen confusion)
-	TimetableToggles    int     `json:"timetable_toggles"`
-	TimetableToggleRate float64 `json:"timetable_toggle_rate"` // % of user sessions that toggled
-	AvgDurationSec      float64 `json:"avg_duration_sec"`
-	AvgTimeToFirstGest  float64 `json:"avg_time_to_first_gesture_sec"`
-	TotalScrollCount    int     `json:"total_scroll_count"`
-	TotalTapCount       int     `json:"total_tap_count"`
-	DwellCompletedCount int     `json:"dwell_completed_count"`
-	DwellAbandonedCount int     `json:"dwell_abandoned_count"`
-	DwellSuccessRate    float64 `json:"dwell_success_rate"` // % of dwells completed vs abandoned
-	ArticleModalOpens   int     `json:"article_modal_opens"`
-	AvgModalReadSec     float64 `json:"avg_modal_read_sec"`
+	TotalSessions        int     `json:"total_sessions"`
+	SessionsWithGesture  int     `json:"sessions_with_gesture"`
+	GestureAdoptionRate  float64 `json:"gesture_adoption_rate"` // %
+	ZeroInteractionRate  float64 `json:"zero_interaction_rate"` // % sessions with no gesture
+	HandSeenRate         float64 `json:"hand_seen_rate"`        // % sessions where a hand was raised at all
+	TimetableToggles     int     `json:"timetable_toggles"`
+	TimetableToggleRate  float64 `json:"timetable_toggle_rate"`
+	AvgDurationSec       float64 `json:"avg_duration_sec"`
+	AvgTimeToFirstGest   float64 `json:"avg_time_to_first_gesture_sec"`
+	TotalScrollCount     int     `json:"total_scroll_count"`
+	TotalTapCount        int     `json:"total_tap_count"`
+	DwellCompletedCount  int     `json:"dwell_completed_count"`
+	DwellAbandonedCount  int     `json:"dwell_abandoned_count"`
+	DwellSuccessRate     float64 `json:"dwell_success_rate"`
+	ArticleModalOpens    int     `json:"article_modal_opens"`
+	NoticeOpens          int     `json:"notice_opens"`
+	AvgModalReadSec      float64 `json:"avg_modal_read_sec"`
+	KingsExpands         int     `json:"kings_expands"`
+	TutorialShown        int     `json:"tutorial_shown"`
+	TutorialDismissed    int     `json:"tutorial_dismissed"`
+	TutorialDismissRate  float64 `json:"tutorial_dismiss_rate"`
 }
 
 type AnalyticsSummaryResponse struct {
-	TotalSessions        int                      `json:"total_sessions"`
-	UserSessions         int                      `json:"user_sessions"`
-	GuestSessions        int                      `json:"guest_sessions"`
-	AvgUserDurationSec   float64                  `json:"avg_user_duration_sec"`
-	AvgGuestDurationSec  float64                  `json:"avg_guest_duration_sec"`
-	FaceAuthCount        int                      `json:"face_auth_count"`
-	BarcodeAuthCount     int                      `json:"barcode_auth_count"`
-	TotalGestureEvents   int                      `json:"total_gesture_events"`
-	VariantA             VariantStats             `json:"variant_a"`
-	VariantB             VariantStats             `json:"variant_b"`
-	AdoptionRateLiftPct  float64                  `json:"adoption_rate_lift_pct"`
-	ZScore               float64                  `json:"z_score"`
-	PValue               float64                  `json:"p_value"`
-	IsSignificant        bool                     `json:"is_significant"`
-	NoveltyPhase1Lift    float64                  `json:"novelty_phase1_lift"` // Early sessions lift %
-	NoveltyPhase2Lift    float64                  `json:"novelty_phase2_lift"` // Later sessions lift %
-	HourlyDistribution   [24]int                  `json:"hourly_distribution"`
-	RecentSessions       []SessionAnalyticsEvent  `json:"recent_sessions"`
+	TotalSessions       int                     `json:"total_sessions"`
+	UserSessions        int                     `json:"user_sessions"`
+	GuestSessions       int                     `json:"guest_sessions"`
+	AvgUserDurationSec  float64                 `json:"avg_user_duration_sec"`
+	AvgGuestDurationSec float64                 `json:"avg_guest_duration_sec"`
+	AvgTimeToAuthSec    float64                 `json:"avg_time_to_auth_sec"`
+	FaceAuthCount       int                     `json:"face_auth_count"`
+	BarcodeAuthCount    int                     `json:"barcode_auth_count"`
+	FromScreensaver     int                     `json:"from_screensaver_count"`
+	ScreensaverModes    map[string]int          `json:"screensaver_modes"`
+	TotalGestureEvents  int                     `json:"total_gesture_events"`
+	VariantA            VariantStats            `json:"variant_a"`
+	VariantB            VariantStats            `json:"variant_b"`
+	AdoptionRateLiftPct float64                 `json:"adoption_rate_lift_pct"`
+	ZScore              float64                 `json:"z_score"`
+	PValue              float64                 `json:"p_value"`
+	IsSignificant       bool                    `json:"is_significant"`
+	NoveltyPhase1Lift   float64                 `json:"novelty_phase1_lift"`
+	NoveltyPhase2Lift   float64                 `json:"novelty_phase2_lift"`
+	HourlyDistribution  [24]int                 `json:"hourly_distribution"`
+	RecentSessions      []SessionAnalyticsEvent `json:"recent_sessions"`
 }
 
-var (
-	analyticsMutex sync.RWMutex
-	analyticsLog   []SessionAnalyticsEvent
-)
+func clampF(v, lo, hi float64) float64 {
+	if math.IsNaN(v) || v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
 
-const analyticsFilePath = "data/analytics_events.json"
+func clampI(v, hi int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
 
-func init() {
-	_ = os.MkdirAll("data", 0755)
-	data, err := os.ReadFile(analyticsFilePath)
-	if err == nil {
-		var list []SessionAnalyticsEvent
-		if json.Unmarshal(data, &list) == nil {
-			analyticsLog = list
+func oneOf(v string, allowed ...string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, a := range allowed {
+		if v == a {
+			return v
 		}
 	}
+	return allowed[0]
 }
 
-func saveAnalyticsToDisk() {
-	data, err := json.MarshalIndent(analyticsLog, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(analyticsFilePath, data, 0644)
-	}
-}
-
-// POST /api/analytics/events
+// POST /api/analytics/events (mirror)
 func recordAnalyticsEvent(c echo.Context) error {
-	var event SessionAnalyticsEvent
-	if err := c.Bind(&event); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+	var ev SessionAnalyticsEvent
+	if err := c.Bind(&ev); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+	if ev.SessionID == "" || len(ev.SessionID) > 64 {
+		ev.SessionID = "sess-" + time.Now().Format("20060102150405.000000")
+	}
+	ev.Variant = strings.ToUpper(strings.TrimSpace(ev.Variant))
+	if ev.Variant != "B" {
+		ev.Variant = "A"
+	}
+	ev.SessionType = oneOf(ev.SessionType, "guest", "user")
+	ev.AuthMethod = oneOf(ev.AuthMethod, "presence", "face", "barcode")
+	ev.ScreensaverMode = oneOf(ev.ScreensaverMode, "", "demo", "slideshow", "logo")
+
+	// Only link the session to a real account.
+	var userID interface{}
+	if ev.UserID != "" && userExists(ev.UserID) {
+		userID = ev.UserID
 	}
 
-	if event.SessionID == "" {
-		event.SessionID = "sess-" + time.Now().Format("20060102150405.000")
+	const day = 86400.0
+	_, err := db.Exec(`INSERT OR IGNORE INTO sessions(
+		id, user_id, mirror_id, mirror_version, variant, session_type, auth_method, screensaver_mode,
+		duration_sec, time_to_auth_sec, has_gesture, time_to_first_gesture, hand_seen,
+		scroll_count, tap_count, timetable_toggles, dwell_completed, dwell_abandoned,
+		article_opens, notice_opens, modal_read_sec, kings_expands, tutorial_shown, tutorial_dismissed,
+		from_screensaver, client_started_at, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ev.SessionID, userID, truncate(ev.MirrorID, 64), truncate(ev.MirrorVersion, 32), ev.Variant, ev.SessionType,
+		ev.AuthMethod, ev.ScreensaverMode,
+		clampF(ev.DurationSec, 0, day), clampF(ev.TimeToAuthSec, 0, day), boolInt(ev.HasGesture),
+		clampF(ev.TimeToFirstGesture, 0, day), boolInt(ev.HandSeen || ev.HasGesture),
+		clampI(ev.GestureScrollCount, 10000), clampI(ev.GestureTapCount, 10000),
+		clampI(ev.TimetableToggleCount, 10000), clampI(ev.DwellCompletedCount, 10000),
+		clampI(ev.DwellAbandonedCount, 10000), clampI(ev.ArticleModalOpens, 10000),
+		clampI(ev.NoticeOpens, 10000), clampF(ev.ModalReadTimeSec, 0, day), clampI(ev.KingsExpands, 10000),
+		clampI(ev.TutorialShown, 1000), clampI(ev.TutorialDismissed, 1000), boolInt(ev.FromScreensaver),
+		ev.ClientTimestamp, time.Now().Unix())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not record session"})
 	}
-	if event.CreatedAt == "" {
-		event.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	if event.Variant == "" {
-		event.Variant = "A"
-	}
-	event.Variant = strings.ToUpper(strings.TrimSpace(event.Variant))
-	if event.Variant != "A" && event.Variant != "B" {
-		event.Variant = "A"
-	}
-
-	analyticsMutex.Lock()
-	analyticsLog = append(analyticsLog, event)
-	if len(analyticsLog) > 10000 {
-		// Cap in memory log to 10k items
-		analyticsLog = analyticsLog[len(analyticsLog)-10000:]
-	}
-	saveAnalyticsToDisk()
-	analyticsMutex.Unlock()
-
-	return c.JSON(200, map[string]interface{}{
-		"status":     "recorded",
-		"session_id": event.SessionID,
-	})
+	return c.JSON(http.StatusOK, map[string]interface{}{"status": "recorded", "session_id": ev.SessionID})
 }
 
-// verifyAdminAccess checks if the requester is the authorized administrator
-func verifyAdminAccess(c echo.Context) bool {
-	expectedEmail := os.Getenv("ADMIN_EMAIL")
-	if expectedEmail == "" {
-		expectedEmail = DefaultAdminEmail
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
 	}
-	expectedEmail = strings.ToLower(strings.TrimSpace(expectedEmail))
+	return s
+}
 
-	// 1. Check X-Admin-Token
-	adminToken := os.Getenv("ADMIN_TOKEN")
-	if adminToken != "" && c.Request().Header.Get("X-Admin-Token") == adminToken {
-		return true
+const sessionColumns = `id, COALESCE(user_id, ''), mirror_id, mirror_version, variant, session_type, auth_method,
+	screensaver_mode, duration_sec, time_to_auth_sec, has_gesture, time_to_first_gesture, hand_seen,
+	scroll_count, tap_count, timetable_toggles, dwell_completed, dwell_abandoned, article_opens,
+	notice_opens, modal_read_sec, kings_expands, tutorial_shown, tutorial_dismissed, from_screensaver,
+	client_started_at, created_at`
+
+func scanSession(rows *sql.Rows) (SessionAnalyticsEvent, error) {
+	var ev SessionAnalyticsEvent
+	var hasGesture, handSeen, fromSS int
+	var created int64
+	err := rows.Scan(&ev.SessionID, &ev.UserID, &ev.MirrorID, &ev.MirrorVersion, &ev.Variant, &ev.SessionType,
+		&ev.AuthMethod, &ev.ScreensaverMode, &ev.DurationSec, &ev.TimeToAuthSec, &hasGesture,
+		&ev.TimeToFirstGesture, &handSeen, &ev.GestureScrollCount, &ev.GestureTapCount,
+		&ev.TimetableToggleCount, &ev.DwellCompletedCount, &ev.DwellAbandonedCount, &ev.ArticleModalOpens,
+		&ev.NoticeOpens, &ev.ModalReadTimeSec, &ev.KingsExpands, &ev.TutorialShown, &ev.TutorialDismissed,
+		&fromSS, &ev.ClientTimestamp, &created)
+	ev.HasGesture, ev.HandSeen, ev.FromScreensaver = hasGesture == 1, handSeen == 1, fromSS == 1
+	ev.CreatedAt = time.Unix(created, 0).UTC().Format(time.RFC3339)
+	return ev, err
+}
+
+func round1(v float64) float64 { return math.Round(v*10) / 10 }
+
+func pct(n, d int) float64 {
+	if d == 0 {
+		return 0
 	}
+	return round1(100 * float64(n) / float64(d))
+}
 
-	// 2. Check X-Admin-Email header with Auth0 token present
-	reqEmail := strings.ToLower(strings.TrimSpace(c.Request().Header.Get("X-Admin-Email")))
-	if reqEmail != "" && reqEmail == expectedEmail {
-		return true
+type variantAcc struct {
+	VariantStats
+	durationSum, firstGestSum, modalSum float64
+	firstGestN, handSeen, userN         int
+}
+
+func (a *variantAcc) add(ev SessionAnalyticsEvent) {
+	a.TotalSessions++
+	a.durationSum += ev.DurationSec
+	a.TotalScrollCount += ev.GestureScrollCount
+	a.TotalTapCount += ev.GestureTapCount
+	a.DwellCompletedCount += ev.DwellCompletedCount
+	a.DwellAbandonedCount += ev.DwellAbandonedCount
+	a.TimetableToggles += ev.TimetableToggleCount
+	a.ArticleModalOpens += ev.ArticleModalOpens
+	a.NoticeOpens += ev.NoticeOpens
+	a.KingsExpands += ev.KingsExpands
+	a.TutorialShown += ev.TutorialShown
+	a.TutorialDismissed += ev.TutorialDismissed
+	a.modalSum += ev.ModalReadTimeSec
+	if ev.SessionType == "user" {
+		a.userN++
 	}
-
-	// 3. Check Auth0 JWT claims if available
-	raw := c.Get("user")
-	if raw != nil {
-		uid := getUserIDFromToken(c)
-		if uid != "" && (strings.Contains(strings.ToLower(uid), expectedEmail) || strings.HasPrefix(uid, "auth0|") || strings.HasPrefix(uid, "google-oauth2|")) {
-			// If authenticated and email matches or admin
-			if reqEmail == expectedEmail {
-				return true
-			}
+	if ev.HandSeen {
+		a.handSeen++
+	}
+	if ev.HasGesture {
+		a.SessionsWithGesture++
+		if ev.TimeToFirstGesture > 0 {
+			a.firstGestSum += ev.TimeToFirstGesture
+			a.firstGestN++
 		}
 	}
-
-	// Allow if local development request with admin email header
-	return reqEmail == expectedEmail
 }
 
-// GET /api/admin/analytics
+func (a *variantAcc) finish() VariantStats {
+	s := a.VariantStats
+	if s.TotalSessions > 0 {
+		s.GestureAdoptionRate = pct(s.SessionsWithGesture, s.TotalSessions)
+		s.ZeroInteractionRate = pct(s.TotalSessions-s.SessionsWithGesture, s.TotalSessions)
+		s.HandSeenRate = pct(a.handSeen, s.TotalSessions)
+		s.AvgDurationSec = round1(a.durationSum / float64(s.TotalSessions))
+	}
+	s.TimetableToggleRate = pct(s.TimetableToggles, a.userN)
+	if a.firstGestN > 0 {
+		s.AvgTimeToFirstGest = round1(a.firstGestSum / float64(a.firstGestN))
+	}
+	s.DwellSuccessRate = pct(s.DwellCompletedCount, s.DwellCompletedCount+s.DwellAbandonedCount)
+	if opens := s.ArticleModalOpens + s.NoticeOpens; opens > 0 {
+		s.AvgModalReadSec = round1(a.modalSum / float64(opens))
+	}
+	s.TutorialDismissRate = pct(s.TutorialDismissed, s.TutorialShown)
+	return s
+}
+
+// GET /api/admin/analytics (admin)
 func getAdminAnalytics(c echo.Context) error {
-	if !verifyAdminAccess(c) {
-		return c.JSON(403, map[string]string{
-			"error": "Forbidden: Admin access restricted to " + DefaultAdminEmail,
-		})
+	rows, err := db.Query(`SELECT ` + sessionColumns + ` FROM sessions ORDER BY created_at`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not read analytics"})
 	}
-
-	analyticsMutex.RLock()
-	defer analyticsMutex.RUnlock()
-
-	resp := AnalyticsSummaryResponse{
-		RecentSessions: make([]SessionAnalyticsEvent, 0),
+	var all []SessionAnalyticsEvent
+	for rows.Next() {
+		if ev, err := scanSession(rows); err == nil {
+			all = append(all, ev)
+		}
 	}
+	rows.Close()
 
-	var totalUserDuration, totalGuestDuration float64
-	var vA_gestTotalTime, vB_gestTotalTime float64
-	var vA_gestTotalCount, vB_gestTotalCount int
-	var vA_userCount, vB_userCount int
-	var vA_modalTime, vB_modalTime float64
+	resp := AnalyticsSummaryResponse{RecentSessions: []SessionAnalyticsEvent{}, ScreensaverModes: map[string]int{}}
+	var accA, accB variantAcc
+	var phase [2][2][2]int // [phase][variant A/B][total, with gesture]
+	var userDur, guestDur, authSum float64
+	var authN int
+	nz := nzLocation()
 
-	totalCount := len(analyticsLog)
-	splitIdx := totalCount / 2
-	var p1_vA_tot, p1_vA_gest, p1_vB_tot, p1_vB_gest int
-	var p2_vA_tot, p2_vA_gest, p2_vB_tot, p2_vB_gest int
-
-	for idx, ev := range analyticsLog {
+	for i, ev := range all {
 		resp.TotalSessions++
 		resp.TotalGestureEvents += ev.GestureScrollCount + ev.GestureTapCount + ev.DwellCompletedCount
-
-		// Traffic by hour (0-23)
-		t, err := time.Parse(time.RFC3339, ev.CreatedAt)
-		if err == nil {
-			localHour := t.Local().Hour()
-			if localHour >= 0 && localHour < 24 {
-				resp.HourlyDistribution[localHour]++
-			}
+		if t, err := time.Parse(time.RFC3339, ev.CreatedAt); err == nil {
+			resp.HourlyDistribution[t.In(nz).Hour()]++
 		}
-
 		if ev.SessionType == "user" {
 			resp.UserSessions++
-			totalUserDuration += ev.DurationSec
-			if ev.AuthMethod == "face" {
+			userDur += ev.DurationSec
+			switch ev.AuthMethod {
+			case "face":
 				resp.FaceAuthCount++
-			} else if ev.AuthMethod == "barcode" {
+			case "barcode":
 				resp.BarcodeAuthCount++
+			}
+			if ev.TimeToAuthSec > 0 {
+				authSum += ev.TimeToAuthSec
+				authN++
 			}
 		} else {
 			resp.GuestSessions++
-			totalGuestDuration += ev.DurationSec
+			guestDur += ev.DurationSec
 		}
-
-		// Novelty Effect Phase Partition (Phase 1 = early half, Phase 2 = later half)
-		isPhase1 := idx < splitIdx
-
-		// Variant A vs B stats
-		isB := (ev.Variant == "B")
-		if isB {
-			resp.VariantB.TotalSessions++
-			resp.VariantB.AvgDurationSec += ev.DurationSec
-			resp.VariantB.TotalScrollCount += ev.GestureScrollCount
-			resp.VariantB.TotalTapCount += ev.GestureTapCount
-			resp.VariantB.DwellCompletedCount += ev.DwellCompletedCount
-			resp.VariantB.DwellAbandonedCount += ev.DwellAbandonedCount
-			resp.VariantB.TimetableToggles += ev.TimetableToggleCount
-			resp.VariantB.ArticleModalOpens += ev.ArticleModalOpens
-			vB_modalTime += ev.ModalReadTimeSec
-
-			if isPhase1 {
-				p1_vB_tot++
-				if ev.HasGesture {
-					p1_vB_gest++
-				}
-			} else {
-				p2_vB_tot++
-				if ev.HasGesture {
-					p2_vB_gest++
-				}
-			}
-
-			if ev.SessionType == "user" {
-				vB_userCount++
-			}
-			if ev.HasGesture {
-				resp.VariantB.SessionsWithGesture++
-				if ev.TimeToFirstGesture > 0 {
-					vB_gestTotalTime += ev.TimeToFirstGesture
-					vB_gestTotalCount++
-				}
-			}
-		} else {
-			resp.VariantA.TotalSessions++
-			resp.VariantA.AvgDurationSec += ev.DurationSec
-			resp.VariantA.TotalScrollCount += ev.GestureScrollCount
-			resp.VariantA.TotalTapCount += ev.GestureTapCount
-			resp.VariantA.DwellCompletedCount += ev.DwellCompletedCount
-			resp.VariantA.DwellAbandonedCount += ev.DwellAbandonedCount
-			resp.VariantA.TimetableToggles += ev.TimetableToggleCount
-			resp.VariantA.ArticleModalOpens += ev.ArticleModalOpens
-			vA_modalTime += ev.ModalReadTimeSec
-
-			if isPhase1 {
-				p1_vA_tot++
-				if ev.HasGesture {
-					p1_vA_gest++
-				}
-			} else {
-				p2_vA_tot++
-				if ev.HasGesture {
-					p2_vA_gest++
-				}
-			}
-
-			if ev.SessionType == "user" {
-				vA_userCount++
-			}
-			if ev.HasGesture {
-				resp.VariantA.SessionsWithGesture++
-				if ev.TimeToFirstGesture > 0 {
-					vA_gestTotalTime += ev.TimeToFirstGesture
-					vA_gestTotalCount++
-				}
-			}
+		if ev.FromScreensaver {
+			resp.FromScreensaver++
+		}
+		if ev.ScreensaverMode != "" {
+			resp.ScreensaverModes[ev.ScreensaverMode]++
+		}
+		v := 0
+		acc := &accA
+		if ev.Variant == "B" {
+			v, acc = 1, &accB
+		}
+		acc.add(ev)
+		p := 0
+		if i >= len(all)/2 {
+			p = 1
+		}
+		phase[p][v][0]++
+		if ev.HasGesture {
+			phase[p][v][1]++
 		}
 	}
 
-	// Compute averages and rates
 	if resp.UserSessions > 0 {
-		resp.AvgUserDurationSec = math.Round((totalUserDuration/float64(resp.UserSessions))*10) / 10
+		resp.AvgUserDurationSec = round1(userDur / float64(resp.UserSessions))
 	}
 	if resp.GuestSessions > 0 {
-		resp.AvgGuestDurationSec = math.Round((totalGuestDuration/float64(resp.GuestSessions))*10) / 10
+		resp.AvgGuestDurationSec = round1(guestDur / float64(resp.GuestSessions))
 	}
+	if authN > 0 {
+		resp.AvgTimeToAuthSec = round1(authSum / float64(authN))
+	}
+	resp.VariantA, resp.VariantB = accA.finish(), accB.finish()
 
-	// Variant A
-	if resp.VariantA.TotalSessions > 0 {
-		resp.VariantA.GestureAdoptionRate = math.Round((float64(resp.VariantA.SessionsWithGesture)/float64(resp.VariantA.TotalSessions))*1000) / 10
-		resp.VariantA.AvgDurationSec = math.Round((resp.VariantA.AvgDurationSec/float64(resp.VariantA.TotalSessions))*10) / 10
-		// Zero-interaction bounce rate (users who touched glass or walked away without gesture)
-		bouncesA := resp.VariantA.TotalSessions - resp.VariantA.SessionsWithGesture
-		resp.VariantA.ZeroInteractionRate = math.Round((float64(bouncesA)/float64(resp.VariantA.TotalSessions))*1000) / 10
-	}
-	if vA_userCount > 0 {
-		resp.VariantA.TimetableToggleRate = math.Round((float64(resp.VariantA.TimetableToggles)/float64(vA_userCount))*1000) / 10
-	}
-	if vA_gestTotalCount > 0 {
-		resp.VariantA.AvgTimeToFirstGest = math.Round((vA_gestTotalTime/float64(vA_gestTotalCount))*10) / 10
-	}
-	totalDwellA := resp.VariantA.DwellCompletedCount + resp.VariantA.DwellAbandonedCount
-	if totalDwellA > 0 {
-		resp.VariantA.DwellSuccessRate = math.Round((float64(resp.VariantA.DwellCompletedCount)/float64(totalDwellA))*1000) / 10
-	}
-	if resp.VariantA.ArticleModalOpens > 0 {
-		resp.VariantA.AvgModalReadSec = math.Round((vA_modalTime/float64(resp.VariantA.ArticleModalOpens))*10) / 10
-	}
-
-	// Variant B
-	if resp.VariantB.TotalSessions > 0 {
-		resp.VariantB.GestureAdoptionRate = math.Round((float64(resp.VariantB.SessionsWithGesture)/float64(resp.VariantB.TotalSessions))*1000) / 10
-		resp.VariantB.AvgDurationSec = math.Round((resp.VariantB.AvgDurationSec/float64(resp.VariantB.TotalSessions))*10) / 10
-		// Zero-interaction bounce rate
-		bouncesB := resp.VariantB.TotalSessions - resp.VariantB.SessionsWithGesture
-		resp.VariantB.ZeroInteractionRate = math.Round((float64(bouncesB)/float64(resp.VariantB.TotalSessions))*1000) / 10
-	}
-	if vB_userCount > 0 {
-		resp.VariantB.TimetableToggleRate = math.Round((float64(resp.VariantB.TimetableToggles)/float64(vB_userCount))*1000) / 10
-	}
-	if vB_gestTotalCount > 0 {
-		resp.VariantB.AvgTimeToFirstGest = math.Round((vB_gestTotalTime/float64(vB_gestTotalCount))*10) / 10
-	}
-	totalDwellB := resp.VariantB.DwellCompletedCount + resp.VariantB.DwellAbandonedCount
-	if totalDwellB > 0 {
-		resp.VariantB.DwellSuccessRate = math.Round((float64(resp.VariantB.DwellCompletedCount)/float64(totalDwellB))*1000) / 10
-	}
-	if resp.VariantB.ArticleModalOpens > 0 {
-		resp.VariantB.AvgModalReadSec = math.Round((vB_modalTime/float64(resp.VariantB.ArticleModalOpens))*10) / 10
-	}
-
-	// Lift %
 	if resp.VariantA.GestureAdoptionRate > 0 {
-		lift := ((resp.VariantB.GestureAdoptionRate - resp.VariantA.GestureAdoptionRate) / resp.VariantA.GestureAdoptionRate) * 100.0
-		resp.AdoptionRateLiftPct = math.Round(lift*10) / 10
+		resp.AdoptionRateLiftPct = round1((resp.VariantB.GestureAdoptionRate - resp.VariantA.GestureAdoptionRate) /
+			resp.VariantA.GestureAdoptionRate * 100)
 	}
 
-	// Two-proportion Z-test for statistical significance
-	nA := float64(resp.VariantA.TotalSessions)
-	nB := float64(resp.VariantB.TotalSessions)
-	xA := float64(resp.VariantA.SessionsWithGesture)
-	xB := float64(resp.VariantB.SessionsWithGesture)
-	if nA > 0 && nB > 0 && (nA+nB) >= 10 {
-		pA := xA / nA
-		pB := xB / nB
-		pPooled := (xA + xB) / (nA + nB)
-		se := math.Sqrt(pPooled * (1.0 - pPooled) * ((1.0 / nA) + (1.0 / nB)))
-		if se > 0 {
-			z := (pB - pA) / se
+	// Two-proportion z-test on gesture adoption.
+	nA, nB := float64(resp.VariantA.TotalSessions), float64(resp.VariantB.TotalSessions)
+	xA, xB := float64(resp.VariantA.SessionsWithGesture), float64(resp.VariantB.SessionsWithGesture)
+	if nA > 0 && nB > 0 && nA+nB >= 10 {
+		pooled := (xA + xB) / (nA + nB)
+		if se := math.Sqrt(pooled * (1 - pooled) * (1/nA + 1/nB)); se > 0 {
+			z := (xB/nB - xA/nA) / se
 			resp.ZScore = math.Round(z*100) / 100
-			// Two-tailed p-value from standard normal distribution
-			pValue := 1.0 - math.Erf(math.Abs(z)/math.Sqrt2)
-			if pValue < 0.0001 {
-				pValue = 0.0001
-			}
-			resp.PValue = math.Round(pValue*10000) / 10000
-			resp.IsSignificant = (resp.PValue < 0.05)
+			p := math.Max(1-math.Erf(math.Abs(z)/math.Sqrt2), 0.0001)
+			resp.PValue = math.Round(p*10000) / 10000
+			resp.IsSignificant = resp.PValue < 0.05
 		}
 	}
 
-	// Novelty Phase Analysis (Phase 1 vs Phase 2 lift)
-	if p1_vA_tot > 0 && p1_vB_tot > 0 {
-		rA1 := float64(p1_vA_gest) / float64(p1_vA_tot)
-		rB1 := float64(p1_vB_gest) / float64(p1_vB_tot)
-		if rA1 > 0 {
-			resp.NoveltyPhase1Lift = math.Round(((rB1-rA1)/rA1)*1000) / 10
+	lift := func(ph int) float64 {
+		a, b := phase[ph][0], phase[ph][1]
+		if a[0] == 0 || b[0] == 0 || a[1] == 0 {
+			return 0
 		}
+		rA, rB := float64(a[1])/float64(a[0]), float64(b[1])/float64(b[0])
+		return round1((rB - rA) / rA * 100)
 	}
-	if p2_vA_tot > 0 && p2_vB_tot > 0 {
-		rA2 := float64(p2_vA_gest) / float64(p2_vA_tot)
-		rB2 := float64(p2_vB_gest) / float64(p2_vB_tot)
-		if rA2 > 0 {
-			resp.NoveltyPhase2Lift = math.Round(((rB2-rA2)/rA2)*1000) / 10
-		}
-	}
+	resp.NoveltyPhase1Lift, resp.NoveltyPhase2Lift = lift(0), lift(1)
 
-	// Slice recent 30 sessions in reverse order (newest first)
-	n := len(analyticsLog)
-	limit := 30
-	if n < limit {
-		limit = n
+	for i := len(all) - 1; i >= 0 && len(resp.RecentSessions) < 50; i-- {
+		resp.RecentSessions = append(resp.RecentSessions, all[i])
 	}
-	for i := n - 1; i >= n-limit; i-- {
-		resp.RecentSessions = append(resp.RecentSessions, analyticsLog[i])
-	}
-
-	return c.JSON(200, resp)
+	return c.JSON(http.StatusOK, resp)
 }
 
-// ── A/B Experiment Dynamic Configuration ──────────────────────────────────
+// ── A/B experiment configuration ────────────────────────────────────────────
 
 type ABExperimentConfig struct {
-	Mode               string `json:"mode"`                 // "auto", "force_a", "force_b", "hourly", "daily"
-	AutoSwitchInterval string `json:"auto_switch_interval"` // "session", "1h", "24h"
-	ActiveVariant      string `json:"active_variant"`      // "A" or "B"
-	AdminEmail         string `json:"admin_email"`
-	UpdatedAt          int64  `json:"updated_at"`
+	Mode          string `json:"mode"` // auto | force_a | force_b | hourly | daily
+	ActiveVariant string `json:"active_variant"`
+	UpdatedAt     int64  `json:"updated_at"`
+	UpdatedBy     string `json:"updated_by,omitempty"`
 }
 
-var (
-	abConfigMutex   sync.RWMutex
-	currentABConfig = ABExperimentConfig{
-		Mode:               "auto",
-		AutoSwitchInterval: "session",
-		ActiveVariant:      "A",
-		AdminEmail:         DefaultAdminEmail,
-		UpdatedAt:          time.Now().Unix(),
-	}
-)
+func loadABConfig() ABExperimentConfig {
+	cfg := ABExperimentConfig{Mode: "auto"}
+	getSetting("ab_config", &cfg)
+	return cfg
+}
 
 func computeActiveVariant(cfg ABExperimentConfig) string {
 	switch cfg.Mode {
@@ -439,14 +397,13 @@ func computeActiveVariant(cfg ABExperimentConfig) string {
 		}
 		return "B"
 	case "daily":
-		if (time.Now().Unix()/86400)%2 == 0 {
+		if (time.Now().In(nzLocation()).YearDay())%2 == 0 {
 			return "A"
 		}
 		return "B"
-	default: // "auto"
-		analyticsMutex.RLock()
-		n := len(analyticsLog)
-		analyticsMutex.RUnlock()
+	default: // auto: alternate by session count
+		var n int
+		db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n)
 		if n%2 == 0 {
 			return "A"
 		}
@@ -454,38 +411,34 @@ func computeActiveVariant(cfg ABExperimentConfig) string {
 	}
 }
 
-// GET /api/analytics/config
+// GET /api/analytics/config (mirror + admin)
 func getAnalyticsConfig(c echo.Context) error {
-	abConfigMutex.RLock()
-	cfg := currentABConfig
-	abConfigMutex.RUnlock()
-
+	cfg := loadABConfig()
 	cfg.ActiveVariant = computeActiveVariant(cfg)
-	return c.JSON(200, cfg)
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"mode":            cfg.Mode,
+		"active_variant":  cfg.ActiveVariant,
+		"current_variant": cfg.ActiveVariant,
+		"updated_at":      cfg.UpdatedAt,
+		"updated_by":      cfg.UpdatedBy,
+	})
 }
 
-// POST /api/analytics/config
+// POST /api/analytics/config (admin)
 func updateAnalyticsConfig(c echo.Context) error {
 	var req struct {
-		Mode               string `json:"mode"`
-		AutoSwitchInterval string `json:"auto_switch_interval"`
+		Mode string `json:"mode"`
 	}
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(400, map[string]string{"error": "Invalid request body"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
-
-	abConfigMutex.Lock()
-	if req.Mode != "" {
-		currentABConfig.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
+	cfg := loadABConfig()
+	cfg.Mode = oneOf(req.Mode, "auto", "force_a", "force_b", "hourly", "daily")
+	cfg.UpdatedAt = time.Now().Unix()
+	cfg.UpdatedBy = adminEmailOf(c)
+	if err := setSetting("ab_config", cfg); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not save"})
 	}
-	if req.AutoSwitchInterval != "" {
-		currentABConfig.AutoSwitchInterval = strings.ToLower(strings.TrimSpace(req.AutoSwitchInterval))
-	}
-	currentABConfig.UpdatedAt = time.Now().Unix()
-	cfg := currentABConfig
-	abConfigMutex.Unlock()
-
-	cfg.ActiveVariant = computeActiveVariant(cfg)
-	return c.JSON(200, cfg)
+	auditAdmin(c, "ab_mode", "", cfg.Mode)
+	return getAnalyticsConfig(c)
 }
-
