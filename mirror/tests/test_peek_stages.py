@@ -463,3 +463,11 @@ class TestMirrorNotice(unittest.TestCase):
         self.assertTrue(m.banner_frame.isVisible())
         m._update_banner({"message": "", "level": "notice"})
         self.assertFalse(m.banner_frame.isVisible())
+
+    def test_a_long_notice_makes_the_banner_taller_without_overlap(self):
+        m = self.mirror
+        m._update_banner({"message": "Short", "level": "notice"})
+        short = m.banner_frame.height()
+        m._update_banner({"message": "Assembly has moved to the gym at eleven because of the rain. " * 3, "level": "warning"})
+        self.assertGreater(m.banner_frame.height(), short)
+        self.assertGreaterEqual(m.user_container.y(), m.banner_frame.geometry().bottom())
