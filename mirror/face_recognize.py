@@ -131,6 +131,7 @@ def _sync_index():
         print("[FACES] The server rejected this mirror's key — set MIRROR_API_KEY in ~/.config/smart-mirror/env.", flush=True)
         return
     if res.status_code != 200:
+        print(f"[FACES] Could not refresh the face index (HTTP {res.status_code}); keeping the current one.", flush=True)
         return
     server_online = True
     data = res.json()

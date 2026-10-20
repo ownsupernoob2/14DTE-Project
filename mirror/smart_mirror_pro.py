@@ -12,6 +12,11 @@ import socket
 
 import cv2
 import numpy as np
+
+# The UI only uses OpenCV to decode and scale the demo video. Left at its
+# default it fans every resize out over all four cores, competing in bursts
+# with the hand tracker, which matters far more.
+cv2.setNumThreads(1)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
