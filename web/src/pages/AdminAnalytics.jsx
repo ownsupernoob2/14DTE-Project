@@ -4,6 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { motion } from 'framer-motion'
 import Navbar from '../components/Navbar'
 import UsersPanel from '../components/admin/UsersPanel'
+import UsersPanel from '../components/admin/AdminLogs'
 import ScreensaverPanel from '../components/admin/ScreensaverPanel'
 import MirrorNoticePanel from '../components/admin/MirrorNoticePanel'
 import { useMe } from '../contexts/MeContext'
@@ -13,11 +14,12 @@ export default function AdminAnalytics() {
   const { isLoading: isAuthLoading } = useAuth0()
   const { me, meChecked, isAdmin, authFetch, contactEmail } = useMe()
   const [data, setData] = useState(null)
+  
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedVariantFilter, setSelectedVariantFilter] = useState('ALL') // 'ALL', 'A', 'B'
-  const [activeTab, setActiveTab] = useState('overview') // overview | users | screensaver | hourly | sessions | biometrics
+  const [activeTab, setActiveTab] = useState('overview') // overview | users | screensaver | hourly | sessions | biometrics | logs
   const [auditData, setAuditData] = useState(null)
   const [abConfig, setAbConfig] = useState(() => {
     try {
@@ -425,6 +427,7 @@ export default function AdminAnalytics() {
                 { id: 'hourly', label: 'Hourly Peak Distribution' },
                 { id: 'sessions', label: `Recent Session Feed (${data.recent_sessions?.length || 0})` },
                 { id: 'biometrics', label: 'Biometric Audit & Collisions' },
+                { id: 'logs', label: 'System Logs' },
               ].map(t => (
                 <button
                   key={t.id}
@@ -443,6 +446,7 @@ export default function AdminAnalytics() {
             {/* ── TAB 1: A/B TESTING DEEP-DIVE BATTLE CARD ───────────────── */}
             {activeTab === 'users' && <UsersPanel />}
             {activeTab === 'screensaver' && <ScreensaverPanel />}
+            {activeTab === 'logs' && (<AdminLogs token={adminToken} />)}
             {activeTab === 'notice' && <MirrorNoticePanel />}
 
             {activeTab === 'overview' && (
