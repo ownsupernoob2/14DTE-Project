@@ -174,8 +174,11 @@ class DemoVideoDecoder(QThread):
             shrinking = w < frame.shape[1]
             frame = cv2.resize(frame, (w, h),
                                interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        return QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        # Qt's native 32-bit layout (BGRA bytes = Format_RGB32 on little-endian),
+        # converted here on the decoder thread. Handing Qt 24-bit RGB made it
+        # convert every frame again on the UI thread at paint time.
+        bgra = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+        return QImage(bgra.data, w, h, 4 * w, QImage.Format.Format_RGB32).copy()
 
     def first_frame(self):
         """A still of the opening frame, shown while the overlay fades in."""
