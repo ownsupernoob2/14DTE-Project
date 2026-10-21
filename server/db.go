@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 	kings_expands          INTEGER NOT NULL DEFAULT 0,
 	tutorial_shown         INTEGER NOT NULL DEFAULT 0,
 	tutorial_dismissed     INTEGER NOT NULL DEFAULT 0,
+	practice_shown         INTEGER NOT NULL DEFAULT 0,   -- A/B variant B's hands-on practice
+	practice_completed     INTEGER NOT NULL DEFAULT 0,
+	practice_skipped       INTEGER NOT NULL DEFAULT 0,
+	practice_steps         INTEGER NOT NULL DEFAULT 0,
+	practice_sec           REAL NOT NULL DEFAULT 0,
+	after_teaser           INTEGER NOT NULL DEFAULT 0,   -- grew out of a brief encounter's hint
 	from_screensaver       INTEGER NOT NULL DEFAULT 0,
 	client_started_at      REAL NOT NULL DEFAULT 0,
 	created_at             INTEGER NOT NULL
@@ -157,9 +163,40 @@ func openDatabase(path string) error {
 		return fmt.Errorf("creating schema: %w", err)
 	}
 	db = conn
+	if err := addMissingColumns(); err != nil {
+		conn.Close()
+		return fmt.Errorf("updating schema: %w", err)
+	}
 	if fresh {
 		setSetting("schema_version", schemaVersion)
 		wipeLegacyData()
+	}
+	return nil
+}
+
+// Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+// existing table alone, so a database made before them gets them here; nothing
+// is wiped.
+var addedColumns = []struct{ table, column, def string }{
+	{"sessions", "practice_shown", "INTEGER NOT NULL DEFAULT 0"},
+	{"sessions", "practice_completed", "INTEGER NOT NULL DEFAULT 0"},
+	{"sessions", "practice_skipped", "INTEGER NOT NULL DEFAULT 0"},
+	{"sessions", "practice_steps", "INTEGER NOT NULL DEFAULT 0"},
+	{"sessions", "practice_sec", "REAL NOT NULL DEFAULT 0"},
+	{"sessions", "after_teaser", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+func addMissingColumns() error {
+	for _, c := range addedColumns {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.column, c.def)); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

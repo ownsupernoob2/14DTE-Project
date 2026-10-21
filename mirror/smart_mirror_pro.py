@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QPointF, pyqtSignal, QObject, QThread
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QRect, QRectF, QPoint, QPointF, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QRadialGradient
 
 from config import *
@@ -95,6 +95,9 @@ TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): give them this lo
 SIGNED_OUT_FACE_HOLD_SEC = 5.0   # after signing out, ignore their face until it's gone this long
 PINCH_DROPOUT_SEC   = 0.25   # tolerate brief tracking drops without resetting
 SCAN_TEASE_HOLD_SEC = 4.0    # how long STUDENT ID SCAN stays up after a brief sighting
+TEASER_VISIT_WINDOW_SEC = 15.0   # a visit starting this soon after the teaser came from it
+PRACTICE_SLIDE_MS = 650      # video sliding aside for the practice (variant B)
+PRACTICE_DONE_HOLD_MS = 1400  # "YOU'RE READY" stays this long before the overlay fades
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +112,7 @@ class DemoVideoDecoder(QThread):
     """
     frame_ready = pyqtSignal(QImage)
     played_once = pyqtSignal()
+    looped = pyqtSignal()          # a looping clip reached its end and started again
 
     def __init__(self, path, speed=1.0, parent=None):
         super().__init__(parent)
@@ -227,6 +231,7 @@ class DemoVideoDecoder(QThread):
                     if loop:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         t0, shown = time.monotonic(), 0
+                        self.looped.emit()
                         continue
                     with self._cond:
                         if gen != self._generation:
@@ -667,6 +672,7 @@ class GuestScanCallout(QWidget):
         self._timer.timeout.connect(self.update)
         self._fade = 1.0
         self.show_or = False      # "OR": over the tutorial, scanning is the other way in
+        self.stand_close = False  # variant B's brief-encounter hint, centred, one line
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
@@ -706,6 +712,11 @@ class GuestScanCallout(QWidget):
             painter.drawText(QRect(0, int(top), w, height),
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
 
+        if self.stand_close:
+            line("STAND CLOSE TO INTERACT", 0, self.height(), 46, QFont.Weight.Black, 7, alpha)
+            painter.end()
+            return
+
         # The small lines hold steady (no pulse) so they're easy to read.
         steady = int(255 * self._fade)
         if self.show_or:
@@ -716,6 +727,177 @@ class GuestScanCallout(QWidget):
         # Arrow "v" below, bouncing towards the scanner
         painter.translate(0.0, bounce)
         line("▼", 122, 70, 56, QFont.Weight.Black, 0, alpha)
+        painter.end()
+
+
+class PracticePanel(QWidget):
+    """Variant B: a short hands-on practice beside the tutorial video.
+
+    Two steps, then "YOU'RE READY": pinch the dot (twice, in two places), then
+    pinch and drag a list to its end. Painted, not built from child widgets,
+    so it fades as one piece and never fights the overlay's own fade. Flat
+    panels and white type like the rest of the mirror: no outlines.
+    """
+    finished = pyqtSignal()
+
+    TAPS = 2
+    DOTS = ((0.34, 0.42), (0.70, 0.66))   # where the dot sits, as fractions of the play area
+    CARDS = 6
+    CARD_H, CARD_GAP, PAD = 64, 12, 18
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
+        self._fade = 0.0
+        self.reset()
+        self.hide()
+
+    def reset(self):
+        self.step = 0              # 0 pinch the dot, 1 drag the list, 2 done
+        self.steps_done = 0
+        self._taps = 0
+        self._hover = False
+        self._scroll = 0.0
+        self._flash_at = 0.0
+        self.update()
+
+    def set_fade(self, f):
+        self._fade = max(0.0, min(1.0, float(f)))
+        self.update()
+
+    def showEvent(self, event):
+        self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    # ── geometry ──
+    def play_rect(self):
+        return QRect(0, 104, self.width(), max(120, self.height() - 104))
+
+    def dot_center(self):
+        r = self.play_rect()
+        fx, fy = self.DOTS[min(self._taps, len(self.DOTS) - 1)]
+        return QPointF(r.left() + fx * r.width(), r.top() + fy * r.height())
+
+    def scroll_max(self):
+        content = self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP
+        return max(1.0, content - self.play_rect().height())
+
+    # ── input (hand position in this widget's coordinates) ──
+    def handle(self, point, event, delta=0):
+        if self.step == 0:
+            c = self.dot_center()
+            self._hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= 70
+            if event == "tap" and self._hover:
+                self._taps += 1
+                self._flash_at = time.monotonic()
+                if self._taps >= self.TAPS:
+                    self._advance()
+        elif self.step == 1 and event in ("scroll", "fling") and delta:
+            self._scroll = max(0.0, min(self.scroll_max(), self._scroll + delta))
+            if self._scroll >= self.scroll_max() - 1:
+                self._advance()
+        self.update()
+
+    def _advance(self):
+        self.step += 1
+        self.steps_done = min(2, self.step)
+        self._flash_at = time.monotonic()
+        if self.step == 2:
+            self.finished.emit()
+
+    # ── drawing ──
+    def paintEvent(self, event):
+        if self._fade <= 0.0:
+            return
+        f = self._fade
+        now = time.monotonic()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+
+        def text(t, rect, px, weight, color, alpha=1.0, spacing=0, align=Qt.AlignmentFlag.AlignLeft):
+            font = painter.font()
+            font.setFamily("Segoe UI")
+            font.setPixelSize(px)
+            font.setWeight(weight)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+            painter.setFont(font)
+            c = QColor(color)
+            c.setAlphaF(max(0.0, min(1.0, alpha * f)))
+            painter.setPen(c)
+            painter.drawText(rect, align | Qt.AlignmentFlag.AlignVCenter, t)
+
+        step_lbl = "PRACTICE" if self.step == 2 else f"PRACTICE  {self.step + 1} / 2"
+        text(step_lbl, QRect(0, 0, w, 24), 14, QFont.Weight.Bold, '#94a3b8', spacing=3)
+        title = ("PINCH THE DOT", "PINCH AND DRAG TO SCROLL", "YOU'RE READY")[self.step]
+        text(title, QRect(0, 26, w, 44), 32, QFont.Weight.Black, '#ffffff', spacing=1)
+        sub = (f"{self._taps} of {self.TAPS}", "Scroll to the end", "Explore the mirror")[self.step]
+        text(sub, QRect(0, 70, w, 26), 18, QFont.Weight.DemiBold, '#cbd5e1')
+
+        area = self.play_rect()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(17, 17, 17, int(255 * f)))           # #111, like the notice cards
+        painter.drawRoundedRect(QRectF(area), 8, 8)
+
+        if self.step == 0:
+            c = self.dot_center()
+            pulse = 0.5 + 0.5 * math.sin(now * math.pi * 1.6)
+            flash = max(0.0, 1.0 - (now - self._flash_at) / 0.4)
+            halo = 30 + 22 * pulse + 30 * flash
+            painter.setBrush(QColor(255, 255, 255, int((26 + 40 * flash) * f)))
+            painter.drawEllipse(c, halo, halo)
+            r = 36 if self._hover else 28
+            painter.setBrush(QColor(255, 255, 255, int(255 * f)))
+            painter.drawEllipse(c, r, r)
+        elif self.step == 1:
+            painter.save()
+            painter.setClipRect(area)
+            y = area.top() + self.PAD - self._scroll
+            for i in range(self.CARDS):
+                card = QRectF(area.left() + self.PAD, y, area.width() - 2 * self.PAD, self.CARD_H)
+                last = i == self.CARDS - 1
+                painter.setBrush(QColor(30, 30, 30, int(255 * f)))
+                painter.drawRoundedRect(card, 6, 6)
+                painter.setBrush(QColor(56, 189, 248, int(255 * f)) if last else QColor(51, 65, 85, int(255 * f)))
+                painter.drawRect(QRectF(card.left(), card.top(), 4, card.height()))
+                if last:
+                    text("THE END", card.adjusted(20, 0, 0, 0).toRect(), 16, QFont.Weight.Black, '#ffffff', spacing=3)
+                else:
+                    painter.setBrush(QColor(42, 53, 72, int(255 * f)))
+                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 16, card.width() * 0.32, 10), 3, 3)
+                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 36, card.width() * 0.62, 10), 3, 3)
+                y += self.CARD_H + self.CARD_GAP
+            painter.restore()
+            # how far there is to go, along the right edge
+            track = QRectF(area.right() - 8, area.top() + 12, 3, area.height() - 24)
+            painter.setBrush(QColor(255, 255, 255, int(40 * f)))
+            painter.drawRoundedRect(track, 1.5, 1.5)
+            done = track.height() * (self._scroll / self.scroll_max())
+            painter.setBrush(QColor(255, 255, 255, int(255 * f)))
+            painter.drawRoundedRect(QRectF(track.left(), track.top(), 3, done), 1.5, 1.5)
+        else:
+            c = QPointF(area.center())
+            pop = min(1.0, (now - self._flash_at) / 0.25)
+            painter.setBrush(QColor(255, 255, 255, int(255 * f)))
+            painter.drawEllipse(c, 48 * pop, 48 * pop)
+            pen = QPen(QColor(0, 0, 0, int(255 * f)), 8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            path = QPainterPath(QPointF(c.x() - 20 * pop, c.y() + 2 * pop))
+            path.lineTo(c.x() - 6 * pop, c.y() + 16 * pop)
+            path.lineTo(c.x() + 22 * pop, c.y() - 14 * pop)
+            painter.drawPath(path)
         painter.end()
 
 
@@ -850,6 +1032,11 @@ class SmartMirrorPro(QMainWindow):
         self._last_hand_time = 0.0
         self._signed_out_user = None       # their face is ignored until they step away
         self._signed_out_face_gone = 0.0
+        self._teaser_shown_at = 0.0        # brief encounter: when the teaser first showed
+        self._teaser_last_seen = 0.0
+        self._teaser_variant = 'A'
+        self._visit_from_splash = False    # this visit began as a guest from the idle screen
+        self._practice_offered = False     # variant B's practice: once per visit at most
 
         # ── Idle attract loop (full-screen demo while nobody is there) ────
         self._last_presence_time = 0.0   # last face or hand seen, by anyone
@@ -1112,12 +1299,44 @@ class SmartMirrorPro(QMainWindow):
 
     def _layout_demo_overlay(self, with_callout):
         """Centre the video, bar and hint in the space the callout leaves free."""
-        if getattr(self, '_demo_lay', None) is None:
+        self._demo_with_callout = with_callout
+        self._place_demo()
+
+    def _place_demo(self):
+        """Lay out the tutorial: the video alone, or (practice_p → 1) beside the practice."""
+        if getattr(self, 'demo_surface', None) is None:
             return
-        self._demo_lay.setContentsMargins(0, 0, 0, 0)
-        content = self._demo_lay.sizeHint().height()
-        free = self.height() - (self.SCAN_CALLOUT_H if with_callout else 0)
-        self._demo_lay.setContentsMargins(0, max(16, (free - content) // 2), 0, 0)
+        W, H = self.width(), self.height()
+        free = H - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
+        label_h = self.demo_hold_lbl.sizeHint().height()
+        foot = 18 + 6 + 12 + label_h
+
+        vw0 = min(720, W - 32)
+        vh0 = vw0 * 9 // 16
+        r0 = QRect((W - vw0) // 2, max(16, (free - vh0 - foot) // 2), vw0, vh0)
+
+        half = W // 2
+        vw1 = max(160, min(600, half - 48))
+        vh1 = vw1 * 9 // 16
+        pw = max(200, min(520, half - 48))
+        ph = max(vh1, min(380, free - foot - 32))
+        top1 = max(16, (free - ph - foot) // 2)
+        r1 = QRect(half - 24 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
+        panel = QRect(half + 24, top1, pw, ph)
+
+        t = QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(self._practice_p)
+
+        def mix(a, b):
+            return int(round(a + (b - a) * t))
+
+        video = QRect(mix(r0.x(), r1.x()), mix(r0.y(), r1.y()),
+                      mix(r0.width(), r1.width()), mix(r0.height(), r1.height()))
+        self.demo_surface.setGeometry(video)
+        self.practice_panel.setGeometry(panel.translated(int(48 * (1 - t)), 0))
+        self.practice_panel.set_fade(t)
+        bottom = mix(r0.bottom(), max(r1.bottom(), panel.bottom()))
+        self.demo_hold_bar.move((W - self.demo_hold_bar.width()) // 2, bottom + 18)
+        self.demo_hold_lbl.setGeometry(0, bottom + 18 + 6 + 12, W, label_h)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -1192,21 +1411,25 @@ class SmartMirrorPro(QMainWindow):
         # dismissed by pinching and holding.
         self.gesture_demo_overlay = GestureDemoOverlay(self.central_widget)
         self.gesture_demo_overlay.setObjectName("GestureDemoOverlay")
-        lay = QVBoxLayout(self.gesture_demo_overlay)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(18)
-        lay.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self._demo_lay = lay
-
+        # Placed by _place_demo, not a layout: in variant B the video slides
+        # aside for the practice panel while it keeps playing.
+        self._demo_with_callout = False
+        self._practice_p = 0.0
         self.demo_movie = None
         self.demo_surface = VideoSurface(self.gesture_demo_overlay)
-        self.demo_surface.setFixedSize(720, 405)
-        lay.addWidget(self.demo_surface, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.demo_surface.setGeometry(0, 0, 720, 405)
         if has_video:
             self.demo_movie = DemoVideoDecoder(self._demo_video('540p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
             self.demo_movie.set_target_size(720, 405)
             self.demo_movie.frame_ready.connect(self.demo_surface.set_image)
             self.demo_surface.set_image(self.demo_movie.first_frame())
+            self.demo_movie.looped.connect(self._on_demo_looped)
+
+        self.practice_panel = PracticePanel(self.gesture_demo_overlay)
+        self.practice_panel.finished.connect(self._on_practice_finished)
+        self._practice_state = None      # None | pending | active | done
+        self._practice_anim = None
+        self._practice_started_at = 0.0
 
         # Pinch-and-hold progress bar beneath the video, and what it is for
         self.demo_hold_bar = QFrame(self.gesture_demo_overlay)
@@ -1215,12 +1438,11 @@ class SmartMirrorPro(QMainWindow):
         self.demo_hold_fill = QFrame(self.demo_hold_bar)
         self.demo_hold_fill.setStyleSheet("background: #ffffff; border: none; border-radius: 3px;")
         self.demo_hold_fill.setGeometry(0, 0, 0, 6)
-        lay.addWidget(self.demo_hold_bar, alignment=Qt.AlignmentFlag.AlignCenter)
         self.demo_hold_lbl = QLabel("HOLD PINCH TO EXIT", self.gesture_demo_overlay)
+        self.demo_hold_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.demo_hold_lbl.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 800; "
             "letter-spacing: 4px; color: #ffffff; background: transparent;")
-        lay.addWidget(self.demo_hold_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
         self.gesture_demo_overlay.hide()
 
         # Nobody at the mirror: the screensaver chosen in the admin dashboard
@@ -1240,6 +1462,10 @@ class SmartMirrorPro(QMainWindow):
         # Self-contained widget -- no nested QGraphicsOpacityEffect (avoids freeze).
         self.guest_scan_callout = GuestScanCallout(self.central_widget)
         self.guest_scan_callout.hide()
+        # Variant B says this to someone passing by, in the middle of the screen.
+        self.stand_close_hint = GuestScanCallout(self.central_widget)
+        self.stand_close_hint.stand_close = True
+        self.stand_close_hint.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
@@ -1481,7 +1707,7 @@ class SmartMirrorPro(QMainWindow):
 
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.setGeometry(0, 0, w, h)
-            self._layout_demo_overlay(hasattr(self, 'guest_scan_callout') and self.guest_scan_callout.isVisible())
+            self._place_demo()
             if hasattr(self, 'guest_scan_callout') and self.guest_scan_callout.isVisible():
                 self._position_guest_scan_callout()
 
@@ -2062,38 +2288,52 @@ class SmartMirrorPro(QMainWindow):
         cap.show()
         cap.raise_()
 
-        # Variant B: show dwell hint pill beneath arrow (no emoji, black bg)
-        if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
-            pill_w = 290
-            pill_h = 28
-            pill_x = content_x + (content_w - pill_w) // 2
-            pill_y = arrow_y + 36
-            self.dwell_hint_pill.setGeometry(pill_x, pill_y, pill_w, pill_h)
-            self.dwell_hint_pill.setText("Hold hand in top-right for Timetable")
-            self.dwell_hint_pill.show()
-            self.dwell_hint_pill.raise_()
-        elif hasattr(self, 'dwell_hint_pill'):
+        # Variant B used to add a dwell hint pill here. It's retired: B now
+        # differs only in the practice and the passer-by hint.
+        if hasattr(self, 'dwell_hint_pill'):
             self.dwell_hint_pill.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture tutorial: pinch-and-hold to dismiss
     # ─────────────────────────────────────────────────────────────────────
     def _show_scan_callout(self):
+        """Someone seen but not yet a visit: A says STUDENT ID SCAN, B says STAND CLOSE."""
         if not hasattr(self, 'guest_scan_callout'):
             return
-        self._position_guest_scan_callout()
-        self.guest_scan_callout.set_fade(1.0)
-        self.guest_scan_callout.show_or = False
-        if not self.guest_scan_callout.isVisible():
-            self.guest_scan_callout.show()
-            self.guest_scan_callout.start()
-        self.guest_scan_callout.raise_()
+        now = time.time()
+        if not self._teaser_shown_at:            # a new encounter: pick its variant now
+            self._teaser_shown_at = now
+            self._teaser_variant = self.telemetry.peek_variant() if self.telemetry is not None else 'A'
+        self._teaser_last_seen = now
+        if self._teaser_variant == 'B':
+            hint = self.stand_close_hint
+            hint.setGeometry(0, (self.height() - 120) // 2, self.width(), 120)
+        else:
+            hint = self.guest_scan_callout
+            self._position_guest_scan_callout()
+            hint.show_or = False
+        hint.set_fade(1.0)
+        if not hint.isVisible():
+            hint.show()
+            hint.start()
+        hint.raise_()
 
     def _hide_scan_callout(self):
         if hasattr(self, 'guest_scan_callout'):
-            self.guest_scan_callout.stop()
-            self.guest_scan_callout.hide()
+            for hint in (self.guest_scan_callout, self.stand_close_hint):
+                hint.stop()
+                hint.hide()
         self._scan_tease_until = 0.0
+
+    def _end_teaser(self, became_visit):
+        """The brief encounter is over: either a visit began, or they walked on."""
+        if not self._teaser_shown_at:
+            return None
+        variant, shown_for = self._teaser_variant, self._teaser_last_seen - self._teaser_shown_at
+        self._teaser_shown_at = 0.0
+        if not became_visit and self.telemetry is not None:
+            self.telemetry.record_passerby(variant, shown_for)
+        return variant
 
     def _demo_overlay_active(self):
         return (getattr(self, 'gesture_demo_overlay', None) is not None
@@ -2123,10 +2363,54 @@ class SmartMirrorPro(QMainWindow):
         self._set_demo_hold_progress(progress)
         if progress >= 1.0:
             self._demo_pinch_start = None
-            if self.telemetry is not None:
+            if self.telemetry is not None and self._practice_state != 'active':
                 self.telemetry.record_tutorial_dismissed()
             self._last_activity_time = now      # so the idle timer doesn't instantly re-show it
-            self._fade_out_gesture_scrim()
+            self._fade_out_gesture_scrim()      # mid-practice this is the skip
+
+    def _on_demo_looped(self):
+        if self._practice_state == 'pending' and self._demo_overlay_active():
+            self._start_practice()
+
+    def _start_practice(self):
+        """Slide the still-playing video aside and bring in the practice."""
+        self._practice_state = 'active'
+        self._practice_started_at = time.time()
+        self.practice_panel.reset()
+        self.practice_panel.show()
+        self.practice_panel.raise_()
+        self.demo_hold_lbl.setText("HOLD PINCH TO SKIP")
+        if self.telemetry is not None:
+            self.telemetry.record_practice_shown()
+        anim = QVariantAnimation(self)
+        anim.setDuration(PRACTICE_SLIDE_MS)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+
+        def step(v):
+            self._practice_p = float(v)
+            self._place_demo()
+        anim.valueChanged.connect(step)
+        # Decode at the new size once there, rather than scaling every frame.
+        anim.finished.connect(lambda: self.demo_movie.set_target_size(
+            self.demo_surface.width(), self.demo_surface.height()))
+        anim.start()
+        self._practice_anim = anim
+
+    def _on_practice_finished(self):
+        if self._practice_state != 'active':
+            return
+        self._practice_state = 'done'
+        if self.telemetry is not None:
+            self.telemetry.record_practice_ended(completed=True, steps=2,
+                                                 seconds=time.time() - self._practice_started_at)
+        self._last_activity_time = time.time()
+        QTimer.singleShot(PRACTICE_DONE_HOLD_MS, self._fade_out_gesture_scrim)
+
+    def _practice_point(self, data):
+        """The hand cursor in the practice panel's coordinates."""
+        p = QPoint(int(data.get("hand_x", 0.0) * self.width()), int(data.get("hand_y", 0.0) * self.height()))
+        return QPointF(self.practice_panel.mapFrom(self.central_widget, p))
 
     def _show_gesture_scrim(self):
         """Play the tutorial over a dark overlay (no gestures for a while)."""
@@ -2165,6 +2449,21 @@ class SmartMirrorPro(QMainWindow):
                 self._hide_scan_callout()
 
 
+        # Variant B, first tutorial of a visit that began as a guest from the
+        # idle screen: once the clip has played through, the practice.
+        self._practice_state = None
+        self._practice_p = 0.0
+        self.practice_panel.hide()
+        self.demo_hold_lbl.setText("HOLD PINCH TO EXIT")
+        if (self.current_variant == 'B' and self._last_state == 'guest'
+                and self._visit_from_splash and not self._practice_offered
+                and self.demo_movie is not None):
+            self._practice_offered = True
+            self._practice_state = 'pending'
+        if self.demo_movie is not None:
+            self.demo_movie.set_target_size(720, 405)
+        self._place_demo()
+
         if self.demo_movie is not None:
             self.demo_movie.play(loop=True)
         if self.telemetry is not None:
@@ -2200,12 +2499,22 @@ class SmartMirrorPro(QMainWindow):
         anim_out.setEndValue(0.0)
         anim_out.valueChanged.connect(lambda v: self.guest_scan_callout.set_fade(v))
 
+        if self._practice_state == 'active':     # left mid-practice (an ID scan, a screen change)
+            self._practice_state = 'done'
+            if self.telemetry is not None:
+                self.telemetry.record_practice_ended(completed=False, steps=self.practice_panel.steps_done,
+                                                     seconds=time.time() - self._practice_started_at)
+
         def on_done():
             self.gesture_demo_overlay.hide()
             self._hide_scan_callout()
             self._scrim_fading_out = False
             self._demo_pinch_start = None
             self._set_demo_hold_progress(0.0)
+            if self._practice_anim is not None:
+                self._practice_anim.stop()
+            self.practice_panel.hide()
+            self._practice_p = 0.0
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
 
@@ -2265,7 +2574,7 @@ class SmartMirrorPro(QMainWindow):
             demo.show()
         demo.show_mode(mode)
         demo.raise_()
-        for w in (self.guest_scan_callout, self.status_dot, self.version_lbl, self.gesture_trail):
+        for w in (self.guest_scan_callout, self.stand_close_hint, self.status_dot, self.version_lbl, self.gesture_trail):
             if w.isVisible():
                 w.raise_()
         self._idle_demo_phase = 'playing'
@@ -2473,6 +2782,10 @@ class SmartMirrorPro(QMainWindow):
         # While the tutorial video is up, the only thing that does anything is
         # a held pinch (fills the bar under the video, exits at 100%).
         if self._demo_overlay_active():
+            if self._practice_state == 'active' and present:
+                self.practice_panel.handle(self._practice_point(data), event, delta)
+                if event in ("scroll", "fling"):
+                    self._demo_pinch_start = None    # dragging the list is not holding to skip
             self._update_demo_hold(present and bool(data.get("pinched", False)))
             return
 
@@ -2929,6 +3242,8 @@ class SmartMirrorPro(QMainWindow):
                 self._show_scan_callout()
             elif self._scan_tease_until and now >= self._scan_tease_until:
                 self._hide_scan_callout()
+            elif self._teaser_shown_at and now - self._teaser_last_seen > TEASER_VISIT_WINDOW_SEC:
+                self._end_teaser(became_visit=False)     # they walked on
 
         # ── Idle attract loop ─────────────────────────────────────────────
         self._update_idle_demo()
@@ -3008,6 +3323,12 @@ class SmartMirrorPro(QMainWindow):
                 auth = 'face' if new_state == 'user' else 'presence'
 
             uid = new_user_id if new_state == 'user' else None
+            teaser_variant = None
+            if is_from_idle and self._teaser_shown_at and time.time() - self._teaser_last_seen < TEASER_VISIT_WINDOW_SEC:
+                teaser_variant = self._end_teaser(became_visit=True)
+            if is_from_idle:
+                self._visit_from_splash = new_state == 'guest'
+                self._practice_offered = False
             sess = self.telemetry.current_session if self.telemetry is not None else None
             if sess is not None and sess['session_type'] == 'guest' and new_state == 'user':
                 # Same visit: the guest was recognised or scanned their ID.
@@ -3015,6 +3336,7 @@ class SmartMirrorPro(QMainWindow):
             elif incoming is not visible and self.telemetry is not None:
                 self.current_variant = self.telemetry.start_session(
                     session_type=new_state, auth_method=auth, user_id=uid,
+                    variant=teaser_variant, after_teaser=teaser_variant is not None,
                     from_screensaver=time.time() - self._screensaver_left_at < 30.0,
                     screensaver_mode=self._screensaver_mode())
             elif sess is not None:
@@ -3062,6 +3384,7 @@ class SmartMirrorPro(QMainWindow):
         self._auth_method = ""
         self._scanned_this_visit = False
         self._tutorial_wait = None
+        self._visit_from_splash = False
         self._hide_scan_callout()
         self.user_container.hide()
         self.guest_container.hide()

@@ -17,6 +17,8 @@ os.environ.setdefault('MIRROR_SCREENSAVER_SYNC', '0')
 import requests
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QPointF
+import time
 
 
 class _EmptyResponse:
@@ -744,3 +746,161 @@ class TestOverscroll(unittest.TestCase):
         self._run(0.6)
         self.assertEqual(self.sb.value(), 460)
         self.assertEqual(m._overscroll, 0.0)
+
+
+class TestPracticeABTest(unittest.TestCase):
+    """B: after the demo plays once, a short practice beside it. A: video only."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        m = self.mirror
+        m.user_container.hide()
+        m._last_state = 'idle'
+        if m.demo_movie is None:
+            self.skipTest('assets/gesture_demo.mp4 missing')
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _arrive(self, variant):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: variant
+        m.telemetry._get_config_variant = lambda: variant
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        m._transitioning = False
+        self.assertEqual(m.current_variant, variant)
+        m._show_gesture_scrim()
+        settle(m)
+
+    def _clip_ends(self):
+        self.mirror._on_demo_looped()
+        anim = self.mirror._practice_anim
+        if anim is not None:
+            anim.setCurrentTime(anim.duration())
+        app.processEvents()
+
+    def _hand_at(self, point, event=None, delta=0, eid=[100]):
+        m = self.mirror
+        g = m.practice_panel.mapTo(m.central_widget, point.toPoint())
+        eid[0] += 1
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event=event, x=g.x() / m.width(), y=g.y() / m.height(), delta=delta),
+                               event_id=eid[0]))
+
+    def test_variant_a_keeps_just_the_video(self):
+        self._arrive('A')
+        self._clip_ends()
+        self.assertIsNone(self.mirror._practice_state)
+        self.assertFalse(self.mirror.practice_panel.isVisible())
+
+    def test_variant_b_slides_the_video_aside_for_the_practice(self):
+        m = self.mirror
+        self._arrive('B')
+        before = m.demo_surface.geometry()
+        self._clip_ends()
+        self.assertEqual(m._practice_state, 'active')
+        self.assertTrue(m.practice_panel.isVisible())
+        self.assertLess(m.demo_surface.geometry().right(), m.width() // 2)    # moved left
+        self.assertLess(m.demo_surface.width(), before.width())
+        self.assertGreater(m.practice_panel.x(), m.width() // 2)
+        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO SKIP")
+
+    def test_doing_the_practice_finishes_it_and_records_it(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        pp = m.practice_panel
+        for _ in range(pp.TAPS):
+            self._hand_at(pp.dot_center())
+            self._hand_at(pp.dot_center(), event='tap')
+        self.assertEqual(pp.step, 1)
+        self._hand_at(QPointF(pp.width() / 2, pp.height() / 2), event='scroll', delta=5000)
+        self.assertEqual(pp.step, 2)
+        s = m.telemetry.current_session
+        self.assertEqual((s['practice_shown'], s['practice_completed'], s['practice_steps']), (1, 1, 2))
+
+    def test_holding_a_pinch_skips_it(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._demo_pinch_start = time.time() - 5
+        m._demo_pinch_last = time.time()
+        m._update_demo_hold(True)
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        s = m.telemetry.current_session
+        self.assertEqual((s['practice_skipped'], s['practice_completed']), (1, 0))
+        self.assertEqual(s['tutorial_dismissed'], 0)
+
+    def test_dragging_the_list_does_not_count_as_holding_to_skip(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._demo_pinch_start = time.time() - 0.9
+        self._hand_at(QPointF(10, 200), event='scroll', delta=40)
+        self.assertLess(m.demo_hold_fill.width(), m.demo_hold_bar.width() * 0.2)
+
+    def test_it_is_offered_once_per_visit(self):
+        m = self.mirror
+        self._arrive('B')
+        m._fade_out_gesture_scrim()
+        settle(m)
+        m._show_gesture_scrim()
+        settle(m)
+        self._clip_ends()
+        self.assertNotEqual(m._practice_state, 'active')
+
+
+class TestTeaserABTest(unittest.TestCase):
+    """Someone passing by: A says STUDENT ID SCAN, B says STAND CLOSE TO INTERACT."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror.user_container.hide()
+        self.mirror._last_state = 'idle'
+        self.sent = []
+        self.mirror.telemetry.record_passerby = lambda v, sec: self.sent.append(v)
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_each_variant_has_its_own_hint(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        self.assertTrue(m.stand_close_hint.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+        mid = m.stand_close_hint.geometry().center().y()
+        self.assertLess(abs(mid - m.height() // 2), 40)            # in the middle
+        m._hide_scan_callout()
+        m._teaser_shown_at = 0.0
+        m.telemetry.peek_variant = lambda: 'A'
+        m._show_scan_callout()
+        self.assertTrue(m.guest_scan_callout.isVisible())
+        self.assertFalse(m.stand_close_hint.isVisible())
+
+    def test_walking_on_is_recorded_as_a_passer_by(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        m._teaser_last_seen -= smp.TEASER_VISIT_WINDOW_SEC + 1
+        m._scan_tease_until = 0.0
+        m._update_inputs()
+        self.assertEqual(self.sent, ['B'])
+
+    def test_a_visit_after_the_hint_keeps_its_variant(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m.telemetry._get_config_variant = lambda: 'A'      # would otherwise say A
+        m._show_scan_callout()
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        s = m.telemetry.current_session
+        self.assertEqual(s['variant'], 'B')
+        self.assertTrue(s['after_teaser'])
+        self.assertEqual(self.sent, [])

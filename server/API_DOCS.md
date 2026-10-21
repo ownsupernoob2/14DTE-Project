@@ -35,7 +35,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/download-index` | `{vectors: [[128 floats]], user_map: [user_id]}` — every enrolled face |
 | POST | `/api/verify-face` | `{user_id}` (matched locally) → `{user_id, user_name, language, widgets, config}` |
 | POST | `/api/verify-barcode` | `{barcode}` → same as verify-face. Rate limited per IP. |
-| POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go) |
+| POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go), or `session_type: "passerby"` for someone who got the brief-encounter hint and walked on (counted only in the hint's conversion rate) |
 | GET | `/api/users/language?user_id=\|barcode=` | `{language}` |
 | POST | `/api/logs` | `{logs: {name: content}}` or `{name, content}` → `{status: "ok", saved: [filenames]}` |
 

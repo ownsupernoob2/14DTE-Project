@@ -678,3 +678,55 @@ func TestFaceTrainingResultIsPolledByItsOwner(t *testing.T) {
 		t.Fatal("finished scan still counted as running")
 	}
 }
+
+// Variant B's practice and the passer-by hint are reported per variant, and a
+// passer-by is never counted as a visit.
+func TestPracticeAndPasserbyStats(t *testing.T) {
+	newTestDB(t)
+	events := []SessionAnalyticsEvent{
+		{SessionID: "a1", Variant: "A", SessionType: "guest", DurationSec: 20, AfterTeaser: true},
+		{SessionID: "p1", Variant: "A", SessionType: "passerby", DurationSec: 3},
+		{SessionID: "p2", Variant: "A", SessionType: "passerby", DurationSec: 2},
+		{SessionID: "b1", Variant: "B", SessionType: "guest", DurationSec: 40, PracticeShown: 1, PracticeCompleted: 1, PracticeSteps: 2, PracticeSec: 12, AfterTeaser: true},
+		{SessionID: "b2", Variant: "B", SessionType: "guest", DurationSec: 30, PracticeShown: 1, PracticeSkipped: 1, PracticeSteps: 1, PracticeSec: 4},
+	}
+	for _, ev := range events {
+		body, _ := json.Marshal(ev)
+		call(t, recordAnalyticsEvent, "POST", "/", string(body), "")
+	}
+	var sum AnalyticsSummaryResponse
+	decode(t, call(t, getAdminAnalytics, "GET", "/", "", ""), &sum)
+	if sum.TotalSessions != 3 || sum.VariantA.TotalSessions != 1 {
+		t.Fatalf("passers-by counted as visits: total %d, A %d", sum.TotalSessions, sum.VariantA.TotalSessions)
+	}
+	a, b := sum.VariantA, sum.VariantB
+	if a.Passersby != 2 || a.TeaserVisits != 1 || a.TeaserConversionRate != 33.3 {
+		t.Errorf("A teaser: %+v", a)
+	}
+	if b.PracticeShown != 2 || b.PracticeCompleted != 1 || b.PracticeSkipped != 1 ||
+		b.PracticeCompletionRate != 50 || b.AvgPracticeSec != 8 || b.TeaserConversionRate != 100 {
+		t.Errorf("B practice: %+v", b)
+	}
+}
+
+// A database made before the practice columns gets them, keeping its rows.
+func TestOlderDatabasesGainTheNewColumns(t *testing.T) {
+	newTestDB(t)
+	db.Exec(`INSERT INTO sessions(id, variant, session_type, created_at) VALUES('old', 'A', 'guest', 1)`)
+	for _, c := range addedColumns {
+		if _, err := db.Exec(`ALTER TABLE sessions DROP COLUMN ` + c.column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := addMissingColumns(); err != nil {
+		t.Fatal(err)
+	}
+	if err := addMissingColumns(); err != nil { // and again: nothing to do
+		t.Fatal(err)
+	}
+	var n, shown int
+	db.QueryRow(`SELECT COUNT(*), MAX(practice_shown) FROM sessions`).Scan(&n, &shown)
+	if n != 1 || shown != 0 {
+		t.Errorf("rows %d, practice_shown %d", n, shown)
+	}
+}
