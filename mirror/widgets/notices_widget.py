@@ -118,6 +118,12 @@ class NoticeDetailModal(QFrame):
         )
         header.addWidget(self.badge_lbl)
         header.addStretch(1)
+        close_hint = QLabel("PINCH TO CLOSE", self)     # same as King's Week
+        close_hint.setStyleSheet(
+            "font-size: 15px; font-weight: 800; letter-spacing: 1.5px; "
+            "color: #cbd5e1; background: transparent; border: none;"
+        )
+        header.addWidget(close_hint)
         root.addLayout(header)
 
         # Title
@@ -152,6 +158,7 @@ class NoticeDetailModal(QFrame):
 
         # Full notice body scroll area
         self.scroll = QScrollArea(self)
+        self.scroll_area = self.scroll      # the name the mirror's scroller looks for
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setStyleSheet("background: transparent; border: none;")
@@ -610,7 +617,12 @@ class NoticesWidget(QFrame):
         self.scroll_area.setStyleSheet("background: transparent; border: none;")
 
         self.cards_container = QWidget()
-        self.cards_container.setStyleSheet("background: transparent;")
+        # Opaque, so scrolling can shift already-drawn pixels instead of
+        # repainting everything behind the cards on every frame.
+        self.cards_container.setAutoFillBackground(True)
+        pal = self.cards_container.palette()
+        pal.setColor(self.cards_container.backgroundRole(), QColor(0, 0, 0))
+        self.cards_container.setPalette(pal)
         self.cards_lay = QVBoxLayout(self.cards_container)
         self.cards_lay.setContentsMargins(0, 4, 0, 4)
         self.cards_lay.setSpacing(12)
@@ -664,6 +676,8 @@ class NoticesWidget(QFrame):
     def scroll_by_pixels(self, delta_y):
         """Manual gesture scroll — pauses auto-scroll for 10s from current position."""
         if self.modal_open:
+            sb = self.modal.scroll_area.verticalScrollBar()   # a long notice's text
+            sb.setValue(sb.value() + int(delta_y))
             return
         sb = self.scroll_area.verticalScrollBar()
         cur = sb.value()

@@ -4,6 +4,7 @@ Run from the mirror/ directory:  python -m unittest test_peek_stages
 """
 
 import os
+os.environ.setdefault('MIRROR_LOG_FORWARD', '0')
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,8 @@ os.environ.setdefault('MIRROR_SCREENSAVER_SYNC', '0')
 import requests
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QPointF
+import time
 
 
 class _EmptyResponse:
@@ -201,22 +204,63 @@ class TestPinchDragAndMomentum(unittest.TestCase):
     def tearDown(self):
         close_mirror(self.mirror)
 
-    def test_drag_scroll_moves_notices(self):
+    def _run_scroller(self, seconds):
+        import time as _t
+        end = _t.monotonic() + seconds
+        while _t.monotonic() < end and self.mirror._momentum_timer.isActive():
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+
+    def test_drag_scroll_glides_the_notices_by_the_full_amount(self):
         self.mirror.notices_widget.cards_container.setFixedHeight(2000)
         app.processEvents()
         sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
-        initial_val = sb.value()
+        start = sb.value()
         self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=30))
-        new_val = sb.value()
-        self.assertEqual(new_val, initial_val + 30)
+        self.assertLess(sb.value(), start + 30)              # not a jump...
+        self.mirror._momentum_tick()
+        self._run_scroller(0.6)
+        self.assertEqual(sb.value(), start + 30)             # ...but it all arrives
+        self.assertFalse(self.mirror._momentum_timer.isActive())
 
-    def test_fling_starts_momentum(self):
+    def test_scroll_updates_glide_in_small_steps(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(3000)
+        app.processEvents()
+        sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
+        steps, last = [], sb.value()
+        self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=60))
+        import time as _t
+        for _ in range(12):
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+            steps.append(sb.value() - last)
+            last = sb.value()
+        self.assertTrue(all(st < 40 for st in steps))         # many small moves
+        self.assertGreater(sum(1 for st in steps if st > 0), 4)
+
+    def test_fling_coasts_and_slows_down(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(5000)
+        app.processEvents()
+        sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
+        start = sb.value()
         self.mirror._handle_gesture(gesture(region='left', event='fling', delta=40))
         self.assertTrue(self.mirror._momentum_timer.isActive())
-        self.assertGreater(self.mirror._momentum_velocity, 0)
-        # Advance momentum tick
+        v0 = self.mirror._momentum_velocity
+        self.assertGreater(v0, 0)
+        import time as _t
+        _t.sleep(0.05)
         self.mirror._momentum_tick()
-        self.assertLess(self.mirror._momentum_velocity, 40.0)
+        self.assertLess(self.mirror._momentum_velocity, v0)
+        self._run_scroller(3.0)
+        self.assertGreater(sb.value(), start + 200)
+        self.assertFalse(self.mirror._momentum_timer.isActive())
+
+    def test_grabbing_again_stops_a_fling(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(5000)
+        app.processEvents()
+        self.mirror._handle_gesture(gesture(region='left', event='fling', delta=40))
+        self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=5))
+        self.assertEqual(self.mirror._momentum_velocity, 0.0)
 
 
 class TestStateTransition(unittest.TestCase):
@@ -471,3 +515,392 @@ class TestMirrorNotice(unittest.TestCase):
         m._update_banner({"message": "Assembly has moved to the gym at eleven because of the rain. " * 3, "level": "warning"})
         self.assertGreater(m.banner_frame.height(), short)
         self.assertGreaterEqual(m.user_container.y(), m.banner_frame.geometry().bottom())
+
+
+class TestGuestTutorialAndSignOut(unittest.TestCase):
+    """People took the ID scanner for the only way in, and couldn't sign out."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror.user_container.hide()
+        self.mirror._last_state = 'idle'
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _arrive_as_guest(self):
+        m = self.mirror
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        m._transitioning = False
+
+    def _wait(self, seconds):
+        m = self.mirror
+        m._last_activity_time -= seconds
+        m._last_hand_time -= seconds
+        m._update_inputs()
+        settle(m)
+
+    def test_the_demo_waits_before_covering_the_screen(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(2)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(4)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+        self.assertTrue(m.guest_scan_callout.isVisible())
+        self.assertTrue(m.guest_scan_callout.show_or)       # gesture OR scan
+        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO EXIT")
+
+    def test_a_raised_hand_holds_the_demo_off(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._last_activity_time -= 30
+        m._handle_gesture(gesture(region='left', x=0.3))
+        m._update_inputs()
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+
+    def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self._wait(6)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+
+        smp.requests.post = lambda *a, **k: _EmptyResponse()
+        m._on_barcode_scanned("NOTREAL1")
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+
+        self._wait(6)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+
+    def _sign_in(self, user='u1'):
+        m = self.mirror
+        m._on_barcode_verified(user, [], {}, True, 'CODE1')
+        settle(m)
+        m._transitioning = False
+        m._position_sign_out()
+
+    def test_the_sign_out_button_signs_out_with_a_pinch(self):
+        m = self.mirror
+        self._sign_in()
+        self.assertTrue(m.sign_out_btn.isVisible())
+        c = m.sign_out_btn.geometry().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height(), region='left')
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(m._sign_out_hover)
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=7))
+        self.assertNotEqual(m._last_state, 'user')
+        self.assertIsNone(m.current_user_id)
+        self.assertIn("Signed out", m.toast_lbl.text())
+
+    def test_scanning_the_same_id_again_signs_out(self):
+        m = self.mirror
+        self._sign_in()
+        m._on_barcode_verified('u1', [], {}, True, 'CODE1')
+        self.assertNotEqual(m._last_state, 'user')
+
+    def test_a_signed_out_face_does_not_sign_straight_back_in(self):
+        import json, time as _t
+        m = self.mirror
+        self._sign_in()
+        m.face_detected = True
+        m.sign_out()
+        settle(m)
+        m._transitioning = False
+
+        def daemon_sees(state, user, detected=True):
+            with open(smp.FACE_DATA_FILE, 'w') as f:
+                json.dump({'state': state, 'user_id': user, 'detected': detected,
+                           'recognized': state == 'user', 'timestamp': _t.time()}, f)
+            m._update_inputs()
+            settle(m)
+            m._transitioning = False
+
+        daemon_sees('user', 'u1')
+        self.assertNotEqual(m._last_state, 'user')
+        # They walk away for a while; next time their face works again.
+        daemon_sees('guest', 'guest', detected=False)
+        m._signed_out_face_gone -= smp.SIGNED_OUT_FACE_HOLD_SEC + 1
+        daemon_sees('guest', 'guest', detected=False)
+        self.assertIsNone(m._signed_out_user)
+
+    def test_pinching_the_timetable_arrow_opens_it(self):
+        m = self.mirror
+        self._sign_in()
+        m._slide_timetable_out(animate=False)
+        settle(m)
+        self.assertTrue(m.edge_arrow_caption.isVisible())
+        self.assertEqual(m.edge_arrow_caption.text(), "TIMETABLE")
+        c = m.edge_arrow_label.geometry().center()
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', x=c.x() / m.width(), y=c.y() / m.height()),
+                               event_id=9))
+        self.assertFalse(m._timetable_slid_away)
+
+
+class TestTimetableMessages(unittest.TestCase):
+    def setUp(self):
+        from widgets.timetable_widget import TimetableWidget
+        self.tt = TimetableWidget(api_url='http://test')
+
+    def tearDown(self):
+        self.tt.deleteLater()
+
+    def _load(self, status, periods=()):
+        tt = self.tt
+        tt.user_id = 'u1'
+        tt._fetch_gen += 1
+        tt.periods, tt.status = list(periods), status
+        tt._on_fetched()
+
+    def test_it_says_why_instead_of_dashes(self):
+        import datetime as _dt
+        from unittest import mock
+        noon = _dt.datetime(2026, 10, 21, 12, 0)   # a class time, not interval or lunch
+        with mock.patch('widgets.timetable_widget.datetime') as fake:
+            fake.now.return_value = noon
+            for status, words in (('not_linked', 'Not linked'), ('error', "Can't load"),
+                                  ('loading', 'Loading')):
+                self._load(status)
+                self.assertIn(words, self.tt.subject_lbl.text())
+                self.assertFalse(self.tt.room_v.isVisibleTo(self.tt))
+        self.assertTrue(self.tt._retry.isActive())     # the error case tries again
+
+    def test_a_new_person_never_sees_the_last_persons_classes(self):
+        self.tt.periods = [{'summary': 'Old', 'startTime': '09:00', 'endTime': '10:00'}]
+        self.tt.set_user_id('someone-else')
+        self.assertNotIn('Old', [p.get('summary') for p in self.tt.periods])
+
+
+class TestOverscroll(unittest.TestCase):
+    """At the end of a list it stretches with resistance, then springs back."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        n = self.mirror.notices_widget
+        n.cards_container.setFixedHeight(2000)
+        app.processEvents()
+        self.sb = n.scroll_area.verticalScrollBar()
+        self.sb.setValue(0)
+        self.content = n.scroll_area.widget()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _run(self, seconds):
+        import time as _t
+        end = _t.monotonic() + seconds
+        while _t.monotonic() < end and self.mirror._momentum_timer.isActive():
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+
+    def _pull_up_while_pinched(self, px=-120):
+        m = self.mirror
+        held = dict(gesture(region='left', x=0.3), pinched=True)
+        m._handle_gesture(held)
+        m._handle_gesture(dict(held, event='scroll', scroll_delta=px))
+        self._run(0.5)
+
+    def test_pulling_past_the_top_stretches_with_resistance(self):
+        m = self.mirror
+        self._pull_up_while_pinched(-120)
+        self.assertEqual(self.sb.value(), 0)
+        self.assertLess(m._overscroll, -20)
+        self.assertGreater(m._overscroll, -60)          # resisted: well under 120 px
+        self.assertEqual(self.content.y(), int(round(-m._overscroll)))   # content pulled down
+        self.assertTrue(m.overscroll_glow.isVisible())
+
+    def test_it_holds_while_pinched_and_springs_back_on_release(self):
+        m = self.mirror
+        self._pull_up_while_pinched()
+        stretched = m._overscroll
+        self._run(0.3)
+        self.assertEqual(m._overscroll, stretched)       # still held
+        m._handle_gesture(gesture(region='left', x=0.3))  # fingers apart
+        self._run(1.0)
+        self.assertEqual(m._overscroll, 0.0)
+        self.assertEqual(self.content.y(), 0)
+        self.assertFalse(m.overscroll_glow.isVisible())
+        self.assertFalse(m._momentum_timer.isActive())
+
+    def test_moving_back_undoes_the_stretch_before_scrolling(self):
+        m = self.mirror
+        self._pull_up_while_pinched()
+        held = dict(gesture(region='left', x=0.3), pinched=True)
+        m._handle_gesture(dict(held, event='scroll', scroll_delta=200))
+        self._run(0.6)
+        self.assertEqual(m._overscroll, 0.0)
+        self.assertGreater(self.sb.value(), 100)
+
+    def test_the_middle_of_a_list_scrolls_normally(self):
+        m = self.mirror
+        self.sb.setValue(500)
+        m._handle_gesture(gesture(region='left', event='scroll', delta=-40))
+        self._run(0.6)
+        self.assertEqual(self.sb.value(), 460)
+        self.assertEqual(m._overscroll, 0.0)
+
+
+class TestPracticeABTest(unittest.TestCase):
+    """B: after the demo plays once, a short practice beside it. A: video only."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        m = self.mirror
+        m.user_container.hide()
+        m._last_state = 'idle'
+        if m.demo_movie is None:
+            self.skipTest('assets/gesture_demo.mp4 missing')
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _arrive(self, variant):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: variant
+        m.telemetry._get_config_variant = lambda: variant
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        m._transitioning = False
+        self.assertEqual(m.current_variant, variant)
+        m._show_gesture_scrim()
+        settle(m)
+
+    def _clip_ends(self):
+        self.mirror._on_demo_looped()
+        anim = self.mirror._practice_anim
+        if anim is not None:
+            anim.setCurrentTime(anim.duration())
+        app.processEvents()
+
+    def _hand_at(self, point, event=None, delta=0, eid=[100]):
+        m = self.mirror
+        g = m.practice_panel.mapTo(m.central_widget, point.toPoint())
+        eid[0] += 1
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event=event, x=g.x() / m.width(), y=g.y() / m.height(), delta=delta),
+                               event_id=eid[0]))
+
+    def test_variant_a_keeps_just_the_video(self):
+        self._arrive('A')
+        self._clip_ends()
+        self.assertIsNone(self.mirror._practice_state)
+        self.assertFalse(self.mirror.practice_panel.isVisible())
+
+    def test_variant_b_slides_the_video_aside_for_the_practice(self):
+        m = self.mirror
+        self._arrive('B')
+        before = m.demo_surface.geometry()
+        self._clip_ends()
+        self.assertEqual(m._practice_state, 'active')
+        self.assertTrue(m.practice_panel.isVisible())
+        self.assertLess(m.demo_surface.geometry().right(), m.width() // 2)    # moved left
+        self.assertLess(m.demo_surface.width(), before.width())
+        self.assertGreater(m.practice_panel.x(), m.width() // 2)
+        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO SKIP")
+
+    def test_doing_the_practice_finishes_it_and_records_it(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        pp = m.practice_panel
+        for _ in range(pp.TAPS):
+            self._hand_at(pp.dot_center())
+            self._hand_at(pp.dot_center(), event='tap')
+        self.assertEqual(pp.step, 1)
+        self._hand_at(QPointF(pp.width() / 2, pp.height() / 2), event='scroll', delta=5000)
+        self.assertEqual(pp.step, 2)
+        s = m.telemetry.current_session
+        self.assertEqual((s['practice_shown'], s['practice_completed'], s['practice_steps']), (1, 1, 2))
+
+    def test_holding_a_pinch_skips_it(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._demo_pinch_start = time.time() - 5
+        m._demo_pinch_last = time.time()
+        m._update_demo_hold(True)
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        s = m.telemetry.current_session
+        self.assertEqual((s['practice_skipped'], s['practice_completed']), (1, 0))
+        self.assertEqual(s['tutorial_dismissed'], 0)
+
+    def test_dragging_the_list_does_not_count_as_holding_to_skip(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._demo_pinch_start = time.time() - 0.9
+        self._hand_at(QPointF(10, 200), event='scroll', delta=40)
+        self.assertLess(m.demo_hold_fill.width(), m.demo_hold_bar.width() * 0.2)
+
+    def test_it_is_offered_once_per_visit(self):
+        m = self.mirror
+        self._arrive('B')
+        m._fade_out_gesture_scrim()
+        settle(m)
+        m._show_gesture_scrim()
+        settle(m)
+        self._clip_ends()
+        self.assertNotEqual(m._practice_state, 'active')
+
+
+class TestTeaserABTest(unittest.TestCase):
+    """Someone passing by: A says STUDENT ID SCAN, B says STAND CLOSE TO INTERACT."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror.user_container.hide()
+        self.mirror._last_state = 'idle'
+        self.sent = []
+        self.mirror.telemetry.record_passerby = lambda v, sec: self.sent.append(v)
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def test_each_variant_has_its_own_hint(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        self.assertTrue(m.stand_close_hint.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+        mid = m.stand_close_hint.geometry().center().y()
+        self.assertLess(abs(mid - m.height() // 2), 40)            # in the middle
+        m._hide_scan_callout()
+        m._teaser_shown_at = 0.0
+        m.telemetry.peek_variant = lambda: 'A'
+        m._show_scan_callout()
+        self.assertTrue(m.guest_scan_callout.isVisible())
+        self.assertFalse(m.stand_close_hint.isVisible())
+
+    def test_walking_on_is_recorded_as_a_passer_by(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        m._teaser_last_seen -= smp.TEASER_VISIT_WINDOW_SEC + 1
+        m._scan_tease_until = 0.0
+        m._update_inputs()
+        self.assertEqual(self.sent, ['B'])
+
+    def test_a_visit_after_the_hint_keeps_its_variant(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m.telemetry._get_config_variant = lambda: 'A'      # would otherwise say A
+        m._show_scan_callout()
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        s = m.telemetry.current_session
+        self.assertEqual(s['variant'], 'B')
+        self.assertTrue(s['after_teaser'])
+        self.assertEqual(self.sent, [])

@@ -87,6 +87,7 @@ func TestRoutesRefuseCallersWithoutTheRightCredentials(t *testing.T) {
 		want         int
 	}{
 		{"GET", "/api/admin/analytics", nil, 401},
+		{"DELETE", "/api/admin/analytics", nil, 401},
 		{"GET", "/api/admin/users", nil, 401},
 		{"DELETE", "/api/admin/users/x", nil, 401},
 		{"POST", "/api/analytics/config", nil, 401},
@@ -598,6 +599,160 @@ func TestMirrorNoticeLevelsAndExpiry(t *testing.T) {
 	var audits int
 	db.QueryRow(`SELECT COUNT(*) FROM admin_audit WHERE action = 'banner_set'`).Scan(&audits)
 	if audits != 2 {
+		t.Errorf("audit rows = %d", audits)
+	}
+}
+
+func TestMirrorLogsArePerMirrorCappedAndSafe(t *testing.T) {
+	newTestDB(t)
+	addUser(t, adminID, "marminamina3@gmail.com")
+	big := strings.Repeat("line of log text\n", 50000) // ~850 KB
+	body, _ := json.Marshal(map[string]interface{}{
+		"mirror_id": "../../etc/library mirror",
+		"logs":      map[string]string{"mirror": big, "gesture_engine": "[GESTURE] 18 fps", "secrets": "nope"},
+	})
+	rec := call(t, receiveMirrorLogs, "POST", "/", string(body), "")
+	if rec.Code != 200 {
+		t.Fatalf("upload = %d %s", rec.Code, rec.Body)
+	}
+	call(t, receiveMirrorLogs, "POST", "/", `{"mirror_id":"hall","logs":{"face":"[FACES] 3 people"}}`, "")
+
+	var out struct {
+		Mirror  string             `json:"mirror"`
+		Content string             `json:"content"`
+		Mirrors []mirrorLogSummary `json:"mirrors"`
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=etc-library-mirror&name=mirror", "", adminID), &out)
+	if len(out.Content) > mirrorLogMaxBytes || !strings.HasPrefix(out.Content, "line of log") {
+		t.Errorf("mirror.log not capped to whole lines: %d bytes", len(out.Content))
+	}
+	if len(out.Mirrors) != 2 {
+		t.Errorf("mirrors = %+v", out.Mirrors)
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=etc-library-mirror&name=gesture", "", adminID), &out)
+	if out.Content != "[GESTURE] 18 fps" {
+		t.Errorf("gesture = %q", out.Content)
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=hall&name=face", "", adminID), &out)
+	if out.Content != "[FACES] 3 people" {
+		t.Errorf("hall face = %q", out.Content)
+	}
+	// Nothing escapes data/mirror_logs, and unknown log names are ignored.
+	if _, err := os.Stat(filepath.Join(mirrorLogsDir(), "etc-library-mirror", "mirror.log")); err != nil {
+		t.Error("log not stored under its sanitised mirror folder")
+	}
+	if rec := call(t, receiveMirrorLogs, "POST", "/", `{"logs":{"passwd":"x"}}`, ""); rec.Code != 400 {
+		t.Errorf("unknown log = %d", rec.Code)
+	}
+}
+
+// Training outlasts Cloudflare's wait, so the result is collected by polling.
+func TestFaceTrainingResultIsPolledByItsOwner(t *testing.T) {
+	newTestDB(t)
+	addUser(t, studentID, "s@example.com")
+	addUser(t, adminID, "a@example.com")
+
+	if rec := call(t, trainFace, "POST", "/api/faces/train", `{"images":["bm90IGFuIGltYWdl"]}`, studentID); rec.Code != 400 {
+		t.Fatalf("unreadable photos: got %d", rec.Code)
+	}
+
+	job := startFaceJob(studentID)
+	if runningFaceJob(studentID) != job {
+		t.Fatal("a second upload should rejoin the running scan")
+	}
+	poll := func(sub string) *httptest.ResponseRecorder {
+		return call(t, getFaceTrainJob, "GET", "/api/faces/train/"+job, "", sub, "id", job)
+	}
+	var got map[string]interface{}
+	decode(t, poll(studentID), &got)
+	if got["status"] != "processing" {
+		t.Fatalf("while running: %v", got)
+	}
+	if rec := poll(adminID); rec.Code != 404 {
+		t.Fatalf("someone else's scan: got %d", rec.Code)
+	}
+	finishFaceJob(job, 409, faceErr("taken"))
+	if rec := poll(studentID); rec.Code != 409 || !strings.Contains(rec.Body.String(), "taken") {
+		t.Fatalf("finished: %d %s", rec.Code, rec.Body.String())
+	}
+	if runningFaceJob(studentID) != "" {
+		t.Fatal("finished scan still counted as running")
+	}
+}
+
+// Variant B's practice and the passer-by hint are reported per variant, and a
+// passer-by is never counted as a visit.
+func TestPracticeAndPasserbyStats(t *testing.T) {
+	newTestDB(t)
+	events := []SessionAnalyticsEvent{
+		{SessionID: "a1", Variant: "A", SessionType: "guest", DurationSec: 20, AfterTeaser: true},
+		{SessionID: "p1", Variant: "A", SessionType: "passerby", DurationSec: 3},
+		{SessionID: "p2", Variant: "A", SessionType: "passerby", DurationSec: 2},
+		{SessionID: "b1", Variant: "B", SessionType: "guest", DurationSec: 40, PracticeShown: 1, PracticeCompleted: 1, PracticeSteps: 2, PracticeSec: 12, AfterTeaser: true},
+		{SessionID: "b2", Variant: "B", SessionType: "guest", DurationSec: 30, PracticeShown: 1, PracticeSkipped: 1, PracticeSteps: 1, PracticeSec: 4},
+	}
+	for _, ev := range events {
+		body, _ := json.Marshal(ev)
+		call(t, recordAnalyticsEvent, "POST", "/", string(body), "")
+	}
+	var sum AnalyticsSummaryResponse
+	decode(t, call(t, getAdminAnalytics, "GET", "/", "", ""), &sum)
+	if sum.TotalSessions != 3 || sum.VariantA.TotalSessions != 1 {
+		t.Fatalf("passers-by counted as visits: total %d, A %d", sum.TotalSessions, sum.VariantA.TotalSessions)
+	}
+	a, b := sum.VariantA, sum.VariantB
+	if a.Passersby != 2 || a.TeaserVisits != 1 || a.TeaserConversionRate != 33.3 {
+		t.Errorf("A teaser: %+v", a)
+	}
+	if b.PracticeShown != 2 || b.PracticeCompleted != 1 || b.PracticeSkipped != 1 ||
+		b.PracticeCompletionRate != 50 || b.AvgPracticeSec != 8 || b.TeaserConversionRate != 100 {
+		t.Errorf("B practice: %+v", b)
+	}
+}
+
+// A database made before the practice columns gets them, keeping its rows.
+func TestOlderDatabasesGainTheNewColumns(t *testing.T) {
+	newTestDB(t)
+	db.Exec(`INSERT INTO sessions(id, variant, session_type, created_at) VALUES('old', 'A', 'guest', 1)`)
+	for _, c := range addedColumns {
+		if _, err := db.Exec(`ALTER TABLE sessions DROP COLUMN ` + c.column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := addMissingColumns(); err != nil {
+		t.Fatal(err)
+	}
+	if err := addMissingColumns(); err != nil { // and again: nothing to do
+		t.Fatal(err)
+	}
+	var n, shown int
+	db.QueryRow(`SELECT COUNT(*), MAX(practice_shown) FROM sessions`).Scan(&n, &shown)
+	if n != 1 || shown != 0 {
+		t.Errorf("rows %d, practice_shown %d", n, shown)
+	}
+}
+
+func TestAdminCanWipeAnalytics(t *testing.T) {
+	newTestDB(t)
+	addUser(t, adminID, "admin@example.com")
+	for _, id := range []string{"s1", "s2", "p1"} {
+		body, _ := json.Marshal(SessionAnalyticsEvent{SessionID: id, Variant: "A", SessionType: "guest", DurationSec: 5})
+		call(t, recordAnalyticsEvent, "POST", "/", string(body), "")
+	}
+	setSetting("ab_config", ABExperimentConfig{Mode: "force_b"})
+	var got map[string]interface{}
+	decode(t, call(t, adminWipeAnalytics, "DELETE", "/api/admin/analytics", "", adminID), &got)
+	if got["deleted"] != float64(3) {
+		t.Fatalf("deleted = %v", got["deleted"])
+	}
+	var sum AnalyticsSummaryResponse
+	decode(t, call(t, getAdminAnalytics, "GET", "/", "", adminID), &sum)
+	if sum.TotalSessions != 0 || loadABConfig().Mode != "force_b" {
+		t.Errorf("after wipe: %d sessions, mode %s", sum.TotalSessions, loadABConfig().Mode)
+	}
+	var audits int
+	db.QueryRow(`SELECT COUNT(*) FROM admin_audit WHERE action = 'analytics_wipe'`).Scan(&audits)
+	if audits != 1 {
 		t.Errorf("audit rows = %d", audits)
 	}
 }

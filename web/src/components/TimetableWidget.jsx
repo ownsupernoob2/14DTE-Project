@@ -367,26 +367,32 @@ export default function TimetableWidget({ widget = {}, externalOpenSetup, onExte
     if (onExternalCloseSetup) onExternalCloseSetup();
   };
 
-  // Auto-sync timetable ICS URL from server if not cached locally
+  // The server's saved link is the truth: the mirror reads it, not this
+  // browser. A link cached here (another account, or from before the server's
+  // data was reset) would otherwise look linked while the mirror shows nothing.
   useEffect(() => {
-    const fetchSavedUrl = async () => {
-      if (icsUrl) return;
+    const syncSavedUrl = async () => {
       try {
         const token = await getAccessTokenSilently();
         const res = await fetch(`${API_URL}/api/timetable/ics`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ics_url) {
-            localStorage.setItem('timetable_ics_url', data.ics_url);
-            setIcsUrl(data.ics_url);
+        const data = res.ok ? await res.json() : {};
+        if (res.ok || res.status === 404) {
+          const saved = data.ics_url || '';
+          if (saved !== (localStorage.getItem('timetable_ics_url') || '')) {
+            localStorage.removeItem('timetable_cache_date');
+            localStorage.removeItem('timetable_cache_data');
           }
+          if (saved) localStorage.setItem('timetable_ics_url', saved);
+          else localStorage.removeItem('timetable_ics_url');
+          setIcsUrl(saved);
+          if (!saved) setPeriods([]);
         }
-      } catch { /* silent */ }
+      } catch { /* offline: keep what we have */ }
     };
-    fetchSavedUrl();
-  }, [icsUrl, getAccessTokenSilently]);
+    syncSavedUrl();
+  }, [getAccessTokenSilently]);
 
   // Fetch timetable data
   const fetchTimetable = useCallback(async (force = false) => {

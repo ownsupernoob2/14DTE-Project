@@ -50,6 +50,7 @@ LOG_FILES = {
     'gesture': 'gesture_daemon.log',
     'rpicam': 'rpicam.log',
     'ffmpeg': 'ffmpeg.log',
+    'start': 'start.log',
 }
 
 

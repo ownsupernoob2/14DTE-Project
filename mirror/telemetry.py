@@ -12,6 +12,9 @@ What counts as what:
   scroll / tap   one per scroll or tap event
   notice/article opens and reading time, King's Week expands
   tutorial shown / dismissed (pinch-and-hold)
+  practice (variant B): shown, completed or skipped, steps done, seconds spent
+  after_teaser   the visit grew out of a brief encounter that got the teaser
+  passerby       a record of its own: someone got the teaser and walked on
   from_screensaver  the visit interrupted the idle screensaver
 """
 
@@ -44,20 +47,28 @@ class TelemetryTracker:
     # ── Variant ──────────────────────────────────────────────────────────────
 
     def _get_config_variant(self):
+        """The admin's chosen variant, as last fetched. Refreshed in the background:
+        this is asked on the UI thread, which must never wait on the network."""
         now = time.time()
-        if (now - self._last_cfg_check < 30) and self._cached_cfg_variant:
-            return self._cached_cfg_variant
-        self._last_cfg_check = now
+        if now - self._last_cfg_check >= 30:
+            self._last_cfg_check = now
+            threading.Thread(target=self._fetch_config_variant, daemon=True).start()
+        return self._cached_cfg_variant
+
+    def _fetch_config_variant(self):
         try:
-            resp = requests.get(f"{self.api_url}/api/analytics/config", timeout=1.5)
+            resp = requests.get(f"{self.api_url}/api/analytics/config", timeout=3)
             if resp.status_code == 200:
                 active = resp.json().get("active_variant")
                 if active in ("A", "B"):
                     self._cached_cfg_variant = active
-                    return active
         except Exception:
             pass
-        return self._cached_cfg_variant
+
+    def peek_variant(self):
+        """The variant the next visit will get (the teaser shows before a visit starts)."""
+        with self._lock:
+            return self._get_config_variant() or ("B" if (self._session_counter + 1) % 2 == 0 else "A")
 
     @property
     def current_variant(self):
@@ -67,7 +78,7 @@ class TelemetryTracker:
     # ── Session lifecycle ────────────────────────────────────────────────────
 
     def start_session(self, session_type="guest", auth_method="presence", variant=None,
-                      user_id=None, from_screensaver=False, screensaver_mode=""):
+                      user_id=None, from_screensaver=False, screensaver_mode="", after_teaser=False):
         """Begin tracking a visit; returns its A/B variant."""
         with self._lock:
             if self.current_session is not None:
@@ -103,6 +114,12 @@ class TelemetryTracker:
                 "kings_expands": 0,
                 "tutorial_shown": 0,
                 "tutorial_dismissed": 0,
+                "practice_shown": 0,
+                "practice_completed": 0,
+                "practice_skipped": 0,
+                "practice_steps": 0,
+                "practice_sec": 0.0,
+                "after_teaser": bool(after_teaser),
                 "_start_time": now,
                 "_modal_open_start": None,
                 "_dwell_started": False,
@@ -206,6 +223,37 @@ class TelemetryTracker:
         with self._lock:
             if self.current_session:
                 self.current_session["tutorial_dismissed"] += 1
+
+    def record_practice_shown(self):
+        with self._lock:
+            if self.current_session:
+                self.current_session["practice_shown"] = 1
+
+    def record_practice_ended(self, completed, steps, seconds):
+        """The practice finished, or was skipped (held pinch) or cut short."""
+        with self._lock:
+            s = self.current_session
+            if not s or not s["practice_shown"]:
+                return
+            s["practice_completed" if completed else "practice_skipped"] = 1
+            s["practice_steps"] = int(steps)
+            s["practice_sec"] = round(max(0.0, seconds), 2)
+
+    def record_passerby(self, variant, seconds):
+        """Someone got the brief-encounter teaser and left without a visit."""
+        with self._lock:
+            self._session_counter += 1
+        payload = {
+            "session_id": f"pass-{uuid.uuid4().hex[:12]}",
+            "mirror_id": MIRROR_ID,
+            "mirror_version": MIRROR_VERSION,
+            "client_timestamp": time.time(),
+            "variant": variant if variant in ("A", "B") else "A",
+            "session_type": "passerby",
+            "auth_method": "presence",
+            "duration_sec": round(max(0.0, seconds), 2),
+        }
+        threading.Thread(target=self._flush_payload, args=(payload,), daemon=True).start()
 
     # ── Sending ──────────────────────────────────────────────────────────────
 

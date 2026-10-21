@@ -148,6 +148,45 @@ class TestPinchDrag(unittest.TestCase):
         self.assertEqual(self.e.right_dwell_progress, 1.0)
 
 
+class TestClickReliability(unittest.TestCase):
+    """A pinch someone means as a click must register as one."""
+
+    def setUp(self):
+        self.e = StubEngine()
+
+    def pinch(self, ys, step=1 / 16):
+        t, events = 1000.0, []
+        self.e.process_landmarks(make_hand(0.2, 0.5), t)
+        for y in ys:
+            t += step
+            events.append(self.e.process_landmarks(make_hand(0.2, y, pinch=True), t))
+        t += step
+        events.append(self.e.process_landmarks(make_hand(0.2, ys[-1]), t))
+        return [e for e in events if e]
+
+    def test_a_pinch_with_normal_hand_wobble_still_clicks(self):
+        wobble = [0.5 + (0.006 if i % 2 else -0.006) for i in range(8)]   # 0.5 s of jitter
+        self.assertEqual(self.pinch(wobble), ["tap"])
+
+    def test_a_slower_half_second_pinch_clicks(self):
+        self.assertEqual(self.pinch([0.5] * 8), ["tap"])                  # 0.5 s held
+
+    def test_a_pinch_held_too_long_is_not_a_click(self):
+        self.assertEqual(self.pinch([0.5] * 14), [])                      # ~0.9 s
+
+    def test_a_real_drag_scrolls_and_never_clicks(self):
+        events = self.pinch([0.5, 0.48, 0.45, 0.42, 0.39, 0.36])
+        self.assertIn("scroll", events)
+        self.assertNotIn("tap", events)
+
+    def test_the_first_scroll_carries_the_travel_that_started_it(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        self.e.process_landmarks(make_hand(0.2, 0.47, pinch=True), 1000.06)   # under threshold
+        self.e.process_landmarks(make_hand(0.2, 0.45, pinch=True), 1000.12)   # crosses it
+        # 0.05 of travel so far, not just the last 0.02.
+        self.assertGreater(self.e.scroll_delta, int(0.04 * gesture_engine.DRAG_SCROLL_GAIN))
+
+
 class TestPinch(unittest.TestCase):
     """Thumb-to-index proximity — the click.
 
@@ -212,11 +251,25 @@ class TestPinch(unittest.TestCase):
         # is one tap, not a stream of them.
         t = 1000.0
         self.assertIsNone(self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), t))
-        borderline = self._hand_with_gap_ratio(
-            (PINCH_ENTER_RATIO + PINCH_EXIT_RATIO) / 2)
         for i in range(6):
-            self.assertIsNone(self.e.process_landmarks(borderline, t + 0.02 * (i + 1)))
+            wobble = self._hand_with_gap_ratio(PINCH_ENTER_RATIO - 0.01 * (i % 2))
+            self.assertIsNone(self.e.process_landmarks(wobble, t + 0.02 * (i + 1)))
         self.assertEqual(self.e.process_landmarks(make_hand(0.2, 0.5), t + 0.3), "tap")
+
+    def test_parting_the_fingers_slightly_lets_go(self):
+        # People found they had to open their hand wide before a pinch let go.
+        # After a firm pinch, a small parting releases it (and clicks).
+        t = 1000.0
+        self.e.process_landmarks(self._hand_with_gap_ratio(0.12), t)
+        self.e.process_landmarks(self._hand_with_gap_ratio(0.14), t + 0.05)
+        self.assertEqual(self.e.process_landmarks(self._hand_with_gap_ratio(0.29), t + 0.1), "tap")
+
+    def test_a_loose_pinch_still_has_room_to_wobble(self):
+        t = 1000.0
+        self.e.process_landmarks(self._hand_with_gap_ratio(0.25), t)
+        self.assertIsNone(self.e.process_landmarks(self._hand_with_gap_ratio(0.33), t + 0.05))
+        self.assertTrue(self.e.pinched)
+        self.assertEqual(self.e.process_landmarks(self._hand_with_gap_ratio(0.40), t + 0.1), "tap")
 
     def _hand_with_gap_ratio(self, ratio, scale=DEFAULT_SCALE):
         """A hand whose thumb-index gap is `ratio` of its palm, to the millimetre."""

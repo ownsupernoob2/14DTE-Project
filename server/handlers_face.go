@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -30,15 +33,13 @@ type TrainRequest struct {
 	Images []string `json:"images"`
 }
 
-func faceUnavailable(c echo.Context) error {
-	return c.JSON(http.StatusServiceUnavailable, map[string]string{
-		"error": "Face scanning is unavailable on the server right now. Please try again later or contact " + ContactEmail + ".",
-	})
-}
-
 // POST /api/faces/train — up to 15 photos in, one stored set of encodings out.
 // Photos are written to a private temp folder for train.py and deleted straight
 // after; only the 128-number encodings are kept.
+//
+// Training can take longer than Cloudflare waits for a response (it answered
+// 504), so this only checks and saves the photos, then answers 202 with a job
+// ID. The site polls GET /api/faces/train/:id for the outcome.
 func trainFace(c echo.Context) error {
 	userID := getUserIDFromToken(c)
 
@@ -51,6 +52,9 @@ func trainFace(c echo.Context) error {
 			})
 		}
 	}
+	if job := runningFaceJob(userID); job != "" {
+		return c.JSON(http.StatusAccepted, map[string]string{"status": "processing", "job_id": job})
+	}
 
 	var req TrainRequest
 	if err := c.Bind(&req); err != nil || len(req.Images) == 0 {
@@ -60,16 +64,10 @@ func trainFace(c echo.Context) error {
 		req.Images = req.Images[:faceMaxImages]
 	}
 
-	py := facePython()
-	if py == nil {
-		return faceUnavailable(c)
-	}
-
 	workDir, err := os.MkdirTemp("", "face-scan-")
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not process the scan"})
 	}
-	defer os.RemoveAll(workDir)
 
 	saved := 0
 	for i, img := range req.Images {
@@ -88,22 +86,104 @@ func trainFace(c echo.Context) error {
 		}
 	}
 	if saved == 0 {
+		os.RemoveAll(workDir)
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "None of the photos could be read"})
 	}
 
+	job := startFaceJob(userID)
+	go func() {
+		defer os.RemoveAll(workDir)
+		code, body := runFaceTraining(userID, workDir)
+		finishFaceJob(job, code, body)
+	}()
+	return c.JSON(http.StatusAccepted, map[string]string{"status": "processing", "job_id": job})
+}
+
+// GET /api/faces/train/:id — "processing" until training ends, then the result
+// the old synchronous endpoint gave, with its status code.
+func getFaceTrainJob(c echo.Context) error {
+	faceJobsMu.Lock()
+	job, ok := faceJobs[c.Param("id")]
+	faceJobsMu.Unlock()
+	if !ok || job.userID != getUserIDFromToken(c) {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "That face scan was not found. Please scan again."})
+	}
+	if !job.done {
+		return c.JSON(http.StatusOK, map[string]string{"status": "processing"})
+	}
+	return c.JSON(job.code, job.body)
+}
+
+type faceJob struct {
+	userID  string
+	started time.Time
+	done    bool
+	code    int
+	body    map[string]interface{}
+}
+
+var (
+	faceJobsMu sync.Mutex
+	faceJobs   = map[string]*faceJob{}
+)
+
+func runningFaceJob(userID string) string {
+	faceJobsMu.Lock()
+	defer faceJobsMu.Unlock()
+	for id, j := range faceJobs {
+		if j.userID == userID && !j.done {
+			return id
+		}
+	}
+	return ""
+}
+
+func startFaceJob(userID string) string {
+	faceJobsMu.Lock()
+	defer faceJobsMu.Unlock()
+	for id, j := range faceJobs { // forget results nobody collected
+		if time.Since(j.started) > 30*time.Minute {
+			delete(faceJobs, id)
+		}
+	}
+	b := make([]byte, 12)
+	rand.Read(b)
+	id := hex.EncodeToString(b)
+	faceJobs[id] = &faceJob{userID: userID, started: time.Now()}
+	return id
+}
+
+func finishFaceJob(id string, code int, body map[string]interface{}) {
+	faceJobsMu.Lock()
+	defer faceJobsMu.Unlock()
+	if j, ok := faceJobs[id]; ok {
+		j.done, j.code, j.body = true, code, body
+	}
+}
+
+func faceErr(msg string) map[string]interface{} { return map[string]interface{}{"error": msg} }
+
+// runFaceTraining runs train.py over the saved photos and stores the encodings.
+func runFaceTraining(userID, workDir string) (int, map[string]interface{}) {
+	py := facePython()
+	if py == nil {
+		return http.StatusServiceUnavailable, faceErr("Face scanning is unavailable on the server right now. Please try again later or contact " + ContactEmail + ".")
+	}
+
 	outPath := filepath.Join(workDir, "encodings.json")
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	started := time.Now()
 	cmd := py.command(ctx, "train.py", workDir, outPath)
 	out, err := cmd.CombinedOutput()
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	last := strings.TrimSpace(lines[len(lines)-1])
 	if err != nil || !strings.HasPrefix(last, "OK:") {
-		log.Printf("[FACE] train.py failed for %s: %v: %s", userID, err, strings.TrimSpace(string(out)))
+		log.Printf("[FACE] train.py failed for %s after %s: %v: %s", userID, time.Since(started).Round(time.Second), err, strings.TrimSpace(string(out)))
 		if strings.HasPrefix(last, "ERROR:") {
-			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": strings.TrimPrefix(last, "ERROR:")})
+			return http.StatusUnprocessableEntity, faceErr(strings.TrimPrefix(last, "ERROR:"))
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "The face scan could not be processed. Please try again."})
+		return http.StatusInternalServerError, faceErr("The face scan could not be processed. Please try again.")
 	}
 
 	var result struct {
@@ -112,15 +192,13 @@ func trainFace(c echo.Context) error {
 	}
 	data, err := os.ReadFile(outPath)
 	if err != nil || json.Unmarshal(data, &result) != nil || len(result.Encodings) == 0 {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "The face scan could not be processed. Please try again."})
+		return http.StatusInternalServerError, faceErr("The face scan could not be processed. Please try again.")
 	}
 
 	if other, dist := closestOtherFace(userID, result.Median); other != "" && dist < faceCollisionDistance {
 		db.Exec(`INSERT INTO face_collisions(at, attempted_user, matched_user, distance) VALUES(?, ?, ?, ?)`,
 			time.Now().Unix(), userID, other, dist)
-		return c.JSON(http.StatusConflict, map[string]string{
-			"error": "This face is already registered to another account. If you think this is a mistake, contact " + ContactEmail + ".",
-		})
+		return http.StatusConflict, faceErr("This face is already registered to another account. If you think this is a mistake, contact " + ContactEmail + ".")
 	}
 
 	encJSON, _ := json.Marshal(result.Encodings)
@@ -129,14 +207,14 @@ func trainFace(c echo.Context) error {
 		userID, string(encJSON), len(result.Encodings), time.Now().Unix())
 	if err != nil {
 		log.Printf("[FACE] saving encodings for %s: %v", userID, err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not save the face scan"})
+		return http.StatusInternalServerError, faceErr("Could not save the face scan")
 	}
 
-	log.Printf("[FACE] %s scanned: %d frames kept", userID, len(result.Encodings))
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	log.Printf("[FACE] %s scanned: %d frames kept (%s)", userID, len(result.Encodings), time.Since(started).Round(time.Second))
+	return http.StatusOK, map[string]interface{}{
 		"status":      "trained",
 		"frames_used": len(result.Encodings),
-	})
+	}
 }
 
 // closestOtherFace returns the other user whose encodings come nearest to probe.

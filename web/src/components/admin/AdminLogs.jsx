@@ -7,11 +7,23 @@ const LOG_TYPES = [
   { id: 'gesture', label: 'Gesture Daemon', file: 'gesture_daemon.log', icon: 'front_hand' },
   { id: 'rpicam', label: 'RPiCam Video', file: 'rpicam.log', icon: 'videocam' },
   { id: 'ffmpeg', label: 'FFmpeg Stream', file: 'ffmpeg.log', icon: 'sync' },
+  { id: 'start', label: 'Startup', file: 'start.log', icon: 'power_settings_new' },
 ]
+
+const ago = (unix) => {
+  if (!unix) return 'never'
+  const s = Math.max(0, Math.round(Date.now() / 1000 - unix))
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return new Date(unix * 1000).toLocaleDateString()
+}
 
 export default function AdminLogs() {
   const { authFetch } = useMe()
   const [activeLog, setActiveLog] = useState('mirror')
+  const [mirrorId, setMirrorId] = useState('')      // '' = most recently active
+  const [mirrors, setMirrors] = useState([])
   const [logContent, setLogContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(true)
@@ -22,11 +34,13 @@ export default function AdminLogs() {
   const fetchLogs = useCallback(async (logName, isBackground = false) => {
     if (!isBackground) setLoading(true)
     try {
-      const res = await authFetch(`/api/admin/logs?name=${encodeURIComponent(logName)}`)
+      const res = await authFetch(
+        `/api/admin/logs?name=${encodeURIComponent(logName)}&mirror=${encodeURIComponent(mirrorId)}`)
       if (res.ok) {
         const data = await res.json()
         setLogContent(data.content || 'Log is empty.')
-        setLastUpdated(data.updated || new Date().toISOString())
+        setLastUpdated(data.updated_at || null)
+        setMirrors(data.mirrors || [])
       } else {
         const err = await res.json().catch(() => ({}))
         setLogContent(err.error || `Failed to fetch logs (HTTP ${res.status}).`)
@@ -36,7 +50,7 @@ export default function AdminLogs() {
     } finally {
       if (!isBackground) setLoading(false)
     }
-  }, [authFetch])
+  }, [authFetch, mirrorId])
 
   // Fetch when active log type changes
   useEffect(() => {
@@ -49,7 +63,7 @@ export default function AdminLogs() {
     if (autoRefresh) {
       interval = setInterval(() => {
         fetchLogs(activeLog, true)
-      }, 3000)
+      }, 5000)
     }
     return () => {
       if (interval) clearInterval(interval)
@@ -92,7 +106,7 @@ export default function AdminLogs() {
               </div>
             </div>
             <p className="text-xs text-[#888888] mt-1 font-mono uppercase tracking-wider">
-              Real-time terminal buffer streamed directly from the mirror hardware daemons.
+              The newest lines from each mirror's daemons, sent every 10 seconds while they change.
             </p>
           </div>
         </div>
@@ -106,7 +120,7 @@ export default function AdminLogs() {
               onChange={(e) => setAutoRefresh(e.target.checked)}
               className="accent-white cursor-pointer"
             />
-            <span className="uppercase text-[11px]">Auto-Refresh (3s)</span>
+            <span className="uppercase text-[11px]">Auto-Refresh (5s)</span>
           </label>
 
           <button
@@ -120,6 +134,26 @@ export default function AdminLogs() {
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* ── Which mirror ────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-[11px] font-mono font-bold uppercase tracking-wider text-[#888888]">
+          Mirror
+          <select
+            value={mirrorId}
+            onChange={(e) => setMirrorId(e.target.value)}
+            className="bg-[#121212] border border-[#333333] px-2 py-1.5 text-xs text-white font-mono rounded-none normal-case"
+          >
+            <option value="">Most recently active</option>
+            {mirrors.map((m) => (
+              <option key={m.id} value={m.id}>{m.id} · last report {ago(m.updated_at)}</option>
+            ))}
+          </select>
+        </label>
+        {mirrors.length === 0 && (
+          <span className="text-[11px] font-mono text-[#666666]">No mirror has sent logs yet.</span>
+        )}
       </div>
 
       {/* ── Log Type Tabs ───────────────────────────────────────────────── */}
@@ -164,7 +198,7 @@ export default function AdminLogs() {
           <div className="flex items-center gap-4">
             {lastUpdated && (
               <span className="text-[11px] text-[#666666]">
-                UPDATED {new Date(lastUpdated).toLocaleTimeString()}
+                SENT BY MIRROR {ago(lastUpdated).toUpperCase()}
               </span>
             )}
             <button

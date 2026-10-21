@@ -70,7 +70,6 @@ func newServer() *echo.Echo {
 	mirror.POST("/analytics/events", recordAnalyticsEvent)
 	mirror.GET("/users/language", getPublicUserLanguage)
 	mirror.POST("/logs", receiveMirrorLogs)
-	mirror.POST("/mirror/logs", receiveMirrorLogs)
 	// A student ID is guessable in a way a face is not, so cap attempts per IP.
 	mirror.POST("/verify-barcode", verifyBarcode, middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
 		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{
@@ -84,6 +83,7 @@ func newServer() *echo.Echo {
 	user.POST("/users/me/messages/seen", markMessagesSeen)
 	user.DELETE("/users/me/data", deleteMyData)
 	user.POST("/faces/train", trainFace)
+	user.GET("/faces/train/:id", getFaceTrainJob)
 	user.DELETE("/faces/me", deleteFace)
 	user.PUT("/users/me/barcode", saveBarcode)
 	user.GET("/users/me/barcode", getBarcode)
@@ -104,6 +104,7 @@ func newServer() *echo.Echo {
 	// ── Admins (Auth0 + verified email in ADMIN_EMAILS) ──────────────────
 	admin := e.Group("/api", EnsureValidToken(), RequireAdmin())
 	admin.GET("/admin/analytics", getAdminAnalytics)
+	admin.DELETE("/admin/analytics", adminWipeAnalytics)
 	admin.GET("/admin/face-audit", getFaceAuditLog)
 	admin.GET("/admin/users", adminListUsers)
 	admin.DELETE("/admin/users/:id", adminDeleteUser)
@@ -115,7 +116,7 @@ func newServer() *echo.Echo {
 	admin.POST("/admin/screensaver/images", uploadScreensaverImages)
 	admin.DELETE("/admin/screensaver/images/:id", deleteScreensaverImage)
 	admin.GET("/admin/logs", getAdminLogs)
-	admin.POST("/admin/logs", receiveMirrorLogs)
+	// The Windows updater posts "updating" notices with ADMIN_TOKEN.
 	e.POST("/api/admin/banner", setAdminBanner, RequireAdminOrUpdater())
 
 	return e

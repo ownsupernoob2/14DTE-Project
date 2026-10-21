@@ -35,7 +35,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/download-index` | `{vectors: [[128 floats]], user_map: [user_id]}` — every enrolled face |
 | POST | `/api/verify-face` | `{user_id}` (matched locally) → `{user_id, user_name, language, widgets, config}` |
 | POST | `/api/verify-barcode` | `{barcode}` → same as verify-face. Rate limited per IP. |
-| POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go) |
+| POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go), or `session_type: "passerby"` for someone who got the brief-encounter hint and walked on (counted only in the hint's conversion rate) |
 | GET | `/api/users/language?user_id=\|barcode=` | `{language}` |
 | POST | `/api/logs` | `{logs: {name: content}}` or `{name, content}` → `{status: "ok", saved: [filenames]}` |
 
@@ -46,7 +46,8 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/users/me` | `{id, email, name, provider, has_face, has_barcode, is_admin, messages, contact_email}` |
 | POST | `/api/users/me/messages/seen` | Dismiss removal notices |
 | DELETE | `/api/users/me/data` | Delete your face scan, student ID, timetable link, layout and language |
-| POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}`. 409 if the face belongs to another account, 429 within 24 h of the last scan, 503 if the server has no face Python. |
+| POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}` → 202 `{status: "processing", job_id}`. Training runs in the background because it can outlast Cloudflare's wait. 400 if no photo is readable, 429 within 24 h of the last scan. |
+| GET | `/api/faces/train/:job_id` | `{status: "processing"}` until done, then the result with its own status: 200 `{status: "trained", frames_used}`, 409 face belongs to another account, 422 no face found, 503 no face Python on the server. |
 | DELETE | `/api/faces/me` | Delete your face scan |
 | GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
 | GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |
@@ -62,6 +63,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | DELETE | `/api/admin/users/:id` | Delete the account and its data; sessions stay, anonymised. Also deletes the Auth0 login when `AUTH0_MGMT_CLIENT_ID/SECRET` are set. |
 | DELETE | `/api/admin/users/:id/:kind` | `kind` = `face`, `barcode`, `timetable` or `dashboard`. The student is told next time they sign in. |
 | GET | `/api/admin/analytics` | Visit summary, A/B comparison, recent sessions |
+| DELETE | `/api/admin/analytics` | Wipe all recorded visits and passers-by. Keeps the A/B setting and face audit log. → `{message, deleted}` |
 | GET | `/api/admin/face-audit` | Blocked duplicate-face attempts |
 | POST | `/api/analytics/config` | `{mode: auto\|force_a\|force_b\|hourly\|daily}` |
 | POST | `/api/notices/config` | Notice filters for the mirrors |

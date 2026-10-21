@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -18,7 +19,7 @@ type SessionAnalyticsEvent struct {
 	MirrorVersion        string  `json:"mirror_version,omitempty"`
 	ClientTimestamp      float64 `json:"client_timestamp"`
 	Variant              string  `json:"variant"`      // "A" or "B"
-	SessionType          string  `json:"session_type"` // "user" or "guest"
+	SessionType          string  `json:"session_type"` // "user", "guest", or "passerby" (got the teaser, walked on)
 	AuthMethod           string  `json:"auth_method"`  // "face", "barcode", "presence"
 	ScreensaverMode      string  `json:"screensaver_mode,omitempty"`
 	DurationSec          float64 `json:"duration_sec"`
@@ -37,32 +38,48 @@ type SessionAnalyticsEvent struct {
 	KingsExpands         int     `json:"kings_expands"`
 	TutorialShown        int     `json:"tutorial_shown"`
 	TutorialDismissed    int     `json:"tutorial_dismissed"`
+	PracticeShown        int     `json:"practice_shown"`
+	PracticeCompleted    int     `json:"practice_completed"`
+	PracticeSkipped      int     `json:"practice_skipped"`
+	PracticeSteps        int     `json:"practice_steps"`
+	PracticeSec          float64 `json:"practice_sec"`
+	AfterTeaser          bool    `json:"after_teaser"`
 	FromScreensaver      bool    `json:"from_screensaver"`
 	CreatedAt            string  `json:"created_at"`
 }
 
 type VariantStats struct {
-	TotalSessions        int     `json:"total_sessions"`
-	SessionsWithGesture  int     `json:"sessions_with_gesture"`
-	GestureAdoptionRate  float64 `json:"gesture_adoption_rate"` // %
-	ZeroInteractionRate  float64 `json:"zero_interaction_rate"` // % sessions with no gesture
-	HandSeenRate         float64 `json:"hand_seen_rate"`        // % sessions where a hand was raised at all
-	TimetableToggles     int     `json:"timetable_toggles"`
-	TimetableToggleRate  float64 `json:"timetable_toggle_rate"`
-	AvgDurationSec       float64 `json:"avg_duration_sec"`
-	AvgTimeToFirstGest   float64 `json:"avg_time_to_first_gesture_sec"`
-	TotalScrollCount     int     `json:"total_scroll_count"`
-	TotalTapCount        int     `json:"total_tap_count"`
-	DwellCompletedCount  int     `json:"dwell_completed_count"`
-	DwellAbandonedCount  int     `json:"dwell_abandoned_count"`
-	DwellSuccessRate     float64 `json:"dwell_success_rate"`
-	ArticleModalOpens    int     `json:"article_modal_opens"`
-	NoticeOpens          int     `json:"notice_opens"`
-	AvgModalReadSec      float64 `json:"avg_modal_read_sec"`
-	KingsExpands         int     `json:"kings_expands"`
-	TutorialShown        int     `json:"tutorial_shown"`
-	TutorialDismissed    int     `json:"tutorial_dismissed"`
-	TutorialDismissRate  float64 `json:"tutorial_dismiss_rate"`
+	TotalSessions       int     `json:"total_sessions"`
+	SessionsWithGesture int     `json:"sessions_with_gesture"`
+	GestureAdoptionRate float64 `json:"gesture_adoption_rate"` // %
+	ZeroInteractionRate float64 `json:"zero_interaction_rate"` // % sessions with no gesture
+	HandSeenRate        float64 `json:"hand_seen_rate"`        // % sessions where a hand was raised at all
+	TimetableToggles    int     `json:"timetable_toggles"`
+	TimetableToggleRate float64 `json:"timetable_toggle_rate"`
+	AvgDurationSec      float64 `json:"avg_duration_sec"`
+	AvgTimeToFirstGest  float64 `json:"avg_time_to_first_gesture_sec"`
+	TotalScrollCount    int     `json:"total_scroll_count"`
+	TotalTapCount       int     `json:"total_tap_count"`
+	DwellCompletedCount int     `json:"dwell_completed_count"`
+	DwellAbandonedCount int     `json:"dwell_abandoned_count"`
+	DwellSuccessRate    float64 `json:"dwell_success_rate"`
+	ArticleModalOpens   int     `json:"article_modal_opens"`
+	NoticeOpens         int     `json:"notice_opens"`
+	AvgModalReadSec     float64 `json:"avg_modal_read_sec"`
+	KingsExpands        int     `json:"kings_expands"`
+	TutorialShown       int     `json:"tutorial_shown"`
+	TutorialDismissed   int     `json:"tutorial_dismissed"`
+	TutorialDismissRate float64 `json:"tutorial_dismiss_rate"`
+	// Variant B's practice
+	PracticeShown          int     `json:"practice_shown"`
+	PracticeCompleted      int     `json:"practice_completed"`
+	PracticeSkipped        int     `json:"practice_skipped"`
+	PracticeCompletionRate float64 `json:"practice_completion_rate"`
+	AvgPracticeSec         float64 `json:"avg_practice_sec"`
+	// Brief encounters: how many people who got the hint stayed for a visit
+	Passersby            int     `json:"passersby"`
+	TeaserVisits         int     `json:"teaser_visits"`
+	TeaserConversionRate float64 `json:"teaser_conversion_rate"`
 }
 
 type AnalyticsSummaryResponse struct {
@@ -132,7 +149,7 @@ func recordAnalyticsEvent(c echo.Context) error {
 	if ev.Variant != "B" {
 		ev.Variant = "A"
 	}
-	ev.SessionType = oneOf(ev.SessionType, "guest", "user")
+	ev.SessionType = oneOf(ev.SessionType, "guest", "user", "passerby")
 	ev.AuthMethod = oneOf(ev.AuthMethod, "presence", "face", "barcode")
 	ev.ScreensaverMode = oneOf(ev.ScreensaverMode, "", "demo", "slideshow", "logo")
 
@@ -148,8 +165,9 @@ func recordAnalyticsEvent(c echo.Context) error {
 		duration_sec, time_to_auth_sec, has_gesture, time_to_first_gesture, hand_seen,
 		scroll_count, tap_count, timetable_toggles, dwell_completed, dwell_abandoned,
 		article_opens, notice_opens, modal_read_sec, kings_expands, tutorial_shown, tutorial_dismissed,
+		practice_shown, practice_completed, practice_skipped, practice_steps, practice_sec, after_teaser,
 		from_screensaver, client_started_at, created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ev.SessionID, userID, truncate(ev.MirrorID, 64), truncate(ev.MirrorVersion, 32), ev.Variant, ev.SessionType,
 		ev.AuthMethod, ev.ScreensaverMode,
 		clampF(ev.DurationSec, 0, day), clampF(ev.TimeToAuthSec, 0, day), boolInt(ev.HasGesture),
@@ -158,7 +176,10 @@ func recordAnalyticsEvent(c echo.Context) error {
 		clampI(ev.TimetableToggleCount, 10000), clampI(ev.DwellCompletedCount, 10000),
 		clampI(ev.DwellAbandonedCount, 10000), clampI(ev.ArticleModalOpens, 10000),
 		clampI(ev.NoticeOpens, 10000), clampF(ev.ModalReadTimeSec, 0, day), clampI(ev.KingsExpands, 10000),
-		clampI(ev.TutorialShown, 1000), clampI(ev.TutorialDismissed, 1000), boolInt(ev.FromScreensaver),
+		clampI(ev.TutorialShown, 1000), clampI(ev.TutorialDismissed, 1000),
+		clampI(ev.PracticeShown, 1), clampI(ev.PracticeCompleted, 1), clampI(ev.PracticeSkipped, 1),
+		clampI(ev.PracticeSteps, 10), clampF(ev.PracticeSec, 0, 3600), boolInt(ev.AfterTeaser),
+		boolInt(ev.FromScreensaver),
 		ev.ClientTimestamp, time.Now().Unix())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not record session"})
@@ -176,20 +197,23 @@ func truncate(s string, n int) string {
 const sessionColumns = `id, COALESCE(user_id, ''), mirror_id, mirror_version, variant, session_type, auth_method,
 	screensaver_mode, duration_sec, time_to_auth_sec, has_gesture, time_to_first_gesture, hand_seen,
 	scroll_count, tap_count, timetable_toggles, dwell_completed, dwell_abandoned, article_opens,
-	notice_opens, modal_read_sec, kings_expands, tutorial_shown, tutorial_dismissed, from_screensaver,
+	notice_opens, modal_read_sec, kings_expands, tutorial_shown, tutorial_dismissed, practice_shown,
+	practice_completed, practice_skipped, practice_steps, practice_sec, after_teaser, from_screensaver,
 	client_started_at, created_at`
 
 func scanSession(rows *sql.Rows) (SessionAnalyticsEvent, error) {
 	var ev SessionAnalyticsEvent
-	var hasGesture, handSeen, fromSS int
+	var hasGesture, handSeen, fromSS, afterTeaser int
 	var created int64
 	err := rows.Scan(&ev.SessionID, &ev.UserID, &ev.MirrorID, &ev.MirrorVersion, &ev.Variant, &ev.SessionType,
 		&ev.AuthMethod, &ev.ScreensaverMode, &ev.DurationSec, &ev.TimeToAuthSec, &hasGesture,
 		&ev.TimeToFirstGesture, &handSeen, &ev.GestureScrollCount, &ev.GestureTapCount,
 		&ev.TimetableToggleCount, &ev.DwellCompletedCount, &ev.DwellAbandonedCount, &ev.ArticleModalOpens,
 		&ev.NoticeOpens, &ev.ModalReadTimeSec, &ev.KingsExpands, &ev.TutorialShown, &ev.TutorialDismissed,
-		&fromSS, &ev.ClientTimestamp, &created)
+		&ev.PracticeShown, &ev.PracticeCompleted, &ev.PracticeSkipped, &ev.PracticeSteps, &ev.PracticeSec,
+		&afterTeaser, &fromSS, &ev.ClientTimestamp, &created)
 	ev.HasGesture, ev.HandSeen, ev.FromScreensaver = hasGesture == 1, handSeen == 1, fromSS == 1
+	ev.AfterTeaser = afterTeaser == 1
 	ev.CreatedAt = time.Unix(created, 0).UTC().Format(time.RFC3339)
 	return ev, err
 }
@@ -205,9 +229,13 @@ func pct(n, d int) float64 {
 
 type variantAcc struct {
 	VariantStats
-	durationSum, firstGestSum, modalSum float64
-	firstGestN, handSeen, userN         int
+	durationSum, firstGestSum, modalSum, practiceSum float64
+	firstGestN, handSeen, userN, practiceN           int
 }
+
+// addPasserby counts someone who got the brief-encounter hint and walked on.
+// They are not a visit, so nothing else about the variant includes them.
+func (a *variantAcc) addPasserby() { a.Passersby++ }
 
 func (a *variantAcc) add(ev SessionAnalyticsEvent) {
 	a.TotalSessions++
@@ -222,6 +250,16 @@ func (a *variantAcc) add(ev SessionAnalyticsEvent) {
 	a.KingsExpands += ev.KingsExpands
 	a.TutorialShown += ev.TutorialShown
 	a.TutorialDismissed += ev.TutorialDismissed
+	a.PracticeShown += ev.PracticeShown
+	a.PracticeCompleted += ev.PracticeCompleted
+	a.PracticeSkipped += ev.PracticeSkipped
+	if ev.PracticeShown > 0 && ev.PracticeSec > 0 {
+		a.practiceSum += ev.PracticeSec
+		a.practiceN++
+	}
+	if ev.AfterTeaser {
+		a.TeaserVisits++
+	}
 	a.modalSum += ev.ModalReadTimeSec
 	if ev.SessionType == "user" {
 		a.userN++
@@ -255,6 +293,11 @@ func (a *variantAcc) finish() VariantStats {
 		s.AvgModalReadSec = round1(a.modalSum / float64(opens))
 	}
 	s.TutorialDismissRate = pct(s.TutorialDismissed, s.TutorialShown)
+	s.PracticeCompletionRate = pct(s.PracticeCompleted, s.PracticeShown)
+	if a.practiceN > 0 {
+		s.AvgPracticeSec = round1(a.practiceSum / float64(a.practiceN))
+	}
+	s.TeaserConversionRate = pct(s.TeaserVisits, s.TeaserVisits+s.Passersby)
 	return s
 }
 
@@ -265,15 +308,25 @@ func getAdminAnalytics(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not read analytics"})
 	}
 	var all []SessionAnalyticsEvent
+	var accA, accB variantAcc
 	for rows.Next() {
-		if ev, err := scanSession(rows); err == nil {
-			all = append(all, ev)
+		ev, err := scanSession(rows)
+		if err != nil {
+			continue
 		}
+		if ev.SessionType == "passerby" {
+			if ev.Variant == "B" {
+				accB.addPasserby()
+			} else {
+				accA.addPasserby()
+			}
+			continue
+		}
+		all = append(all, ev)
 	}
 	rows.Close()
 
 	resp := AnalyticsSummaryResponse{RecentSessions: []SessionAnalyticsEvent{}, ScreensaverModes: map[string]int{}}
-	var accA, accB variantAcc
 	var phase [2][2][2]int // [phase][variant A/B][total, with gesture]
 	var userDur, guestDur, authSum float64
 	var authN int
@@ -370,6 +423,22 @@ func getAdminAnalytics(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// DELETE /api/admin/analytics (admin) — wipe every recorded visit and passer-by,
+// for a clean start (before an A/B test, say). The A/B setting and the face
+// audit log are kept.
+func adminWipeAnalytics(c echo.Context) error {
+	res, err := db.Exec(`DELETE FROM sessions`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not wipe analytics"})
+	}
+	n, _ := res.RowsAffected()
+	auditAdmin(c, "analytics_wipe", "", fmt.Sprintf("%d sessions", n))
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": fmt.Sprintf("Analytics wiped: %d sessions deleted.", n),
+		"deleted": n,
+	})
+}
+
 // ── A/B experiment configuration ────────────────────────────────────────────
 
 type ABExperimentConfig struct {
@@ -401,9 +470,9 @@ func computeActiveVariant(cfg ABExperimentConfig) string {
 			return "A"
 		}
 		return "B"
-	default: // auto: alternate by session count
+	default: // auto: alternate by visit count
 		var n int
-		db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n)
+		db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_type != 'passerby'`).Scan(&n)
 		if n%2 == 0 {
 			return "A"
 		}

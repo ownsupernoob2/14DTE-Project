@@ -4,7 +4,7 @@ import time
 import requests
 from datetime import datetime
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from config import mirror_headers
 
@@ -61,6 +61,9 @@ class TimetableWidget(QFrame):
     LUNCH_END      = 14 * 60          # 840 mins  2:00pm
     SCHOOL_END     = 15 * 60 + 5      # 905 mins  3:05pm
 
+    fetched = pyqtSignal()
+    RETRY_MS = 15000                  # after a failed fetch, try again this soon
+
     def __init__(self, parent=None, api_url='https://api.smartmirror.me', user_id=''):
         super().__init__(parent)
         self.setObjectName("TimetableWidget")
@@ -68,7 +71,14 @@ class TimetableWidget(QFrame):
         self.api_url = api_url
         self.user_id = user_id
         self.periods = []
+        # loading | ok | not_linked | error — what to say when there are no periods
+        self.status = 'loading'
+        self._fetch_gen = 0
         self._lock = threading.Lock()
+        self.fetched.connect(self._on_fetched)
+        self._retry = QTimer(self)
+        self._retry.setSingleShot(True)
+        self._retry.timeout.connect(self._start_fetch)
 
         self._build_ui()
         self._start_fetch()
@@ -131,6 +141,7 @@ class TimetableWidget(QFrame):
         room_box = QVBoxLayout()
         room_box.setSpacing(4)
         r_k = QLabel("ROOM", current_box)
+        self._detail_keys = [r_k]
         r_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         r_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.room_v = QLabel("T5", current_box)
@@ -144,6 +155,7 @@ class TimetableWidget(QFrame):
         ends_box = QVBoxLayout()
         ends_box.setSpacing(4)
         e_k = QLabel("ENDS", current_box)
+        self._detail_keys.append(e_k)
         e_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         e_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.ends_v = QLabel("10:00am", current_box)
@@ -157,6 +169,7 @@ class TimetableWidget(QFrame):
         left_box = QVBoxLayout()
         left_box.setSpacing(4)
         l_k = QLabel("LEFT", current_box)
+        self._detail_keys.append(l_k)
         l_k.setAlignment(Qt.AlignmentFlag.AlignLeft)
         l_k.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 700; color: #cbd5e1; letter-spacing: 1px;")
         self.left_v = QLabel("68m", current_box)
@@ -239,23 +252,52 @@ class TimetableWidget(QFrame):
     def set_user_id(self, user_id):
         if self.user_id != user_id:
             self.user_id = user_id
+            with self._lock:
+                self.periods = []         # never show the last person's classes
+            self.status = 'loading'
+            self.update_ui()
             self._start_fetch()
 
     def _start_fetch(self):
-        threading.Thread(target=self._fetch_data, daemon=True).start()
+        self._retry.stop()
+        if not self.user_id:
+            return                        # guests have no timetable
+        self._fetch_gen += 1
+        threading.Thread(target=self._fetch_data, args=(self.user_id, self._fetch_gen),
+                         daemon=True).start()
 
-    def _fetch_data(self):
+    def _fetch_data(self, user_id, gen):
+        status, periods = 'error', None
         try:
-            params = {'user_id': self.user_id} if self.user_id else {}
-            res = requests.get(f"{self.api_url}/api/timetable", params=params,
-                               headers=mirror_headers(), timeout=8)
+            res = requests.get(f"{self.api_url}/api/timetable", params={'user_id': user_id},
+                               headers=mirror_headers(), timeout=20)
             if res.status_code == 200:
                 data = res.json()
-                with self._lock:
-                    self.periods = data.get('periods', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-        except Exception:
-            pass
-        QTimer.singleShot(0, self.update_ui)
+                periods = data.get('periods', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                status = 'ok'
+            elif res.status_code == 404:
+                status = 'not_linked'
+                periods = []
+            else:
+                print(f"[TIMETABLE] HTTP {res.status_code} for {user_id}: {res.text[:120]}", flush=True)
+        except Exception as e:
+            print(f"[TIMETABLE] Fetch failed for {user_id}: {e}", flush=True)
+        if gen != self._fetch_gen:
+            return                        # someone else is at the mirror now
+        with self._lock:
+            if periods is not None:
+                self.periods = periods
+            self.status = status
+        self.fetched.emit()
+
+    def _on_fetched(self):
+        if self.status == 'error':
+            self._retry.start(self.RETRY_MS)
+        self.update_ui()
+
+    def _show_details(self, shown):
+        for w in self._detail_keys + [self.room_v, self.ends_v, self.left_v]:
+            w.setVisible(shown)
 
     def update_ui(self):
         with self._lock:
@@ -317,7 +359,7 @@ class TimetableWidget(QFrame):
         # School-over: all today's classes finished OR past 3:05pm with no upcoming
         all_done     = bool(processed) and all(pi['is_done'] for pi in processed)
         no_upcoming  = not any(not pi['is_done'] for pi in processed)
-        school_over  = all_done or (no_upcoming and now_minutes >= self.SCHOOL_END)
+        school_over  = all_done or (no_upcoming and now_minutes >= self.SCHOOL_END and self.status == 'ok')
 
         current_info = next((pi for pi in processed if pi['is_now']), None) or \
                        next((pi for pi in processed if not pi['is_done']), None) or \
@@ -410,11 +452,14 @@ class TimetableWidget(QFrame):
                 "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
                 "letter-spacing: 2px; color: #38bdf8; text-transform: uppercase;"
             )
-            self.subject_lbl.setText("--")
-            self.room_v.setText("--")
-            self.ends_v.setText("--")
-            self.left_v.setText("--")
-            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
+            # No class to show: say why, rather than a row of dashes.
+            self.eyebrow_lbl.setText("TIMETABLE" if self.status != 'ok' else "TODAY")
+            self.subject_lbl.setText({
+                'loading': "Loading…",
+                'not_linked': "Not linked yet",
+                'error': "Can't load right now",
+            }.get(self.status, "No classes today"))
+        self._show_details(is_interval or is_lunch or (bool(current_info) and not school_over))
 
         # ── Next class (Compact Mode) ────────────────────────────────────
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
@@ -429,7 +474,10 @@ class TimetableWidget(QFrame):
             self.next_subj_lbl.setText("See you tomorrow")
             self.next_meta_lbl.setText("")
         else:
-            self.next_subj_lbl.setText("--")
+            self.next_subj_lbl.setText({
+                'not_linked': "Add it at smartmirror.me",
+                'error': "Trying again shortly",
+            }.get(self.status, ""))
             self.next_meta_lbl.setText("")
 
         # ── Clear and rebuild prev / schedule lists ──────────────────────
