@@ -5,6 +5,7 @@ Run from the mirror/ directory:  python -m unittest test_barcode_keyboard
 """
 
 import os
+os.environ.setdefault('MIRROR_LOG_FORWARD', '0')
 import sys
 import time
 import unittest

@@ -87,9 +87,9 @@ TAP_MAX_SEC         = 0.65   # pinch held up to 0.65s without drag is a tap
 TAP_COOLDOWN_SEC    = 0.35   # ignore repeat taps inside this window
 DRAG_TAP_THRESHOLD = 0.040  # movement threshold during pinch to distinguish tap vs drag
 DRAG_SCROLL_GAIN    = 1100.0 # movement -> scroll pixels
-DRAG_DEADZONE       = 0.003  # ignore minute jitter below this
+DRAG_DEADZONE       = 0.001  # smoothed movement below this per frame is not scrolled
 FLING_VELOCITY_SCALE = 200.0 # release velocity multiplier for inertia fling
-TAP_VELOCITY_MAX    = 0.08   # if release velocity > this, treat as drag (hand was moving)
+FLING_MIN_VELOCITY  = 0.25   # release speed (screen heights/s) that keeps a scroll gliding
 
 TOP_RIGHT_X         = 0.62   # top-right quadrant dwell threshold
 TOP_RIGHT_Y         = 0.18   # top-right height limit
@@ -457,68 +457,68 @@ class GestureEngine:
             self.dwell_side = None
 
         # ── Pinch-and-drag scrolling & click/tap ─────────────────────────────
+        # Judged on how far the hand has got from where the pinch began.
+        # Summing every frame-to-frame wobble (as this used to) let ordinary
+        # landmark jitter add up to a "drag", and a click that was meant was
+        # silently thrown away. The raw palm position is used, not the smoothed
+        # cursor, so scrolling starts on the frame the hand moves; the mirror
+        # smooths the scroll itself.
+        sy = y
         if pinched:
             if self.pinch_start is None:
                 self.pinch_start = now
-                self.drag_start_y = y
-                self.last_drag_y = y
+                self.drag_start_y = sy
+                self.last_drag_y = sy
                 self.drag_dist = 0.0
                 self.drag_velocity = 0.0
                 self.had_scroll = False
                 self.last_frame_time = now
             else:
-                dy = y - self.last_drag_y
+                dy = sy - self.last_drag_y
                 dt = max(0.001, now - self.last_frame_time)
                 self.last_frame_time = now
+                self.drag_velocity = 0.6 * self.drag_velocity + 0.4 * (dy / dt)
+                self.last_drag_y = sy
+                self.drag_dist = max(self.drag_dist, abs(sy - self.drag_start_y))
 
-                instant_v = dy / dt
-                self.drag_velocity = 0.7 * self.drag_velocity + 0.3 * instant_v
-                self.drag_dist += abs(dy)
-                self.last_drag_y = y
-
-                if self.drag_dist > DRAG_TAP_THRESHOLD and abs(dy) > DRAG_DEADZONE:
-                    delta = int(-dy * DRAG_SCROLL_GAIN)
-                    if delta != 0:
-                        self.had_scroll = True
-                        self.scroll_delta = max(-200, min(200, delta))
-                        if event is None:
-                            event = "scroll"
+                if self.drag_dist > DRAG_TAP_THRESHOLD:
+                    # The first scroll includes the travel that crossed the
+                    # threshold, so the content doesn't lag behind the hand.
+                    move = dy if self.had_scroll else sy - self.drag_start_y
+                    if abs(move) > DRAG_DEADZONE:
+                        delta = int(round(-move * DRAG_SCROLL_GAIN))
+                        if delta != 0:
+                            self.had_scroll = True
+                            self.scroll_delta = max(-300, min(300, delta))
+                            if event is None:
+                                event = "scroll"
         else:
             if self.pinch_start is not None:
                 held = now - self.pinch_start
-                # Consider it a drag if: meaningful distance moved, had_scroll was set,
-                # OR the pinch was held long enough that it can't be a quick tap.
-                # The held-time guard catches slow-release scrolls where drag_velocity
-                # has decayed to near zero and had_scroll may not have been stamped.
                 released_velocity = self.drag_velocity   # capture before reset
-                was_drag = (
-                    (self.drag_dist > DRAG_TAP_THRESHOLD)
-                    or getattr(self, 'had_scroll', False)
-                    or (held > TAP_MAX_SEC * 0.55)                   # held >~360ms = not a tap
-                    or (abs(released_velocity) > TAP_VELOCITY_MAX)   # hand was moving = not a tap
-                )
+                was_drag = (self.drag_dist > DRAG_TAP_THRESHOLD
+                            or self.had_scroll
+                            or held > TAP_MAX_SEC)
 
                 self.pinch_start = None
                 self.drag_start_y = None
                 self.last_drag_y = None
                 self.drag_dist = 0.0
                 self.drag_velocity = 0.0
-                self.had_scroll = False
+                had_scroll, self.had_scroll = self.had_scroll, False
 
-                if not was_drag and held <= TAP_MAX_SEC:
+                if not was_drag:
                     cooled = (self.last_tap_time is None
                               or now - self.last_tap_time > TAP_COOLDOWN_SEC)
                     if cooled:
                         self.last_tap_time = now
                         if event is None:
                             event = "tap"
-                elif was_drag and abs(released_velocity) > 0.15:
+                elif had_scroll and abs(released_velocity) > FLING_MIN_VELOCITY:
                     if event is None:
                         fling_delta = int(-released_velocity * FLING_VELOCITY_SCALE)
                         self.scroll_delta = max(-500, min(500, fling_delta))
                         event = "fling"
-
-            pass
         return event
 
     def mark_absent(self, now):

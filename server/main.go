@@ -70,7 +70,6 @@ func newServer() *echo.Echo {
 	mirror.POST("/analytics/events", recordAnalyticsEvent)
 	mirror.GET("/users/language", getPublicUserLanguage)
 	mirror.POST("/logs", receiveMirrorLogs)
-	mirror.POST("/mirror/logs", receiveMirrorLogs)
 	// A student ID is guessable in a way a face is not, so cap attempts per IP.
 	mirror.POST("/verify-barcode", verifyBarcode, middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
 		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{
@@ -115,7 +114,7 @@ func newServer() *echo.Echo {
 	admin.POST("/admin/screensaver/images", uploadScreensaverImages)
 	admin.DELETE("/admin/screensaver/images/:id", deleteScreensaverImage)
 	admin.GET("/admin/logs", getAdminLogs)
-	admin.POST("/admin/logs", receiveMirrorLogs)
+	// The Windows updater posts "updating" notices with ADMIN_TOKEN.
 	e.POST("/api/admin/banner", setAdminBanner, RequireAdminOrUpdater())
 
 	return e

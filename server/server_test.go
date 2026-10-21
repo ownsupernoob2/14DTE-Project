@@ -601,3 +601,46 @@ func TestMirrorNoticeLevelsAndExpiry(t *testing.T) {
 		t.Errorf("audit rows = %d", audits)
 	}
 }
+
+func TestMirrorLogsArePerMirrorCappedAndSafe(t *testing.T) {
+	newTestDB(t)
+	addUser(t, adminID, "marminamina3@gmail.com")
+	big := strings.Repeat("line of log text\n", 50000) // ~850 KB
+	body, _ := json.Marshal(map[string]interface{}{
+		"mirror_id": "../../etc/library mirror",
+		"logs":      map[string]string{"mirror": big, "gesture_engine": "[GESTURE] 18 fps", "secrets": "nope"},
+	})
+	rec := call(t, receiveMirrorLogs, "POST", "/", string(body), "")
+	if rec.Code != 200 {
+		t.Fatalf("upload = %d %s", rec.Code, rec.Body)
+	}
+	call(t, receiveMirrorLogs, "POST", "/", `{"mirror_id":"hall","logs":{"face":"[FACES] 3 people"}}`, "")
+
+	var out struct {
+		Mirror  string             `json:"mirror"`
+		Content string             `json:"content"`
+		Mirrors []mirrorLogSummary `json:"mirrors"`
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=etc-library-mirror&name=mirror", "", adminID), &out)
+	if len(out.Content) > mirrorLogMaxBytes || !strings.HasPrefix(out.Content, "line of log") {
+		t.Errorf("mirror.log not capped to whole lines: %d bytes", len(out.Content))
+	}
+	if len(out.Mirrors) != 2 {
+		t.Errorf("mirrors = %+v", out.Mirrors)
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=etc-library-mirror&name=gesture", "", adminID), &out)
+	if out.Content != "[GESTURE] 18 fps" {
+		t.Errorf("gesture = %q", out.Content)
+	}
+	decode(t, call(t, getAdminLogs, "GET", "/api/admin/logs?mirror=hall&name=face", "", adminID), &out)
+	if out.Content != "[FACES] 3 people" {
+		t.Errorf("hall face = %q", out.Content)
+	}
+	// Nothing escapes data/mirror_logs, and unknown log names are ignored.
+	if _, err := os.Stat(filepath.Join(mirrorLogsDir(), "etc-library-mirror", "mirror.log")); err != nil {
+		t.Error("log not stored under its sanitised mirror folder")
+	}
+	if rec := call(t, receiveMirrorLogs, "POST", "/", `{"logs":{"passwd":"x"}}`, ""); rec.Code != 400 {
+		t.Errorf("unknown log = %d", rec.Code)
+	}
+}

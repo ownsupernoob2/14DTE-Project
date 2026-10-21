@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+os.environ.setdefault('MIRROR_LOG_FORWARD', '0')
 import sys
 import tempfile
 import time

@@ -148,6 +148,45 @@ class TestPinchDrag(unittest.TestCase):
         self.assertEqual(self.e.right_dwell_progress, 1.0)
 
 
+class TestClickReliability(unittest.TestCase):
+    """A pinch someone means as a click must register as one."""
+
+    def setUp(self):
+        self.e = StubEngine()
+
+    def pinch(self, ys, step=1 / 16):
+        t, events = 1000.0, []
+        self.e.process_landmarks(make_hand(0.2, 0.5), t)
+        for y in ys:
+            t += step
+            events.append(self.e.process_landmarks(make_hand(0.2, y, pinch=True), t))
+        t += step
+        events.append(self.e.process_landmarks(make_hand(0.2, ys[-1]), t))
+        return [e for e in events if e]
+
+    def test_a_pinch_with_normal_hand_wobble_still_clicks(self):
+        wobble = [0.5 + (0.006 if i % 2 else -0.006) for i in range(8)]   # 0.5 s of jitter
+        self.assertEqual(self.pinch(wobble), ["tap"])
+
+    def test_a_slower_half_second_pinch_clicks(self):
+        self.assertEqual(self.pinch([0.5] * 8), ["tap"])                  # 0.5 s held
+
+    def test_a_pinch_held_too_long_is_not_a_click(self):
+        self.assertEqual(self.pinch([0.5] * 14), [])                      # ~0.9 s
+
+    def test_a_real_drag_scrolls_and_never_clicks(self):
+        events = self.pinch([0.5, 0.48, 0.45, 0.42, 0.39, 0.36])
+        self.assertIn("scroll", events)
+        self.assertNotIn("tap", events)
+
+    def test_the_first_scroll_carries_the_travel_that_started_it(self):
+        self.e.process_landmarks(make_hand(0.2, 0.5, pinch=True), 1000.0)
+        self.e.process_landmarks(make_hand(0.2, 0.47, pinch=True), 1000.06)   # under threshold
+        self.e.process_landmarks(make_hand(0.2, 0.45, pinch=True), 1000.12)   # crosses it
+        # 0.05 of travel so far, not just the last 0.02.
+        self.assertGreater(self.e.scroll_delta, int(0.04 * gesture_engine.DRAG_SCROLL_GAIN))
+
+
 class TestPinch(unittest.TestCase):
     """Thumb-to-index proximity — the click.
 

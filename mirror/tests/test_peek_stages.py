@@ -4,6 +4,7 @@ Run from the mirror/ directory:  python -m unittest test_peek_stages
 """
 
 import os
+os.environ.setdefault('MIRROR_LOG_FORWARD', '0')
 import sys
 import tempfile
 import unittest
@@ -201,22 +202,63 @@ class TestPinchDragAndMomentum(unittest.TestCase):
     def tearDown(self):
         close_mirror(self.mirror)
 
-    def test_drag_scroll_moves_notices(self):
+    def _run_scroller(self, seconds):
+        import time as _t
+        end = _t.monotonic() + seconds
+        while _t.monotonic() < end and self.mirror._momentum_timer.isActive():
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+
+    def test_drag_scroll_glides_the_notices_by_the_full_amount(self):
         self.mirror.notices_widget.cards_container.setFixedHeight(2000)
         app.processEvents()
         sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
-        initial_val = sb.value()
+        start = sb.value()
         self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=30))
-        new_val = sb.value()
-        self.assertEqual(new_val, initial_val + 30)
+        self.assertLess(sb.value(), start + 30)              # not a jump...
+        self.mirror._momentum_tick()
+        self._run_scroller(0.6)
+        self.assertEqual(sb.value(), start + 30)             # ...but it all arrives
+        self.assertFalse(self.mirror._momentum_timer.isActive())
 
-    def test_fling_starts_momentum(self):
+    def test_scroll_updates_glide_in_small_steps(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(3000)
+        app.processEvents()
+        sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
+        steps, last = [], sb.value()
+        self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=60))
+        import time as _t
+        for _ in range(12):
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+            steps.append(sb.value() - last)
+            last = sb.value()
+        self.assertTrue(all(st < 40 for st in steps))         # many small moves
+        self.assertGreater(sum(1 for st in steps if st > 0), 4)
+
+    def test_fling_coasts_and_slows_down(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(5000)
+        app.processEvents()
+        sb = self.mirror.notices_widget.scroll_area.verticalScrollBar()
+        start = sb.value()
         self.mirror._handle_gesture(gesture(region='left', event='fling', delta=40))
         self.assertTrue(self.mirror._momentum_timer.isActive())
-        self.assertGreater(self.mirror._momentum_velocity, 0)
-        # Advance momentum tick
+        v0 = self.mirror._momentum_velocity
+        self.assertGreater(v0, 0)
+        import time as _t
+        _t.sleep(0.05)
         self.mirror._momentum_tick()
-        self.assertLess(self.mirror._momentum_velocity, 40.0)
+        self.assertLess(self.mirror._momentum_velocity, v0)
+        self._run_scroller(3.0)
+        self.assertGreater(sb.value(), start + 200)
+        self.assertFalse(self.mirror._momentum_timer.isActive())
+
+    def test_grabbing_again_stops_a_fling(self):
+        self.mirror.notices_widget.cards_container.setFixedHeight(5000)
+        app.processEvents()
+        self.mirror._handle_gesture(gesture(region='left', event='fling', delta=40))
+        self.mirror._handle_gesture(gesture(region='left', event='scroll', delta=5))
+        self.assertEqual(self.mirror._momentum_velocity, 0.0)
 
 
 class TestStateTransition(unittest.TestCase):

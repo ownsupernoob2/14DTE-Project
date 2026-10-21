@@ -610,7 +610,12 @@ class NoticesWidget(QFrame):
         self.scroll_area.setStyleSheet("background: transparent; border: none;")
 
         self.cards_container = QWidget()
-        self.cards_container.setStyleSheet("background: transparent;")
+        # Opaque, so scrolling can shift already-drawn pixels instead of
+        # repainting everything behind the cards on every frame.
+        self.cards_container.setAutoFillBackground(True)
+        pal = self.cards_container.palette()
+        pal.setColor(self.cards_container.backgroundRole(), QColor(0, 0, 0))
+        self.cards_container.setPalette(pal)
         self.cards_lay = QVBoxLayout(self.cards_container)
         self.cards_lay.setContentsMargins(0, 4, 0, 4)
         self.cards_lay.setSpacing(12)

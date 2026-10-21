@@ -590,7 +590,11 @@ class KingsWeekWidget(QFrame):
         self.scroll_area.setStyleSheet('background: transparent; border: none;')
 
         self.grid_container = QWidget()
-        self.grid_container.setStyleSheet('background: transparent;')
+        # Opaque (the panel is black anyway) so scrolling can reuse pixels.
+        self.grid_container.setAutoFillBackground(True)
+        pal = self.grid_container.palette()
+        pal.setColor(self.grid_container.backgroundRole(), QColor(0, 0, 0))
+        self.grid_container.setPalette(pal)
         self.grid = QGridLayout(self.grid_container)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(GRID_SPACING)

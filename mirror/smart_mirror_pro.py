@@ -774,10 +774,18 @@ class SmartMirrorPro(QMainWindow):
         self.guest_display_timer.timeout.connect(self._slide_guest_card_out)
 
         # ── Momentum scrolling engine ─────────────────────────────────────
+        # Gesture scrolls arrive ~15 times a second; this glides the content at
+        # display rate instead of jumping on each one (see _momentum_tick).
         self._momentum_timer = QTimer(self)
+        self._momentum_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._momentum_timer.setInterval(16)
         self._momentum_timer.timeout.connect(self._momentum_tick)
-        self._momentum_velocity = 0.0
+        self._momentum_velocity = 0.0     # fling speed, px/s
         self._momentum_target = None
+        self._scroll_pending = 0.0        # px still to glide through
+        self._scroll_frac = 0.0           # sub-pixel remainder
+        self._scroll_last_tick = 0.0
+        self._scroll_flinging = False
 
         # ── Activity & Inactivity Timing ──────────────────────────────────
         self._last_activity_time = time.time()
@@ -801,6 +809,17 @@ class SmartMirrorPro(QMainWindow):
         self._screensaver_left_at = 0.0
         self._last_udp_gesture = 0.0
 
+        # ── Frame meter: how smoothly the UI thread is really running ─────
+        # A 60 Hz tick that records how late each one fires. If painting or
+        # anything else blocks the UI thread, ticks bunch up and this shows it.
+        self._frame_gaps = []
+        self._frame_last = time.monotonic()
+        self._perf_logged = time.monotonic()
+        self._frame_meter = QTimer(self)
+        self._frame_meter.setTimerType(Qt.TimerType.PreciseTimer)
+        self._frame_meter.timeout.connect(self._frame_meter_tick)
+        self._frame_meter.start(16)
+
         # ── Debug panel (triple-click with a mouse) ───────────────────────
         self._last_gesture_data = {}
         self._last_gesture_rx = 0.0
@@ -817,7 +836,9 @@ class SmartMirrorPro(QMainWindow):
         self.current_variant = "A"
 
         # ── Log Forwarder ──────────────────────────────────────────────────
-        self.log_forwarder = start_log_forwarder(background=True)
+        self.log_forwarder = None
+        if os.environ.get('MIRROR_LOG_FORWARD', '1') != '0':
+            self.log_forwarder = start_log_forwarder(background=True)
 
         # ── Timers ────────────────────────────────────────────────────────
 
@@ -1493,29 +1514,71 @@ class SmartMirrorPro(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────
     # Momentum Scrolling Engine
     # ─────────────────────────────────────────────────────────────────────
+    SCROLL_EASE_SEC = 0.07    # a scroll update is ~63% applied after this long
+    FLING_DECAY_SEC = 0.28    # a fling loses ~63% of its speed after this long
+    FLING_GAIN = 40.0         # engine fling delta -> starting speed in px/s
+
+    def _scroll_smooth(self, target, delta):
+        """A drag-scroll update: glide `target` by `delta` px over the next frames."""
+        if target is not self._momentum_target:
+            self._stop_momentum()
+            self._momentum_target = target
+        self._scroll_flinging = False
+        self._momentum_velocity = 0.0          # the hand is in control again
+        self._scroll_pending += float(delta)
+        self._wake_scroller()
+
     def _start_momentum(self, target, velocity):
-        self._momentum_target = target
-        self._momentum_velocity = float(velocity)
+        """Release with speed: keep gliding and slow down naturally."""
+        if target is not self._momentum_target:
+            self._stop_momentum()
+            self._momentum_target = target
+        self._momentum_velocity = float(velocity) * self.FLING_GAIN
+        self._scroll_flinging = True
+        self._wake_scroller()
+
+    def _wake_scroller(self):
         if not self._momentum_timer.isActive():
-            self._momentum_timer.start(16)
+            self._scroll_last_tick = time.monotonic()
+            self._momentum_timer.start()
 
     def _stop_momentum(self):
         if self._momentum_timer.isActive():
             self._momentum_timer.stop()
         self._momentum_velocity = 0.0
         self._momentum_target = None
+        self._scroll_pending = 0.0
+        self._scroll_frac = 0.0
+        self._scroll_flinging = False
 
     def _momentum_tick(self):
-        if self._momentum_target is None or abs(self._momentum_velocity) < 0.8:
-            target = self._momentum_target
+        target = self._momentum_target
+        if target is None or not hasattr(target, 'scroll_by_pixels'):
             self._stop_momentum()
-            if target is not None and hasattr(target, 'snap_to_nearest_box'):
-                target.snap_to_nearest_box()
             return
-        step = int(self._momentum_velocity)
-        if step != 0 and hasattr(self._momentum_target, 'scroll_by_pixels'):
-            self._momentum_target.scroll_by_pixels(step)
-        self._momentum_velocity *= 0.90
+        now = time.monotonic()
+        dt = min(0.05, max(0.001, now - self._scroll_last_tick))   # time-based: same feel at any fps
+        self._scroll_last_tick = now
+
+        ease = self._scroll_pending * (1.0 - math.exp(-dt / self.SCROLL_EASE_SEC))
+        self._scroll_pending -= ease
+        move = ease + self._momentum_velocity * dt
+        self._momentum_velocity *= math.exp(-dt / self.FLING_DECAY_SEC)
+
+        self._scroll_frac += move
+        step = int(self._scroll_frac)
+        if step:
+            self._scroll_frac -= step
+            target.scroll_by_pixels(step)
+
+        if abs(self._scroll_pending) < 0.5 and abs(self._momentum_velocity) < 25.0:
+            rest = int(round(self._scroll_frac + self._scroll_pending))
+            if rest:                      # land exactly where the hand said
+                target.scroll_by_pixels(rest)
+            flinging = self._scroll_flinging
+            self._stop_momentum()
+            if flinging and hasattr(target, 'snap_to_nearest_box'):
+                target.snap_to_nearest_box()
 
     # ─────────────────────────────────────────────────────────────────────
     # Timetable & King's Week Layered Slide Transition
@@ -2049,6 +2112,25 @@ class SmartMirrorPro(QMainWindow):
         self._idle_demo_anim = anim
         return anim
 
+    def _frame_meter_tick(self):
+        now = time.monotonic()
+        self._frame_gaps.append(now - self._frame_last)
+        self._frame_last = now
+        if len(self._frame_gaps) > 240:             # ~4 s of history
+            del self._frame_gaps[:len(self._frame_gaps) - 240]
+        if now - self._perf_logged >= 30.0:
+            self._perf_logged = now
+            fps, worst = self._ui_frame_stats()
+            engine = self._last_gesture_data.get("fps") if now - self._last_gesture_rx < 5 else None
+            print(f"[PERF] UI {fps:.0f} fps, worst frame {worst:.0f} ms"
+                  + (f", gesture engine {engine:.1f} fps" if engine else ""), flush=True)
+
+    def _ui_frame_stats(self):
+        gaps = self._frame_gaps[-120:]
+        if not gaps:
+            return 0.0, 0.0
+        return len(gaps) / max(sum(gaps), 1e-6), 1000.0 * max(gaps)
+
     # ─────────────────────────────────────────────────────────────────────
     # Debug panel contents
     # ─────────────────────────────────────────────────────────────────────
@@ -2093,6 +2175,7 @@ class SmartMirrorPro(QMainWindow):
             ("A/B variant", self.current_variant),
             ("session", f"{sess['session_id']} {sess['session_type']} taps={sess['gesture_tap_count']} "
                         f"scrolls={sess['gesture_scroll_count']}" if sess else "none"),
+            ("UI frame rate", "{:.0f} fps, worst frame {:.0f} ms".format(*self._ui_frame_stats())),
             ("window", f"{self.width()}×{self.height()}"),
         ]
         if now - self._sys_stats_at > 5:
@@ -2270,10 +2353,9 @@ class SmartMirrorPro(QMainWindow):
 
         elif effective_region == GESTURE_REGION_LEFT and notices is not None:
             if event == "scroll" and delta != 0:
-                self._stop_momentum()
                 if hasattr(notices, 'clear_selection'):
                     notices.clear_selection()
-                notices.scroll_by_pixels(delta)
+                self._scroll_smooth(notices, delta)
             elif event == "fling" and delta != 0:
                 if hasattr(notices, 'clear_selection'):
                     notices.clear_selection()
@@ -2315,11 +2397,9 @@ class SmartMirrorPro(QMainWindow):
 
             if active_target is not None:
                 if event == "scroll" and delta != 0:
-                    self._stop_momentum()
                     if hasattr(active_target, 'clear_selection'):
                         active_target.clear_selection()
-                    if hasattr(active_target, 'scroll_by_pixels'):
-                        active_target.scroll_by_pixels(delta)
+                    self._scroll_smooth(active_target, delta)
                 elif event == "fling" and delta != 0:
                     if hasattr(active_target, 'clear_selection'):
                         active_target.clear_selection()

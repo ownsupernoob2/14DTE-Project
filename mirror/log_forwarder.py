@@ -58,7 +58,10 @@ def read_tail(filepath, max_lines=500, max_bytes=256 * 1024):
 class LogForwarder:
     """Monitors local mirror log files and posts updates to the server."""
 
-    def __init__(self, api_url=None, log_dir=None, interval=2.5, heartbeat_interval=30.0):
+    # Every 10 s while a log changes, and once a minute regardless, so the admin
+    # page shows the mirror is alive. More often just costs the Pi CPU and
+    # network for no benefit to someone reading logs.
+    def __init__(self, api_url=None, log_dir=None, interval=10.0, heartbeat_interval=60.0):
         self.api_url = (api_url or API_URL).rstrip("/")
         self.log_dir = log_dir or LOG_DIR
         self.interval = interval
@@ -109,10 +112,6 @@ class LogForwarder:
 
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=5)
-            if resp.status_code == 404:
-                # Fallback to /api/mirror/logs if /api/logs returns 404
-                alt_url = f"{self.api_url}/api/mirror/logs"
-                resp = requests.post(alt_url, json=payload, headers=headers, timeout=5)
 
             if resp.status_code == 200:
                 self._last_sync_time = now
@@ -128,11 +127,11 @@ class LogForwarder:
                 return True
             else:
                 print(f"[LOG_FORWARDER] Server responded HTTP {resp.status_code}: {resp.text[:100]}")
-                self._backoff = min(10.0, self._backoff + 2.0)
+                self._backoff = min(60.0, self._backoff + 10.0)
                 return False
-        except Exception as e:
-            # Network error or timeout, silently backoff
-            self._backoff = min(10.0, self._backoff + 2.0)
+        except Exception:
+            # Network error or timeout: back off quietly
+            self._backoff = min(60.0, self._backoff + 10.0)
             return False
 
     def run(self):
@@ -242,7 +241,7 @@ def start_log_forwarder(background=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smart Mirror Log Forwarder")
     parser.add_argument("--once", action="store_true", help="Perform a single sync and exit")
-    parser.add_argument("--interval", type=float, default=2.5, help="Poll interval in seconds")
+    parser.add_argument("--interval", type=float, default=10.0, help="Poll interval in seconds")
     args = parser.parse_args()
 
     if args.once:
