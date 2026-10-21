@@ -90,7 +90,9 @@ INDICATOR_BAR_HEIGHT = 100
 
 KINGS_IDLE_MS        = 20_000
 
-PINCH_EXIT_HOLD_SEC = 1.5    # how long to hold pinch to dismiss the tutorial
+PINCH_EXIT_HOLD_SEC = 1.0    # how long to hold pinch to dismiss the tutorial
+TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): give them this long before the demo
+SIGNED_OUT_FACE_HOLD_SEC = 5.0   # after signing out, ignore their face until it's gone this long
 PINCH_DROPOUT_SEC   = 0.25   # tolerate brief tracking drops without resetting
 SCAN_TEASE_HOLD_SEC = 4.0    # how long STUDENT ID SCAN stays up after a brief sighting
 
@@ -618,6 +620,7 @@ class GuestScanCallout(QWidget):
         self._timer.setInterval(16)   # 60 fps
         self._timer.timeout.connect(self.update)
         self._fade = 1.0
+        self.show_or = False      # "OR": over the tutorial, scanning is the other way in
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
@@ -641,40 +644,32 @@ class GuestScanCallout(QWidget):
         bounce = 12.0 * _math.sin(t * _math.pi * 2.4)
 
         alpha = int(255 * pulse * self._fade)
-        w, h = self.width(), self.height()
-        half = h // 2
+        w = self.width()
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        color = QColor(255, 255, 255, alpha)
-        painter.setPen(color)
+        def line(text, top, height, px, weight, spacing, a):
+            font = painter.font()
+            font.setFamily("Segoe UI")
+            font.setPixelSize(px)
+            font.setWeight(weight)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+            painter.setFont(font)
+            painter.setPen(QColor(255, 255, 255, a))
+            painter.drawText(QRect(0, int(top), w, height),
+                             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
 
-        # --- Text: "STUDENT ID SCAN" in the top half ---
-        font = painter.font()
-        font.setFamily("Segoe UI")
-        font.setPixelSize(46)
-        font.setWeight(QFont.Weight.Black)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 7)
-        painter.setFont(font)
-        text_rect = QRect(0, 0, w, half)
-        painter.drawText(text_rect,
-                         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                         "STUDENT ID SCAN")
+        # The small lines hold steady (no pulse) so they're easy to read.
+        steady = int(255 * self._fade)
+        if self.show_or:
+            line("OR", 0, 34, 26, QFont.Weight.Bold, 6, int(steady * 0.7))
+        line("STUDENT ID SCAN", 36, 56, 44, QFont.Weight.Black, 7, alpha)
+        line("SCAN AGAIN TO SIGN OUT", 92, 26, 18, QFont.Weight.DemiBold, 3, int(steady * 0.6))
 
-        # --- Arrow "v" in the bottom half, bouncing ---
-        afont = painter.font()
-        afont.setPixelSize(68)
-        afont.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
-        painter.setFont(afont)
-
-        # Translate painter down by bounce amount
+        # Arrow "v" below, bouncing towards the scanner
         painter.translate(0.0, bounce)
-        arrow_rect = QRect(0, half, w, half)
-        painter.drawText(arrow_rect,
-                         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                         "▼")
-
+        line("▼", 122, 70, 56, QFont.Weight.Black, 0, alpha)
         painter.end()
 
 
@@ -799,6 +794,11 @@ class SmartMirrorPro(QMainWindow):
         self._demo_pinch_start = None
         self._demo_pinch_last = 0.0
         self._scan_tease_until = 0.0
+        self._scanned_this_visit = False   # they know about the ID scanner
+        self._tutorial_wait = None         # seconds before the demo, when not the usual
+        self._last_hand_time = 0.0
+        self._signed_out_user = None       # their face is ignored until they step away
+        self._signed_out_face_gone = 0.0
 
         # ── Idle attract loop (full-screen demo while nobody is there) ────
         self._last_presence_time = 0.0   # last face or hand seen, by anyone
@@ -959,6 +959,22 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.setFixedSize(32, 32)
         self.edge_arrow_label.hide()
 
+        # People pinch the arrow instead of reaching above it, so say what it
+        # is, and let a pinch on it open the timetable too.
+        self.edge_arrow_caption = QLabel("TIMETABLE", self.central_widget)
+        self.edge_arrow_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.edge_arrow_caption.hide()
+        self._arrow_hover = None
+        self._set_arrow_hover(False)
+
+        # Sign out with a pinch (scanning the ID again does the same).
+        self.sign_out_btn = QLabel("SIGN OUT", self.central_widget)
+        self.sign_out_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sign_out_btn.setFixedSize(150, 40)
+        self.sign_out_btn.hide()
+        self._sign_out_hover = None
+        self._set_sign_out_hover(False)
+
         # Variant B proactive dwell hint pill in header
         self.dwell_hint_pill = QLabel("Hold hand in top-right for Timetable", self.central_widget)
         self.dwell_hint_pill.setObjectName("DwellHintPill")
@@ -981,15 +997,73 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_trail = GestureTrailOverlay(self.central_widget)
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
+    def _set_arrow_hover(self, hover):
+        if hover == self._arrow_hover:
+            return
+        self._arrow_hover = hover
+        color = '#ffffff' if hover else '#94a3b8'
+        self.edge_arrow_caption.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 800; "
+            f"letter-spacing: 2px; color: {color}; background: transparent;")
+
+    def _set_sign_out_hover(self, hover):
+        if hover == self._sign_out_hover:
+            return
+        self._sign_out_hover = hover
+        fg, bg = ('#000000', '#ffffff') if hover else ('#e2e8f0', '#111111')
+        self.sign_out_btn.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; font-weight: 800; "
+            f"letter-spacing: 2px; color: {fg}; background: {bg}; border: 1px solid #333333;")
+
+    def _position_sign_out(self):
+        """Bottom-left, under the notices: out of the way, easy to reach."""
+        if not hasattr(self, 'sign_out_btn'):
+            return
+        if self._last_state == 'user' and not self._transitioning:
+            self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
+            self.sign_out_btn.show()
+            self.sign_out_btn.raise_()
+        else:
+            self.sign_out_btn.hide()
+            self._set_sign_out_hover(False)
+
+    def _hand_near(self, rect, data):
+        """Whether the hand cursor is inside rect (window coordinates)."""
+        point = QPoint(int(data.get("hand_x", 0.0) * self.width()),
+                       int(data.get("hand_y", 0.0) * self.height()))
+        return rect.contains(point)
+
+    def _sign_out_rect(self):
+        if self.sign_out_btn.isHidden():
+            return QRect()
+        return self.sign_out_btn.geometry().adjusted(-24, -24, 24, 24)   # a hand is not a mouse
+
+    def _timetable_button_rect(self):
+        if self.edge_arrow_label.isHidden():
+            return QRect()
+        r = self.edge_arrow_label.geometry().united(self.edge_arrow_caption.geometry())
+        return r.adjusted(-40, -20, 40, 24)
+
     def _position_guest_scan_callout(self):
         """Place STUDENT ID SCAN callout at bottom-center of the window."""
         if not hasattr(self, 'guest_scan_callout'):
             return
         sw = self.width()
         sh = self.height()
-        ch = 220
-        cy = sh - ch - 50
+        ch = self.SCAN_CALLOUT_H
+        cy = sh - ch - 4
         self.guest_scan_callout.setGeometry(0, cy, sw, ch)
+
+    SCAN_CALLOUT_H = 210
+
+    def _layout_demo_overlay(self, with_callout):
+        """Centre the video, bar and hint in the space the callout leaves free."""
+        if getattr(self, '_demo_lay', None) is None:
+            return
+        self._demo_lay.setContentsMargins(0, 0, 0, 0)
+        content = self._demo_lay.sizeHint().height()
+        free = self.height() - (self.SCAN_CALLOUT_H if with_callout else 0)
+        self._demo_lay.setContentsMargins(0, max(16, (free - content) // 2), 0, 0)
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -1066,27 +1140,33 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_demo_overlay.setObjectName("GestureDemoOverlay")
         lay = QVBoxLayout(self.gesture_demo_overlay)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(24)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setSpacing(18)
+        lay.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self._demo_lay = lay
 
         self.demo_movie = None
         self.demo_surface = VideoSurface(self.gesture_demo_overlay)
-        self.demo_surface.setFixedSize(800, 450)
+        self.demo_surface.setFixedSize(720, 405)
         lay.addWidget(self.demo_surface, alignment=Qt.AlignmentFlag.AlignCenter)
         if has_video:
             self.demo_movie = DemoVideoDecoder(self._demo_video('540p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
-            self.demo_movie.set_target_size(800, 450)
+            self.demo_movie.set_target_size(720, 405)
             self.demo_movie.frame_ready.connect(self.demo_surface.set_image)
             self.demo_surface.set_image(self.demo_movie.first_frame())
 
-        # Pinch-and-hold progress bar beneath the video
+        # Pinch-and-hold progress bar beneath the video, and what it is for
         self.demo_hold_bar = QFrame(self.gesture_demo_overlay)
-        self.demo_hold_bar.setFixedSize(800, 6)
+        self.demo_hold_bar.setFixedSize(320, 6)
         self.demo_hold_bar.setStyleSheet("background: rgba(255,255,255,0.16); border: none; border-radius: 3px;")
         self.demo_hold_fill = QFrame(self.demo_hold_bar)
         self.demo_hold_fill.setStyleSheet("background: #ffffff; border: none; border-radius: 3px;")
         self.demo_hold_fill.setGeometry(0, 0, 0, 6)
         lay.addWidget(self.demo_hold_bar, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.demo_hold_lbl = QLabel("HOLD PINCH TO EXIT", self.gesture_demo_overlay)
+        self.demo_hold_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 800; "
+            "letter-spacing: 4px; color: #ffffff; background: transparent;")
+        lay.addWidget(self.demo_hold_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
         self.gesture_demo_overlay.hide()
 
         # Nobody at the mirror: the screensaver chosen in the admin dashboard
@@ -1338,12 +1418,16 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'status_dot'):
             self.status_dot.move(w - 20, h - 20)
 
+        if hasattr(self, 'sign_out_btn') and hasattr(self, '_transitioning'):
+            self._position_sign_out()
+
         if hasattr(self, 'version_lbl'):
             self.version_lbl.move(16, h - 22)
             self.version_lbl.raise_()
 
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.setGeometry(0, 0, w, h)
+            self._layout_demo_overlay(hasattr(self, 'guest_scan_callout') and self.guest_scan_callout.isVisible())
             if hasattr(self, 'guest_scan_callout') and self.guest_scan_callout.isVisible():
                 self._position_guest_scan_callout()
 
@@ -1802,9 +1886,9 @@ class SmartMirrorPro(QMainWindow):
             return
 
         is_active = self._last_state in ('user', 'guest')
-        is_dwelling = hasattr(self, 'indicator_bar') and not self.indicator_bar.isHidden()
+        self.edge_arrow_caption.hide()
 
-        if not is_active or is_dwelling:
+        if not is_active:
             self.edge_arrow_label.hide()
             if hasattr(self, 'dwell_hint_pill'):
                 self.dwell_hint_pill.hide()
@@ -1838,12 +1922,18 @@ class SmartMirrorPro(QMainWindow):
         content_w = right_w - 60
         top = self._banner_space()
 
-        # Position arrow centered in the header area between date and clock
+        # Position arrow centered in the header area between date and clock,
+        # with its caption just above it
         arrow_x = content_x + (content_w - 32) // 2
-        arrow_y = top + 20 + (65 - 32) // 2
+        arrow_y = top + 20 + (65 - 32) // 2 + 6
         self.edge_arrow_label.move(arrow_x, arrow_y)
         self.edge_arrow_label.show()
         self.edge_arrow_label.raise_()
+        self.edge_arrow_caption.adjustSize()
+        cap = self.edge_arrow_caption
+        cap.move(arrow_x + 16 - cap.width() // 2, arrow_y - cap.height() + 4)
+        cap.show()
+        cap.raise_()
 
         # Variant B: show dwell hint pill beneath arrow (no emoji, black bg)
         if getattr(self, 'current_variant', 'A') == 'B' and hasattr(self, 'dwell_hint_pill'):
@@ -1866,6 +1956,7 @@ class SmartMirrorPro(QMainWindow):
             return
         self._position_guest_scan_callout()
         self.guest_scan_callout.set_fade(1.0)
+        self.guest_scan_callout.show_or = False
         if not self.guest_scan_callout.isVisible():
             self.guest_scan_callout.show()
             self.guest_scan_callout.start()
@@ -1930,9 +2021,14 @@ class SmartMirrorPro(QMainWindow):
         self._demo_pinch_start = None
         self._set_demo_hold_progress(0.0)
 
-        # Show guest barcode callout only in guest state
+        # Guests who haven't scanned yet: the gesture OR the ID scanner. Once
+        # they've scanned they know about it, so just the gesture.
+        with_callout = self._last_state == 'guest' and not self._scanned_this_visit
+        self._layout_demo_overlay(with_callout)
+        self._tutorial_wait = None
         if hasattr(self, 'guest_scan_callout'):
-            if self._last_state == 'guest':
+            if with_callout:
+                self.guest_scan_callout.show_or = True
                 self.guest_scan_callout.set_fade(0.0)
                 self._position_guest_scan_callout()
                 self.guest_scan_callout.show()
@@ -2226,6 +2322,7 @@ class SmartMirrorPro(QMainWindow):
 
         if present:
             self._last_interaction_time = time.time()
+            self._last_hand_time = time.time()
 
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             if present:
@@ -2246,6 +2343,21 @@ class SmartMirrorPro(QMainWindow):
         # a held pinch (fills the bar under the video, exits at 100%).
         if self._demo_overlay_active():
             self._update_demo_hold(present and bool(data.get("pinched", False)))
+            return
+
+        # Buttons the hand can pinch: SIGN OUT, and the TIMETABLE arrow.
+        on_sign_out = present and self._hand_near(self._sign_out_rect(), data)
+        self._set_sign_out_hover(on_sign_out)
+        if on_sign_out:
+            if event == "tap":
+                self.sign_out(reason="button")
+            return                       # nothing underneath reacts to it
+        on_timetable = present and self._hand_near(self._timetable_button_rect(), data)
+        self._set_arrow_hover(on_timetable)
+        if on_timetable and event == "tap":
+            self._last_activity_time = time.time()
+            self._dwell_tap_lock = True  # the hand is in the dwell corner: don't toggle twice
+            self._toggle_timetable_from_gesture()
             return
 
         # Telemetry: Record gesture events & dwell progress
@@ -2290,8 +2402,7 @@ class SmartMirrorPro(QMainWindow):
         if self._last_state in ('user', 'guest'):
             if right_dwell > 0.02 and dwell_side in ('top_right', 'right'):
                 self._last_interaction_time = time.time()
-                if hasattr(self, 'edge_arrow_label'):
-                    self.edge_arrow_label.hide()
+                # The arrow and its caption stay: the bar fills in below them.
 
                 w = self.width()
                 left_w = int(w * 0.50)
@@ -2321,9 +2432,12 @@ class SmartMirrorPro(QMainWindow):
         # ── Handle Events (Right-side / Top-Right Dwell Toggle) ───────────
         dwell_filled = (right_dwell >= 0.98)
         dwell_trigger = (event in ("enter_top_right", "enter_right", "enter_dwell")) or (dwell_filled and not getattr(self, '_dwell_already_triggered', False))
+        if getattr(self, '_dwell_tap_lock', False):
+            dwell_trigger = False
 
         if right_dwell < 0.2:
             self._dwell_already_triggered = False
+            self._dwell_tap_lock = False
 
         # Resolve effective region cleanly so gestures near the center gutter are never dropped
         effective_region = region
@@ -2341,18 +2455,7 @@ class SmartMirrorPro(QMainWindow):
             self.indicator_bar.hide()
             if hasattr(self, 'dwell_hint_pill'):
                 self.dwell_hint_pill.hide()
-            if hasattr(self, 'telemetry') and self.telemetry is not None:
-                self.telemetry.record_timetable_toggle()
-            if self._last_state == 'user':
-                if self._timetable_slid_away or getattr(self, '_timetable_full_mode', False):
-                    self._show_timetable(animate=True, is_initial_split=True)
-                else:
-                    self._show_timetable(animate=True, is_initial_split=False)
-            elif self._last_state == 'guest':
-                if self._guest_card_slid_away:
-                    self._show_guest_card(animate=True, is_initial_split=False)
-                else:
-                    self._slide_guest_card_out(animate=True)
+            self._toggle_timetable_from_gesture()
 
         elif effective_region == GESTURE_REGION_LEFT and notices is not None:
             if event == "scroll" and delta != 0:
@@ -2462,6 +2565,21 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(self, 'guest_kings_widget') and self.guest_kings_widget is not None:
                 self.guest_kings_widget.set_gesture_active(False, variant=variant)
 
+
+    def _toggle_timetable_from_gesture(self):
+        """What reaching to the top right (or pinching the arrow) does."""
+        if self.telemetry is not None:
+            self.telemetry.record_timetable_toggle()
+        if self._last_state == 'user':
+            if self._timetable_slid_away or getattr(self, '_timetable_full_mode', False):
+                self._show_timetable(animate=True, is_initial_split=True)
+            else:
+                self._show_timetable(animate=True, is_initial_split=False)
+        elif self._last_state == 'guest':
+            if self._guest_card_slid_away:
+                self._show_guest_card(animate=True, is_initial_split=False)
+            else:
+                self._slide_guest_card_out(animate=True)
 
     def _hand_over(self, widget, data):
         """Whether the hand cursor is inside `widget` as drawn on screen."""
@@ -2607,6 +2725,17 @@ class SmartMirrorPro(QMainWindow):
             if hasattr(self, 'guest_unsure_prompt_lbl'):
                 self.guest_unsure_prompt_lbl.hide()
 
+            # ── Just signed out: don't let their face sign them straight back in ──
+            if self._signed_out_user is not None:
+                if self.face_detected:
+                    self._signed_out_face_gone = 0.0
+                elif not self._signed_out_face_gone:
+                    self._signed_out_face_gone = now
+                if self._signed_out_face_gone and now - self._signed_out_face_gone >= SIGNED_OUT_FACE_HOLD_SEC:
+                    self._signed_out_user = None     # they stepped away; next time is a new visit
+                elif new_state == 'user' and new_user_id == self._signed_out_user:
+                    new_state, new_user_id = 'guest', 'guest'
+
             # ── Barcode Session Lock: Active barcode session overrides face 'idle'/'guest' ──
             if self._last_state == 'user' and getattr(self, '_auth_method', '') == 'barcode':
                 if new_state in ('idle', 'guest'):
@@ -2678,11 +2807,15 @@ class SmartMirrorPro(QMainWindow):
             self._update_demo_hold(False)   # resets the bar if pinch packets stop arriving
 
         if self._last_state in ('guest', 'user') and not self._transitioning:
-            idle_threshold = getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
-            if time.time() - self._last_activity_time >= idle_threshold:
+            idle_threshold = self._tutorial_wait or getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
+            # A raised hand is someone already trying: don't cover the screen.
+            last_active = max(self._last_activity_time, self._last_hand_time)
+            if time.time() - last_active >= idle_threshold:
                 if not getattr(self, '_scrim_fading_out', False) and (self.gesture_demo_overlay is None or not self.gesture_demo_overlay.isVisible()):
                     self._last_activity_time = time.time()
                     self._show_gesture_scrim()
+
+        self._position_sign_out()
 
         # Status dot
         if self.face_recognized:
@@ -2757,8 +2890,10 @@ class SmartMirrorPro(QMainWindow):
 
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
-            if is_from_idle and new_state == 'guest':
-                self._show_gesture_scrim()
+            if is_from_idle:
+                # Let them look first; the demo comes if they don't start.
+                self._last_activity_time = time.time()
+                self._tutorial_wait = TUTORIAL_FIRST_DELAY_SEC
 
         elif visible is not None:
             self._hide_scan_callout()
@@ -2793,6 +2928,8 @@ class SmartMirrorPro(QMainWindow):
         if hasattr(self, 'telemetry') and self.telemetry is not None:
             self.telemetry.end_session()
         self._auth_method = ""
+        self._scanned_this_visit = False
+        self._tutorial_wait = None
         self._hide_scan_callout()
         self.user_container.hide()
         self.guest_container.hide()
@@ -2904,6 +3041,12 @@ class SmartMirrorPro(QMainWindow):
         self._last_barcode_scan_time = time.time()
         self._last_interaction_time = time.time()
         self._last_activity_time = time.time()
+        # Recognised or not, they've found the scanner: drop the demo, and
+        # when it comes back it won't point at the scanner again.
+        self._scanned_this_visit = True
+        self._tutorial_wait = TUTORIAL_FIRST_DELAY_SEC
+        self._hide_scan_callout()
+        self._fade_out_gesture_scrim()
 
         def worker():
             try:
@@ -2920,6 +3063,34 @@ class SmartMirrorPro(QMainWindow):
             self.barcode_verified_signal.emit(None, [], {}, False, code)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def sign_out(self, reason="button"):
+        """End the signed-in session (SIGN OUT button, or the same ID scanned again)."""
+        if self._last_state != 'user':
+            return
+        user_id = self.current_user_id
+        print(f"[SESSION] {user_id} signed out ({reason}).", flush=True)
+        self.show_toast("✓ Signed out", is_success=True)
+        self._signed_out_user = user_id
+        self._signed_out_face_gone = 0.0
+        self._auth_method = ""
+        self.face_recognized = False
+        self.current_user_id = None
+        target_state = 'guest' if self.face_detected else 'idle'
+        self._last_state = target_state
+        self._last_user_id = None
+        self._last_activity_time = time.time()
+        self._tutorial_wait = TUTORIAL_FIRST_DELAY_SEC
+        self._write_face_data({
+            "state": target_state,
+            "user_id": target_state,
+            "recognized": False,
+            "detected": bool(self.face_detected),
+            "auth_method": "",
+            "timestamp": time.time(),
+        })
+        self._position_sign_out()
+        self._trigger_transition(target_state, None, {'state': target_state})
 
     def _write_face_data(self, data):
         try:
@@ -2943,25 +3114,9 @@ class SmartMirrorPro(QMainWindow):
         self._last_activity_time = time.time()
 
         if success and user_id:
-            # If same barcode is scanned while logged in -> LOG OUT
+            # Scanning the same ID again signs out
             if self._last_state == 'user' and self.current_user_id == user_id:
-                print(f"[BARCODE] Same barcode scanned for {user_id}. Logging out.")
-                self.show_toast(f"✓ Logged Out: {user_id}", is_success=True)
-                self._auth_method = ""
-                self.face_recognized = False
-                self.current_user_id = None
-                target_state = 'guest' if self.face_detected else 'idle'
-                self._last_state = target_state
-                self._last_user_id = None
-                self._write_face_data({
-                    "state": target_state,
-                    "user_id": target_state,
-                    "recognized": False,
-                    "detected": bool(self.face_detected),
-                    "auth_method": "",
-                    "timestamp": time.time(),
-                })
-                self._trigger_transition(target_state, None, {'state': target_state})
+                self.sign_out(reason="barcode")
                 return
 
             print(f"[BARCODE] Sign-in accepted for {user_id}")

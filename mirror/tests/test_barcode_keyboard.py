@@ -179,7 +179,7 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self.mirror._on_barcode_verified("STU12345", [], {}, True, "12345")
         self.assertEqual(self.mirror._last_state, 'guest')
         self.assertIsNone(self.mirror.current_user_id)
-        self.assertIn("Logged Out", self.mirror.toast_lbl.text())
+        self.assertIn("Signed out", self.mirror.toast_lbl.text())
 
     def test_barcode_5min_session_timeout(self):
         """Verify 5-minute barcode session timeout automatically logs out user."""

@@ -513,3 +513,165 @@ class TestMirrorNotice(unittest.TestCase):
         m._update_banner({"message": "Assembly has moved to the gym at eleven because of the rain. " * 3, "level": "warning"})
         self.assertGreater(m.banner_frame.height(), short)
         self.assertGreaterEqual(m.user_container.y(), m.banner_frame.geometry().bottom())
+
+
+class TestGuestTutorialAndSignOut(unittest.TestCase):
+    """People took the ID scanner for the only way in, and couldn't sign out."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        self.mirror.user_container.hide()
+        self.mirror._last_state = 'idle'
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _arrive_as_guest(self):
+        m = self.mirror
+        m._transitioning = True
+        m._last_state = 'guest'
+        m._trigger_transition('guest', '', {'config': {}})
+        settle(m)
+        m._transitioning = False
+
+    def _wait(self, seconds):
+        m = self.mirror
+        m._last_activity_time -= seconds
+        m._last_hand_time -= seconds
+        m._update_inputs()
+        settle(m)
+
+    def test_the_demo_waits_before_covering_the_screen(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(2)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(4)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+        self.assertTrue(m.guest_scan_callout.isVisible())
+        self.assertTrue(m.guest_scan_callout.show_or)       # gesture OR scan
+        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO EXIT")
+
+    def test_a_raised_hand_holds_the_demo_off(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._last_activity_time -= 30
+        m._handle_gesture(gesture(region='left', x=0.3))
+        m._update_inputs()
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+
+    def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self._wait(6)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+
+        smp.requests.post = lambda *a, **k: _EmptyResponse()
+        m._on_barcode_scanned("NOTREAL1")
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+
+        self._wait(6)
+        self.assertTrue(m.gesture_demo_overlay.isVisible())
+        self.assertFalse(m.guest_scan_callout.isVisible())
+
+    def _sign_in(self, user='u1'):
+        m = self.mirror
+        m._on_barcode_verified(user, [], {}, True, 'CODE1')
+        settle(m)
+        m._transitioning = False
+        m._position_sign_out()
+
+    def test_the_sign_out_button_signs_out_with_a_pinch(self):
+        m = self.mirror
+        self._sign_in()
+        self.assertTrue(m.sign_out_btn.isVisible())
+        c = m.sign_out_btn.geometry().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height(), region='left')
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(m._sign_out_hover)
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=7))
+        self.assertNotEqual(m._last_state, 'user')
+        self.assertIsNone(m.current_user_id)
+        self.assertIn("Signed out", m.toast_lbl.text())
+
+    def test_scanning_the_same_id_again_signs_out(self):
+        m = self.mirror
+        self._sign_in()
+        m._on_barcode_verified('u1', [], {}, True, 'CODE1')
+        self.assertNotEqual(m._last_state, 'user')
+
+    def test_a_signed_out_face_does_not_sign_straight_back_in(self):
+        import json, time as _t
+        m = self.mirror
+        self._sign_in()
+        m.face_detected = True
+        m.sign_out()
+        settle(m)
+        m._transitioning = False
+
+        def daemon_sees(state, user, detected=True):
+            with open(smp.FACE_DATA_FILE, 'w') as f:
+                json.dump({'state': state, 'user_id': user, 'detected': detected,
+                           'recognized': state == 'user', 'timestamp': _t.time()}, f)
+            m._update_inputs()
+            settle(m)
+            m._transitioning = False
+
+        daemon_sees('user', 'u1')
+        self.assertNotEqual(m._last_state, 'user')
+        # They walk away for a while; next time their face works again.
+        daemon_sees('guest', 'guest', detected=False)
+        m._signed_out_face_gone -= smp.SIGNED_OUT_FACE_HOLD_SEC + 1
+        daemon_sees('guest', 'guest', detected=False)
+        self.assertIsNone(m._signed_out_user)
+
+    def test_pinching_the_timetable_arrow_opens_it(self):
+        m = self.mirror
+        self._sign_in()
+        m._slide_timetable_out(animate=False)
+        settle(m)
+        self.assertTrue(m.edge_arrow_caption.isVisible())
+        self.assertEqual(m.edge_arrow_caption.text(), "TIMETABLE")
+        c = m.edge_arrow_label.geometry().center()
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', x=c.x() / m.width(), y=c.y() / m.height()),
+                               event_id=9))
+        self.assertFalse(m._timetable_slid_away)
+
+
+class TestTimetableMessages(unittest.TestCase):
+    def setUp(self):
+        from widgets.timetable_widget import TimetableWidget
+        self.tt = TimetableWidget(api_url='http://test')
+
+    def tearDown(self):
+        self.tt.deleteLater()
+
+    def _load(self, status, periods=()):
+        tt = self.tt
+        tt.user_id = 'u1'
+        tt._fetch_gen += 1
+        tt.periods, tt.status = list(periods), status
+        tt._on_fetched()
+
+    def test_it_says_why_instead_of_dashes(self):
+        import datetime as _dt
+        from unittest import mock
+        noon = _dt.datetime(2026, 10, 21, 12, 0)   # a class time, not interval or lunch
+        with mock.patch('widgets.timetable_widget.datetime') as fake:
+            fake.now.return_value = noon
+            for status, words in (('not_linked', 'Not linked'), ('error', "Can't load"),
+                                  ('loading', 'Loading')):
+                self._load(status)
+                self.assertIn(words, self.tt.subject_lbl.text())
+                self.assertFalse(self.tt.room_v.isVisibleTo(self.tt))
+        self.assertTrue(self.tt._retry.isActive())     # the error case tries again
+
+    def test_a_new_person_never_sees_the_last_persons_classes(self):
+        self.tt.periods = [{'summary': 'Old', 'startTime': '09:00', 'endTime': '10:00'}]
+        self.tt.set_user_id('someone-else')
+        self.assertNotIn('Old', [p.get('summary') for p in self.tt.periods])

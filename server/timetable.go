@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata"
 
@@ -130,25 +131,70 @@ func parseICSTime(propLine string) (time.Time, error) {
 	return t.In(nzLocation()), nil
 }
 
+// The school's calendar is the same for every request in a lesson, and the
+// mirror gives up waiting after a few seconds, so keep each feed briefly and
+// fall back to the last good copy if the school's site is slow or down.
+const (
+	icsFresh = 10 * time.Minute
+	icsStale = 24 * time.Hour
+)
+
+var (
+	icsMu     sync.Mutex
+	icsCache  = map[string]icsEntry{}
+	icsClient = &http.Client{Timeout: 15 * time.Second}
+)
+
+type icsEntry struct {
+	body string
+	at   time.Time
+}
+
+func fetchICS(icsURL string) (string, error) {
+	icsMu.Lock()
+	cached, ok := icsCache[icsURL]
+	icsMu.Unlock()
+	if ok && time.Since(cached.at) < icsFresh {
+		return cached.body, nil
+	}
+	body, err := downloadICS(icsURL)
+	if err != nil {
+		if ok && time.Since(cached.at) < icsStale {
+			return cached.body, nil
+		}
+		return "", err
+	}
+	icsMu.Lock()
+	icsCache[icsURL] = icsEntry{body: body, at: time.Now()}
+	icsMu.Unlock()
+	return body, nil
+}
+
+func downloadICS(icsURL string) (string, error) {
+	resp, err := icsClient.Get(icsURL) //nolint:noctx
+	if err != nil {
+		return "", fmt.Errorf("fetching ICS: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ICS fetch returned HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading ICS body: %w", err)
+	}
+	return string(raw), nil
+}
+
 // parseTimetable fetches an ICS file from icsURL and returns the current week's events sorted by date and start time.
 func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	if !isValidKingsHighICS(icsURL) {
 		return nil, fmt.Errorf("invalid calendar URL: only kingshigh.school.kiwi ICS feeds are permitted")
 	}
 
-	resp, err := http.Get(icsURL) //nolint:noctx
+	body, err := fetchICS(icsURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetching ICS: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ICS fetch returned HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading ICS body: %w", err)
+		return nil, err
 	}
 
 	loc := nzLocation()
@@ -158,7 +204,7 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	var events []TimetableEvent
 
 	// Unfold ICS lines (lines ending with CRLF + whitespace are continuations)
-	lines := unfoldICSLines(string(body))
+	lines := unfoldICSLines(body)
 
 	var (
 		inEvent     bool

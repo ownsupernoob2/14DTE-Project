@@ -118,6 +118,12 @@ class NoticeDetailModal(QFrame):
         )
         header.addWidget(self.badge_lbl)
         header.addStretch(1)
+        close_hint = QLabel("PINCH TO CLOSE", self)     # same as King's Week
+        close_hint.setStyleSheet(
+            "font-size: 15px; font-weight: 800; letter-spacing: 1.5px; "
+            "color: #cbd5e1; background: transparent; border: none;"
+        )
+        header.addWidget(close_hint)
         root.addLayout(header)
 
         # Title

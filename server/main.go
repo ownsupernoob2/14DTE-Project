@@ -83,6 +83,7 @@ func newServer() *echo.Echo {
 	user.POST("/users/me/messages/seen", markMessagesSeen)
 	user.DELETE("/users/me/data", deleteMyData)
 	user.POST("/faces/train", trainFace)
+	user.GET("/faces/train/:id", getFaceTrainJob)
 	user.DELETE("/faces/me", deleteFace)
 	user.PUT("/users/me/barcode", saveBarcode)
 	user.GET("/users/me/barcode", getBarcode)

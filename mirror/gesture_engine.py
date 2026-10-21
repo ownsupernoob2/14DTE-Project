@@ -80,7 +80,9 @@ REGION_RIGHT  = "right"
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
 PINCH_ENTER_RATIO    = 0.28   # thumb-index gap / palm size to enter pinch
-PINCH_EXIT_RATIO     = 0.44   # gap to release pinch (hysteresis)
+PINCH_EXIT_RATIO     = 0.36   # gap that always releases it (was 0.44: people
+                              # had to open their fingers wide to let go)
+PINCH_RELEASE_OPEN   = 0.12   # ...or opening this much from the tightest point
 MIN_PALM_SIZE        = 0.02   # below this the hand is too far away to trust
 
 TAP_MAX_SEC         = 0.65   # pinch held up to 0.65s without drag is a tap
@@ -404,8 +406,15 @@ class GestureEngine:
         if palm < MIN_PALM_SIZE:
             return False
         ratio = self._distance(lm[4], lm[8]) / palm
-        threshold = PINCH_EXIT_RATIO if self.pinch_start is not None else PINCH_ENTER_RATIO
-        return ratio < threshold
+        if self.pinch_start is None:
+            self.pinch_min_ratio = ratio
+            return ratio < PINCH_ENTER_RATIO
+        # Let go as soon as the fingers start to part. Someone who pinched
+        # tightly releases at the enter threshold, not a wide-open hand; the
+        # gap between enter and exit is kept small, just enough for jitter.
+        self.pinch_min_ratio = min(getattr(self, 'pinch_min_ratio', ratio), ratio)
+        release = min(PINCH_EXIT_RATIO, max(PINCH_ENTER_RATIO, self.pinch_min_ratio + PINCH_RELEASE_OPEN))
+        return ratio < release
 
     @staticmethod
     def _palm_center(lm):

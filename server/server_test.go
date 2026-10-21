@@ -644,3 +644,37 @@ func TestMirrorLogsArePerMirrorCappedAndSafe(t *testing.T) {
 		t.Errorf("unknown log = %d", rec.Code)
 	}
 }
+
+// Training outlasts Cloudflare's wait, so the result is collected by polling.
+func TestFaceTrainingResultIsPolledByItsOwner(t *testing.T) {
+	newTestDB(t)
+	addUser(t, studentID, "s@example.com")
+	addUser(t, adminID, "a@example.com")
+
+	if rec := call(t, trainFace, "POST", "/api/faces/train", `{"images":["bm90IGFuIGltYWdl"]}`, studentID); rec.Code != 400 {
+		t.Fatalf("unreadable photos: got %d", rec.Code)
+	}
+
+	job := startFaceJob(studentID)
+	if runningFaceJob(studentID) != job {
+		t.Fatal("a second upload should rejoin the running scan")
+	}
+	poll := func(sub string) *httptest.ResponseRecorder {
+		return call(t, getFaceTrainJob, "GET", "/api/faces/train/"+job, "", sub, "id", job)
+	}
+	var got map[string]interface{}
+	decode(t, poll(studentID), &got)
+	if got["status"] != "processing" {
+		t.Fatalf("while running: %v", got)
+	}
+	if rec := poll(adminID); rec.Code != 404 {
+		t.Fatalf("someone else's scan: got %d", rec.Code)
+	}
+	finishFaceJob(job, 409, faceErr("taken"))
+	if rec := poll(studentID); rec.Code != 409 || !strings.Contains(rec.Body.String(), "taken") {
+		t.Fatalf("finished: %d %s", rec.Code, rec.Body.String())
+	}
+	if runningFaceJob(studentID) != "" {
+		t.Fatal("finished scan still counted as running")
+	}
+}

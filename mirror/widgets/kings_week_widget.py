@@ -328,7 +328,7 @@ class ArticleModal(QFrame):
         self.eyebrow = QLabel("", self)
         self.eyebrow.hide()
         head.addStretch(1)
-        hint = QLabel("TAP TO CLOSE", self)
+        hint = QLabel("PINCH TO CLOSE", self)
         hint.setStyleSheet(
             "font-size: 15px; font-weight: 800; letter-spacing: 1.5px; "
             "color: #cbd5e1; background: transparent; border: none;"

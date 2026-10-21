@@ -46,7 +46,8 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/users/me` | `{id, email, name, provider, has_face, has_barcode, is_admin, messages, contact_email}` |
 | POST | `/api/users/me/messages/seen` | Dismiss removal notices |
 | DELETE | `/api/users/me/data` | Delete your face scan, student ID, timetable link, layout and language |
-| POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}`. 409 if the face belongs to another account, 429 within 24 h of the last scan, 503 if the server has no face Python. |
+| POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}` → 202 `{status: "processing", job_id}`. Training runs in the background because it can outlast Cloudflare's wait. 400 if no photo is readable, 429 within 24 h of the last scan. |
+| GET | `/api/faces/train/:job_id` | `{status: "processing"}` until done, then the result with its own status: 200 `{status: "trained", frames_used}`, 409 face belongs to another account, 422 no face found, 503 no face Python on the server. |
 | DELETE | `/api/faces/me` | Delete your face scan |
 | GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
 | GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |

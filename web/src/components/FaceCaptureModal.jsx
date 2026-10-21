@@ -219,11 +219,30 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
     try {
       const token = await getAccessTokenSilently()
       setUploadProgress(35)
-      const res = await fetch(`${API_URL}/api/faces/train`, {
+      let res = await fetch(`${API_URL}/api/faces/train`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ images }),
       })
+      // The server trains in the background (it can take longer than the
+      // proxy waits) and hands back a job to check on.
+      if (res.status === 202) {
+        const { job_id: jobId } = await res.json()
+        const started = Date.now()
+        let progress = 45
+        setUploadProgress(progress)
+        while (Date.now() - started < 6 * 60 * 1000) {
+          await new Promise((r) => setTimeout(r, 2000))
+          res = await fetch(`${API_URL}/api/faces/train/${jobId}`, {
+            headers: { Authorization: `Bearer ${await getAccessTokenSilently()}` },
+          })
+          if (!res.ok) break
+          const body = await res.clone().json().catch(() => ({}))
+          if (body.status !== 'processing') break
+          progress = Math.min(88, progress + 3)
+          setUploadProgress(progress)
+        }
+      }
       setUploadProgress(90)
       if (res.ok) {
         const data = await res.json()
