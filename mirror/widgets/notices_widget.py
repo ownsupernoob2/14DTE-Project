@@ -158,6 +158,7 @@ class NoticeDetailModal(QFrame):
 
         # Full notice body scroll area
         self.scroll = QScrollArea(self)
+        self.scroll_area = self.scroll      # the name the mirror's scroller looks for
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setStyleSheet("background: transparent; border: none;")
@@ -675,6 +676,8 @@ class NoticesWidget(QFrame):
     def scroll_by_pixels(self, delta_y):
         """Manual gesture scroll — pauses auto-scroll for 10s from current position."""
         if self.modal_open:
+            sb = self.modal.scroll_area.verticalScrollBar()   # a long notice's text
+            sb.setValue(sb.value() + int(delta_y))
             return
         sb = self.scroll_area.verticalScrollBar()
         cur = sb.value()

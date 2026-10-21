@@ -18,10 +18,10 @@ import cv2
 cv2.setNumThreads(1)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
-    QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect
+    QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint, QPointF, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath
+from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QRadialGradient
 
 from config import *
 from timing_config import (
@@ -599,6 +599,52 @@ class GestureTrailOverlay(QWidget):
         painter.end()
 
 
+class OverscrollGlow(QWidget):
+    """The soft half-circle at the edge of a list that has been pulled past its end."""
+
+    MAX_DEPTH = 90          # px the glow reaches into the list at full stretch
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._area = QRect()
+        self._edge = 'top'
+        self._amount = 0.0      # 0..1
+        self.hide()
+
+    def set_glow(self, area, edge, amount):
+        old = self._area
+        self._area, self._edge, self._amount = QRect(area), edge, max(0.0, min(1.0, amount))
+        if self._amount <= 0.0:
+            self.hide()
+            return
+        if self.isHidden():
+            self.show()
+            self.raise_()
+        self.update(old.united(self._area))    # only the list, not the whole screen
+
+    def paintEvent(self, event):
+        if self._amount <= 0.0 or self._area.isEmpty():
+            return
+        r = self._area
+        depth = self.MAX_DEPTH * self._amount
+        edge_y = r.top() if self._edge == 'top' else r.bottom()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(r)
+        painter.translate(r.center().x(), edge_y)
+        painter.scale(r.width() * 0.55, depth)
+        grad = QRadialGradient(QPointF(0, 0), 1.0)
+        grad.setColorAt(0.0, QColor(255, 255, 255, int(40 + 70 * self._amount)))
+        grad.setColorAt(0.7, QColor(255, 255, 255, int(18 + 30 * self._amount)))
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(grad)
+        painter.drawEllipse(QPointF(0, 0), 1.0, 1.0)
+        painter.end()
+
+
 class GuestScanCallout(QWidget):
     """Bouncing + pulsing STUDENT ID SCAN callout drawn entirely in paintEvent.
 
@@ -784,6 +830,11 @@ class SmartMirrorPro(QMainWindow):
         self._scroll_frac = 0.0           # sub-pixel remainder
         self._scroll_last_tick = 0.0
         self._scroll_flinging = False
+        # Overscroll: how far a list has been pulled past its end (px, + = past
+        # the bottom). Held while the pinch is, springs back on release.
+        self._overscroll = 0.0
+        self._overscroll_target = None
+        self._hand_pinched = False
 
         # ── Activity & Inactivity Timing ──────────────────────────────────
         self._last_activity_time = time.time()
@@ -992,6 +1043,9 @@ class SmartMirrorPro(QMainWindow):
             }
         """)
         self.dwell_hint_pill.hide()
+
+        # Pulled past the end of a list: a glow at that edge (see _apply_scroll)
+        self.overscroll_glow = OverscrollGlow(self.central_widget)
 
         # Hand cursor (dot + trail), drawn above everything else
         self.gesture_trail = GestureTrailOverlay(self.central_widget)
@@ -1434,6 +1488,9 @@ class SmartMirrorPro(QMainWindow):
         if getattr(self, 'idle_demo', None) is not None:
             self.idle_demo.setGeometry(0, 0, w, h)
 
+        if hasattr(self, 'overscroll_glow'):
+            self.overscroll_glow.setGeometry(0, 0, w, h)
+
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             self.gesture_trail.setGeometry(0, 0, w, h)
             self.gesture_trail.raise_()
@@ -1637,9 +1694,68 @@ class SmartMirrorPro(QMainWindow):
         self._scroll_pending = 0.0
         self._scroll_frac = 0.0
         self._scroll_flinging = False
+        if self._overscroll_target is not None:
+            self._set_overscroll(self._overscroll_target, 0.0)
+
+    # ── Overscroll ("rubber band"): show where a list ends ──────────────────
+    OVERSCROLL_MAX = 140.0          # px a list can be pulled past its end
+    OVERSCROLL_GIVE = 0.5           # first pixels past the end move half as far...
+    OVERSCROLL_RETURN_SEC = 0.09    # ...and it springs back this quickly
+
+    @staticmethod
+    def _scroll_area_of(target):
+        """The QScrollArea a gesture scroll of `target` actually moves, if any."""
+        if getattr(target, 'modal_open', False):
+            area = getattr(getattr(target, 'modal', None), 'scroll_area', None)
+        else:
+            area = getattr(target, 'scroll_area', None)
+        return area if isinstance(area, QScrollArea) and area.isVisible() else None
+
+    def _apply_scroll(self, target, step):
+        """Scroll by `step` px; whatever would go past the end stretches instead."""
+        area = self._scroll_area_of(target)
+        if area is None:
+            target.scroll_by_pixels(step)
+            return
+        sb = area.verticalScrollBar()
+        o = self._overscroll if self._overscroll_target is target else 0.0
+        if o and (step > 0) != (o > 0):
+            back = min(abs(step), abs(o))          # moving back: undo the stretch first
+            o -= math.copysign(back, o)
+            step -= int(math.copysign(back, step))
+        if step:
+            room = (sb.maximum() - sb.value()) if step > 0 else (sb.minimum() - sb.value())
+            inside = step if abs(step) <= abs(room) else room
+            if inside:
+                target.scroll_by_pixels(int(inside))
+            excess = step - inside
+            if excess:
+                # Each extra pixel stretches less the further it has gone.
+                give = self.OVERSCROLL_GIVE * max(0.0, 1.0 - abs(o) / self.OVERSCROLL_MAX)
+                o += excess * give
+        self._set_overscroll(target, o)
+
+    def _set_overscroll(self, target, o):
+        if self._overscroll_target is not None and self._overscroll_target is not target:
+            self._set_overscroll(self._overscroll_target, 0.0)
+        if abs(o) < 0.5:
+            o = 0.0
+        self._overscroll = o
+        self._overscroll_target = target if o else None
+        area = self._scroll_area_of(target)
+        if area is None or area.widget() is None:
+            self.overscroll_glow.set_glow(QRect(), 'top', 0.0)
+            return
+        # QScrollArea places its content at -value; nudge it past that.
+        content = area.widget()
+        content.move(content.x(), -area.verticalScrollBar().value() - int(round(o)))
+        viewport = area.viewport()
+        rect = QRect(viewport.mapTo(self.central_widget, QPoint(0, 0)), viewport.size())
+        self.overscroll_glow.set_glow(rect, 'bottom' if o > 0 else 'top',
+                                      abs(o) / (self.OVERSCROLL_MAX * self.OVERSCROLL_GIVE))
 
     def _momentum_tick(self):
-        target = self._momentum_target
+        target = self._momentum_target or self._overscroll_target
         if target is None or not hasattr(target, 'scroll_by_pixels'):
             self._stop_momentum()
             return
@@ -1650,18 +1766,29 @@ class SmartMirrorPro(QMainWindow):
         ease = self._scroll_pending * (1.0 - math.exp(-dt / self.SCROLL_EASE_SEC))
         self._scroll_pending -= ease
         move = ease + self._momentum_velocity * dt
-        self._momentum_velocity *= math.exp(-dt / self.FLING_DECAY_SEC)
+        # A fling that runs into the end is soaked up quickly: a bounce.
+        decay = self.FLING_DECAY_SEC if not self._overscroll else 0.04
+        self._momentum_velocity *= math.exp(-dt / decay)
 
         self._scroll_frac += move
         step = int(self._scroll_frac)
         if step:
             self._scroll_frac -= step
-            target.scroll_by_pixels(step)
+            self._apply_scroll(target, step)
+
+        # Released past the end: ease back to the edge.
+        if self._overscroll and not self._hand_pinched:
+            self._set_overscroll(target, self._overscroll * math.exp(-dt / self.OVERSCROLL_RETURN_SEC))
 
         if abs(self._scroll_pending) < 0.5 and abs(self._momentum_velocity) < 25.0:
             rest = int(round(self._scroll_frac + self._scroll_pending))
             if rest:                      # land exactly where the hand said
-                target.scroll_by_pixels(rest)
+                self._apply_scroll(target, rest)
+            self._scroll_pending = self._scroll_frac = self._momentum_velocity = 0.0
+            if self._overscroll:
+                if self._hand_pinched:    # still holding it stretched: wait for the release
+                    self._momentum_timer.stop()
+                return                    # otherwise keep ticking until it has sprung back
             flinging = self._scroll_flinging
             self._stop_momentum()
             if flinging and hasattr(target, 'snap_to_nearest_box'):
@@ -2339,6 +2466,10 @@ class SmartMirrorPro(QMainWindow):
             else:
                 self.gesture_trail.fade_out()
 
+        was_pinched, self._hand_pinched = self._hand_pinched, present and bool(data.get("pinched", False))
+        if was_pinched and not self._hand_pinched and self._overscroll:
+            self._wake_scroller()            # let go of a stretched list: spring back
+
         # While the tutorial video is up, the only thing that does anything is
         # a held pinch (fills the bar under the video, exits at 100%).
         if self._demo_overlay_active():
@@ -2832,6 +2963,7 @@ class SmartMirrorPro(QMainWindow):
 
     def _trigger_transition(self, new_state, new_user_id, fdata):
         """Dissolve from whatever is on screen to the new state."""
+        self._stop_momentum()
         self._refresh_banner()     # notice shows for guests and users, not when idle
         visible = None
         if not self.user_container.isHidden():

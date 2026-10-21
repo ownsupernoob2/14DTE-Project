@@ -675,3 +675,72 @@ class TestTimetableMessages(unittest.TestCase):
         self.tt.periods = [{'summary': 'Old', 'startTime': '09:00', 'endTime': '10:00'}]
         self.tt.set_user_id('someone-else')
         self.assertNotIn('Old', [p.get('summary') for p in self.tt.periods])
+
+
+class TestOverscroll(unittest.TestCase):
+    """At the end of a list it stretches with resistance, then springs back."""
+
+    def setUp(self):
+        self.mirror = make_mirror()
+        n = self.mirror.notices_widget
+        n.cards_container.setFixedHeight(2000)
+        app.processEvents()
+        self.sb = n.scroll_area.verticalScrollBar()
+        self.sb.setValue(0)
+        self.content = n.scroll_area.widget()
+
+    def tearDown(self):
+        close_mirror(self.mirror)
+
+    def _run(self, seconds):
+        import time as _t
+        end = _t.monotonic() + seconds
+        while _t.monotonic() < end and self.mirror._momentum_timer.isActive():
+            _t.sleep(0.016)
+            self.mirror._momentum_tick()
+
+    def _pull_up_while_pinched(self, px=-120):
+        m = self.mirror
+        held = dict(gesture(region='left', x=0.3), pinched=True)
+        m._handle_gesture(held)
+        m._handle_gesture(dict(held, event='scroll', scroll_delta=px))
+        self._run(0.5)
+
+    def test_pulling_past_the_top_stretches_with_resistance(self):
+        m = self.mirror
+        self._pull_up_while_pinched(-120)
+        self.assertEqual(self.sb.value(), 0)
+        self.assertLess(m._overscroll, -20)
+        self.assertGreater(m._overscroll, -60)          # resisted: well under 120 px
+        self.assertEqual(self.content.y(), int(round(-m._overscroll)))   # content pulled down
+        self.assertTrue(m.overscroll_glow.isVisible())
+
+    def test_it_holds_while_pinched_and_springs_back_on_release(self):
+        m = self.mirror
+        self._pull_up_while_pinched()
+        stretched = m._overscroll
+        self._run(0.3)
+        self.assertEqual(m._overscroll, stretched)       # still held
+        m._handle_gesture(gesture(region='left', x=0.3))  # fingers apart
+        self._run(1.0)
+        self.assertEqual(m._overscroll, 0.0)
+        self.assertEqual(self.content.y(), 0)
+        self.assertFalse(m.overscroll_glow.isVisible())
+        self.assertFalse(m._momentum_timer.isActive())
+
+    def test_moving_back_undoes_the_stretch_before_scrolling(self):
+        m = self.mirror
+        self._pull_up_while_pinched()
+        held = dict(gesture(region='left', x=0.3), pinched=True)
+        m._handle_gesture(dict(held, event='scroll', scroll_delta=200))
+        self._run(0.6)
+        self.assertEqual(m._overscroll, 0.0)
+        self.assertGreater(self.sb.value(), 100)
+
+    def test_the_middle_of_a_list_scrolls_normally(self):
+        m = self.mirror
+        self.sb.setValue(500)
+        m._handle_gesture(gesture(region='left', event='scroll', delta=-40))
+        self._run(0.6)
+        self.assertEqual(self.sb.value(), 460)
+        self.assertEqual(m._overscroll, 0.0)
