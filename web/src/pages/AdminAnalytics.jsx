@@ -42,6 +42,9 @@ export default function AdminAnalytics() {
   })
   const [savingConfig, setSavingConfig] = useState(false)
   const [configFeedback, setConfigFeedback] = useState('')
+  const [confirmWipe, setConfirmWipe] = useState(false)
+  const [wiping, setWiping] = useState(false)
+  const [wipeFeedback, setWipeFeedback] = useState('')
 
 
   const fetchAnalytics = async (isManual = false) => {
@@ -155,6 +158,23 @@ export default function AdminAnalytics() {
   }, [data, selectedVariantFilter])
 
   // Export JSON handler
+  const handleWipe = async () => {
+    setWiping(true)
+    try {
+      const res = await authFetch('/api/admin/analytics', { method: 'DELETE' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+      setWipeFeedback(body.message || 'Analytics wiped.')
+      setConfirmWipe(false)
+      fetchAnalytics(true)
+    } catch (e) {
+      setWipeFeedback(`Error: ${e.message}`)
+    } finally {
+      setWiping(false)
+      setTimeout(() => setWipeFeedback(''), 6000)
+    }
+  }
+
   const handleExportJSON = () => {
     if (!data) return
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -212,6 +232,19 @@ export default function AdminAnalytics() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {wipeFeedback && (
+              <span className={`text-xs font-mono ${wipeFeedback.startsWith('Error') ? 'text-red-400' : 'text-[#22c55e]'}`}>
+                {wipeFeedback}
+              </span>
+            )}
+            <button
+              onClick={() => setConfirmWipe(true)}
+              disabled={!data || loading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-none text-xs font-bold uppercase tracking-wider bg-[#121212] hover:bg-red-950/40 text-red-400 hover:text-red-300 border border-[#331111] hover:border-red-500 transition-all cursor-pointer disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-base">delete_forever</span>
+              Wipe Data
+            </button>
             <button
               onClick={handleExportJSON}
               disabled={!data || loading}
@@ -1035,6 +1068,35 @@ export default function AdminAnalytics() {
               </section>
             )}
           </>
+        )}
+        {confirmWipe && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[90] bg-black/80 flex items-center justify-center p-6"
+            role="dialog" aria-modal="true"
+          >
+            <div className="max-w-md w-full bg-[#0a0a0a] border border-[#331111] rounded-none p-7 font-mono">
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-3">Wipe all analytics?</h2>
+              <p className="text-xs text-[#aaaaaa] leading-relaxed mb-3">
+                This permanently deletes every recorded visit and passer-by
+                {data ? <> (<span className="text-white">{data.total_sessions} sessions</span>)</> : null},
+                including the A/B results. It cannot be undone.
+              </p>
+              <p className="text-xs text-[#888888] leading-relaxed mb-6">
+                The A/B setting, users and the face audit log are kept. Use Export JSON first if you want a copy.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setConfirmWipe(false)} disabled={wiping}
+                  className="flex-1 py-2.5 border border-[#333333] text-xs font-bold uppercase text-white hover:border-white cursor-pointer disabled:opacity-50">
+                  Cancel
+                </button>
+                <button onClick={handleWipe} disabled={wiping}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-xs font-bold uppercase text-white cursor-pointer disabled:opacity-50">
+                  {wiping ? 'Wiping…' : 'Wipe Data'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
         )}
       </main>
     </div>

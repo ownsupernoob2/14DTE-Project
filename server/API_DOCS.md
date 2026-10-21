@@ -63,6 +63,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | DELETE | `/api/admin/users/:id` | Delete the account and its data; sessions stay, anonymised. Also deletes the Auth0 login when `AUTH0_MGMT_CLIENT_ID/SECRET` are set. |
 | DELETE | `/api/admin/users/:id/:kind` | `kind` = `face`, `barcode`, `timetable` or `dashboard`. The student is told next time they sign in. |
 | GET | `/api/admin/analytics` | Visit summary, A/B comparison, recent sessions |
+| DELETE | `/api/admin/analytics` | Wipe all recorded visits and passers-by. Keeps the A/B setting and face audit log. → `{message, deleted}` |
 | GET | `/api/admin/face-audit` | Blocked duplicate-face attempts |
 | POST | `/api/analytics/config` | `{mode: auto\|force_a\|force_b\|hourly\|daily}` |
 | POST | `/api/notices/config` | Notice filters for the mirrors |

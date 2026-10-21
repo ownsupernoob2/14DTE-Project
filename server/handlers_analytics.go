@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -420,6 +421,22 @@ func getAdminAnalytics(c echo.Context) error {
 		resp.RecentSessions = append(resp.RecentSessions, all[i])
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+// DELETE /api/admin/analytics (admin) — wipe every recorded visit and passer-by,
+// for a clean start (before an A/B test, say). The A/B setting and the face
+// audit log are kept.
+func adminWipeAnalytics(c echo.Context) error {
+	res, err := db.Exec(`DELETE FROM sessions`)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not wipe analytics"})
+	}
+	n, _ := res.RowsAffected()
+	auditAdmin(c, "analytics_wipe", "", fmt.Sprintf("%d sessions", n))
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": fmt.Sprintf("Analytics wiped: %d sessions deleted.", n),
+		"deleted": n,
+	})
 }
 
 // ── A/B experiment configuration ────────────────────────────────────────────

@@ -87,6 +87,7 @@ func TestRoutesRefuseCallersWithoutTheRightCredentials(t *testing.T) {
 		want         int
 	}{
 		{"GET", "/api/admin/analytics", nil, 401},
+		{"DELETE", "/api/admin/analytics", nil, 401},
 		{"GET", "/api/admin/users", nil, 401},
 		{"DELETE", "/api/admin/users/x", nil, 401},
 		{"POST", "/api/analytics/config", nil, 401},
@@ -728,5 +729,30 @@ func TestOlderDatabasesGainTheNewColumns(t *testing.T) {
 	db.QueryRow(`SELECT COUNT(*), MAX(practice_shown) FROM sessions`).Scan(&n, &shown)
 	if n != 1 || shown != 0 {
 		t.Errorf("rows %d, practice_shown %d", n, shown)
+	}
+}
+
+func TestAdminCanWipeAnalytics(t *testing.T) {
+	newTestDB(t)
+	addUser(t, adminID, "admin@example.com")
+	for _, id := range []string{"s1", "s2", "p1"} {
+		body, _ := json.Marshal(SessionAnalyticsEvent{SessionID: id, Variant: "A", SessionType: "guest", DurationSec: 5})
+		call(t, recordAnalyticsEvent, "POST", "/", string(body), "")
+	}
+	setSetting("ab_config", ABExperimentConfig{Mode: "force_b"})
+	var got map[string]interface{}
+	decode(t, call(t, adminWipeAnalytics, "DELETE", "/api/admin/analytics", "", adminID), &got)
+	if got["deleted"] != float64(3) {
+		t.Fatalf("deleted = %v", got["deleted"])
+	}
+	var sum AnalyticsSummaryResponse
+	decode(t, call(t, getAdminAnalytics, "GET", "/", "", adminID), &sum)
+	if sum.TotalSessions != 0 || loadABConfig().Mode != "force_b" {
+		t.Errorf("after wipe: %d sessions, mode %s", sum.TotalSessions, loadABConfig().Mode)
+	}
+	var audits int
+	db.QueryRow(`SELECT COUNT(*) FROM admin_audit WHERE action = 'analytics_wipe'`).Scan(&audits)
+	if audits != 1 {
+		t.Errorf("audit rows = %d", audits)
 	}
 }

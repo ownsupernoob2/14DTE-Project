@@ -104,6 +104,7 @@ func newServer() *echo.Echo {
 	// ── Admins (Auth0 + verified email in ADMIN_EMAILS) ──────────────────
 	admin := e.Group("/api", EnsureValidToken(), RequireAdmin())
 	admin.GET("/admin/analytics", getAdminAnalytics)
+	admin.DELETE("/admin/analytics", adminWipeAnalytics)
 	admin.GET("/admin/face-audit", getFaceAuditLog)
 	admin.GET("/admin/users", adminListUsers)
 	admin.DELETE("/admin/users/:id", adminDeleteUser)
