@@ -5,7 +5,12 @@
     The Go server runs train.py to turn face-scan photos into encodings. When the
     server runs as a scheduled task (SYSTEM), "python" is usually not on its PATH,
     so it looks for this .venv first. Safe to re-run: it only reinstalls when
-    requirements.txt has changed.
+    requirements.txt has changed or face_recognition no longer imports.
+
+    No Python 3.10-3.12 on the machine? It downloads python.org's own Python
+    3.12 package (from NuGet, no installer, no admin rights) into server\.python
+    and builds the .venv from that. The auto-updater runs this script after each
+    update, so this needs no one at the server.
 
     Usage (from the server folder):  powershell -ExecutionPolicy Bypass -File setup-face-python.ps1
 #>
@@ -14,17 +19,32 @@ param([switch]$Force)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-$stamp      = Join-Path $PSScriptRoot ".venv\.requirements.sha256"
+$venvDir    = Join-Path $PSScriptRoot ".venv"
+$venvPython = Join-Path $venvDir "Scripts\python.exe"
+$stamp      = Join-Path $venvDir ".requirements.sha256"
 $wanted     = (Get-FileHash -Algorithm SHA256 (Join-Path $PSScriptRoot "requirements.txt")).Hash
 
-if (-not $Force -and (Test-Path $venvPython) -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $wanted)) {
+$privateDir    = Join-Path $PSScriptRoot ".python"
+$privatePython = Join-Path $privateDir "tools\python.exe"
+$nugetVersion  = "3.12.10"
+
+function Test-FaceImport($python) {
+    if (-not (Test-Path $python)) { return $false }
+    # Its import warnings go to stderr, which "Stop" would turn into a failure.
+    $ErrorActionPreference = "Continue"
+    & $python -c "import face_recognition, numpy" 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $wanted) -and (Test-FaceImport $venvPython)) {
     Write-Host "Face scanning Python is up to date."
     exit 0
 }
 
 # Find Python 3.10-3.12 (prebuilt dlib wheels exist for these).
 function Find-BasePython {
+    if (Test-Path $privatePython) { return @($privatePython) }      # downloaded earlier
+    $ErrorActionPreference = "Continue"
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) {
         foreach ($v in "3.12", "3.11", "3.10") {
@@ -45,28 +65,57 @@ function Find-BasePython {
     return $null
 }
 
-if (-not (Test-Path $venvPython)) {
-    $base = Find-BasePython
-    if (-not $base) {
-        Write-Error "No Python 3.10, 3.11 or 3.12 found. Install one from python.org (tick 'Install for all users'), then run this again."
-        exit 1
-    }
+# python.org's Python, packaged for NuGet: a plain zip, nothing to install.
+function Get-PrivatePython {
+    Write-Host "No Python 3.10-3.12 found: downloading Python $nugetVersion into .python ..."
+    $zip = Join-Path $env:TEMP "python.$nugetVersion.nupkg.zip"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -UseBasicParsing -OutFile $zip `
+        -Uri "https://api.nuget.org/v3-flatcontainer/python/$nugetVersion/python.$nugetVersion.nupkg"
+    if (Test-Path $privateDir) { Remove-Item -Recurse -Force $privateDir }
+    Expand-Archive -Force $zip $privateDir
+    Remove-Item -Force $zip
+    if (-not (Test-Path $privatePython)) { Write-Error "Downloaded Python has no tools\python.exe" }
+    return @($privatePython)
+}
+
+function New-FaceVenv($base) {
+    if (Test-Path $venvDir) { Remove-Item -Recurse -Force $venvDir }
     Write-Host "Creating .venv with $($base -join ' ')..."
     $base = @($base)
     $exe  = $base[0]
     $rest = @($base | Select-Object -Skip 1)
-    & $exe @rest -m venv (Join-Path $PSScriptRoot ".venv")
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) { Write-Error "Could not create .venv"; exit 1 }
+    & $exe @rest -m venv $venvDir
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) { Write-Error "Could not create .venv" }
 }
 
-Write-Host "Installing face scanning packages..."
-& $venvPython -m pip install --quiet --upgrade pip wheel
-& $venvPython -m pip install --quiet -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
-# face_recognition pins a dlib that must be compiled; dlib-bin (in requirements.txt) is prebuilt.
-& $venvPython -m pip install --quiet --no-deps face_recognition
-& $venvPython -c "import face_recognition, numpy; print('face_recognition OK')"
-if ($LASTEXITCODE -ne 0) { Write-Error "face_recognition did not import"; exit 1 }
+function Install-FacePackages {
+    Write-Host "Installing face scanning packages..."
+    & $venvPython -m pip install --quiet --upgrade pip wheel
+    & $venvPython -m pip install --quiet -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed" }
+    # face_recognition pins a dlib that must be compiled; dlib-bin (in requirements.txt) is prebuilt.
+    & $venvPython -m pip install --quiet --no-deps face_recognition
+}
 
+# 1. Build (or repair) the .venv from whatever Python this machine has.
+$base = Find-BasePython
+if (-not $base) { $base = Get-PrivatePython }
+if (-not (Test-Path $venvPython) -or -not (Test-FaceImport $venvPython)) {
+    New-FaceVenv $base
+}
+Install-FacePackages
+
+# 2. Still no good (a broken or unsuitable system Python)? Start again from
+#    the downloaded one, which is known to work.
+if (-not (Test-FaceImport $venvPython) -and ($base[0] -ne $privatePython)) {
+    Write-Host "face_recognition did not import with $($base -join ' '); retrying with a private Python."
+    $base = Get-PrivatePython
+    New-FaceVenv $base
+    Install-FacePackages
+}
+
+if (-not (Test-FaceImport $venvPython)) { Write-Error "face_recognition did not import" }
+Write-Host "face_recognition OK"
 Set-Content -Path $stamp -Value $wanted -Encoding ascii
 Write-Host "Done. The server will use $venvPython for face scans."

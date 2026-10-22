@@ -147,15 +147,18 @@ func listLoggedMirrors() []mirrorLogSummary {
 // GET /api/admin/logs?mirror=<id>&name=<log> (admin) — the newest copy of one
 // log, plus every mirror that has reported (most recent first).
 func getAdminLogs(c echo.Context) error {
-	if c.QueryParam("name") == "server" { // this server's own log, not a mirror's
-		resp := map[string]interface{}{"name": "server", "mirrors": listLoggedMirrors(), "content": "", "updated_at": int64(0)}
-		data, err := os.ReadFile(serverLogPath())
+	// This server's own logs, not a mirror's: its log, and the Windows
+	// auto-updater's (which includes the face-scanning Python setup).
+	ownLogs := map[string]string{"server": serverLogPath(), "updater": "updater.log"}
+	if path, ok := ownLogs[c.QueryParam("name")]; ok {
+		resp := map[string]interface{}{"name": c.QueryParam("name"), "mirrors": listLoggedMirrors(), "content": "", "updated_at": int64(0)}
+		data, err := os.ReadFile(path)
 		if err != nil {
-			resp["content"] = "The server log is empty."
+			resp["content"] = "This log is empty (or this server has no auto-updater)."
 			return c.JSON(http.StatusOK, resp)
 		}
 		resp["content"] = tailBytes(string(data), mirrorLogMaxBytes)
-		if info, err := os.Stat(serverLogPath()); err == nil {
+		if info, err := os.Stat(path); err == nil {
 			resp["updated_at"] = info.ModTime().Unix()
 		}
 		return c.JSON(http.StatusOK, resp)

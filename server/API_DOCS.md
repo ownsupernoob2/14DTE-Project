@@ -72,7 +72,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | POST | `/api/admin/screensaver/images?kind=slide\|logo` | multipart `files` (JPEG/PNG/WebP, ≤10 MB, ≤40 slides) |
 | DELETE | `/api/admin/screensaver/images/:id` | |
 | POST | `/api/admin/banner` | `{message}`. Also accepted with `X-Admin-Token: <ADMIN_TOKEN>` (the Windows updater). |
-| GET | `/api/admin/logs?name=mirror` | Returns last 500 lines of daemon log file (`mirror`, `face`, `gesture`, `rpicam`, `ffmpeg`). |
+| GET | `/api/admin/logs?name=&mirror=` | A mirror's log (`mirror`, `face`, `gesture`, `rpicam`, `ffmpeg`, `start`), or this server's own: `server` (its log) or `updater` (the Windows auto-updater's, including the face-scanning Python setup). |
 | POST | `/api/admin/logs` | Same as `/api/logs`, accepts log payload with admin token. |
 
 Every admin change is recorded in the `admin_audit` table.
