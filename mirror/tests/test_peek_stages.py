@@ -567,6 +567,17 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._update_inputs()
         self.assertFalse(m.gesture_demo_overlay.isVisible())
 
+    def test_the_tutorial_shows_a_circle_not_a_trail(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self.assertTrue(m.gesture_trail._cursor_mode)
+        m._handle_gesture(gesture(x=0.4, y=0.4))
+        app.processEvents()
+        self.assertFalse(m.gesture_trail._region().isEmpty())     # drawn even with the hand still
+        m._skip_tutorial()
+        settle(m)
+        self.assertFalse(m.gesture_trail._cursor_mode)
+
     def test_pinching_skip_closes_it(self):
         m = self.mirror
         self._arrive_as_guest()

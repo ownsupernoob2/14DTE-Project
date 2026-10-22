@@ -627,6 +627,20 @@ class GestureTrailOverlay(QWidget):
         self._repaint_region()
 
     _REGION_BOXES = 12        # the trail is invalidated as about this many small boxes
+    _CURSOR_R = 20            # cursor mode: the circle's radius (its halo reaches ~1.8x)
+
+    def set_cursor_mode(self, on):
+        """A circle where the hand is, instead of a trail (the tutorial).
+
+        People couldn't find their hand during the tutorial: a trail only
+        shows while the hand moves. The circle shows even when it's still,
+        and shrinks and turns blue while pinched.
+        """
+        on = bool(on)
+        if on != getattr(self, '_cursor_mode', False):
+            self._cursor_mode = on
+            self._ipoints.clear()
+            self.update(self._dirty)
 
     def _region(self):
         """What to repaint: a chain of small boxes along the trail.
@@ -636,6 +650,14 @@ class GestureTrailOverlay(QWidget):
         hand swept across: ~200 megapixels a second, enough to drop frames on
         the Pi. Boxes along the path cover a fraction of that.
         """
+        if getattr(self, '_cursor_mode', False):
+            region = QRegion()
+            if self._rx is not None:
+                reach = int(self._CURSOR_R * 1.8) + 4
+                region += QRect(int(self._rx) - reach, int(self._ry) - reach, 2 * reach, 2 * reach)
+            for rx, ry, _, _, _ in self._ripples:
+                region += QRect(int(rx) - 30, int(ry) - 30, 60, 60)
+            return region
         pts = [(p[0], p[1]) for p in self._ipoints]
         if self._rx is not None:
             pts.append((self._rx, self._ry))
@@ -686,6 +708,22 @@ class GestureTrailOverlay(QWidget):
             painter.drawEllipse(QPointF(rx, ry), radius, radius)
 
         r, g, b = self._PINCH_RGB if self._pinched else self._OPEN_RGB
+
+        if getattr(self, '_cursor_mode', False):
+            if self._rx is not None:
+                alpha = self._dot_alpha(now)
+                c = QPointF(self._rx, self._ry)
+                rad = self._CURSOR_R * (0.75 if self._pinched else 1.0)
+                # The mirror's accent blue: it stands out on the white practice
+                # dot and on black alike. Deeper blue and smaller while pinched.
+                cr, cg, cb = (37, 99, 235) if self._pinched else (56, 189, 248)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(cr, cg, cb, int(70 * alpha)))   # soft halo: easy to spot
+                painter.drawEllipse(c, rad * 1.8, rad * 1.8)
+                painter.setBrush(QColor(cr, cg, cb, int(245 * alpha)))
+                painter.drawEllipse(c, rad, rad)
+            painter.end()
+            return
 
         # Trail: a fading ribbon behind a moving hand. A still hand draws
         # nothing — there is no cursor, only the trail while it moves.
@@ -2627,6 +2665,7 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_trail.raise_()
         self.edge_arrow_label.hide()        # back once the tutorial closes
         self.edge_arrow_caption.hide()
+        self.gesture_trail.set_cursor_mode(True)
         self.gesture_demo_overlay.set_backdrop(None)
         self._snapshot_behind_tutorial()    # (waits if the screen is still fading in)
         for n in (self.notices_widget, self.guest_notices):
@@ -2714,6 +2753,8 @@ class SmartMirrorPro(QMainWindow):
 
         for n in (self.notices_widget, self.guest_notices):
             n.hold_auto_scroll(False)
+
+        self.gesture_trail.set_cursor_mode(False)
 
         def on_done():
             self.gesture_demo_overlay.hide()
@@ -3611,6 +3652,7 @@ class SmartMirrorPro(QMainWindow):
             self.dwell_hint_pill.hide()
         for n in (self.notices_widget, self.guest_notices):
             n.hold_auto_scroll(False)
+        self.gesture_trail.set_cursor_mode(False)
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.hide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
