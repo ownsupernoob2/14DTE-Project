@@ -861,6 +861,65 @@ class GuestScanCallout(QWidget):
         painter.end()
 
 
+class MessageVeil(QWidget):
+    """A brief full-screen message over a darkened screen ("SUCCESSFULLY LOGGED OUT").
+
+    Painted, fading in and out with its own alpha (no graphics effect), and
+    transparent to input.
+    """
+    FADE_MS = 250
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.text = ""
+        self._alpha = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self.FADE_MS)
+        self._anim.valueChanged.connect(self._on_alpha)
+        self._anim.finished.connect(self._on_anim_done)
+        self._hold = QTimer(self)
+        self._hold.setSingleShot(True)
+        self._hold.timeout.connect(lambda: self._fade_to(0.0))
+        self.hide()
+
+    def flash(self, text, seconds=2.0):
+        self.text = text
+        self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self._hold.start(int(seconds * 1000) + self.FADE_MS)
+        self._fade_to(1.0)
+
+    def _fade_to(self, end):
+        self._anim.stop()
+        self._anim.setStartValue(self._alpha)
+        self._anim.setEndValue(end)
+        self._anim.start()
+
+    def _on_alpha(self, v):
+        self._alpha = float(v)
+        self.update()
+
+    def _on_anim_done(self):
+        if self._alpha <= 0.0:
+            self.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, int(200 * self._alpha)))
+        font = painter.font()
+        font.setFamily("Segoe UI")
+        font.setPixelSize(44)
+        font.setWeight(QFont.Weight.Black)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 6)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, int(255 * self._alpha)))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text)
+        painter.end()
+
+
 class PracticePanel(QWidget):
     """Variant B: a short hands-on practice beside the tutorial video.
 
@@ -1123,6 +1182,7 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Floating Toast Overlay for Alerts / Barcode Scans ────────────
         self._build_toast()
+        self.message_veil = MessageVeil(self.central_widget)   # e.g. "SUCCESSFULLY LOGGED OUT"
 
         # ── Status dot ───────────────────────────────────────────────────
         self.status_dot = QLabel(self.central_widget)
@@ -1980,6 +2040,9 @@ class SmartMirrorPro(QMainWindow):
 
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             self._place_trail()
+
+        if hasattr(self, 'message_veil') and self.message_veil.isVisible():
+            self.message_veil.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'debug_overlay'):
             self.debug_overlay.move(16, 16)
@@ -3850,7 +3913,7 @@ class SmartMirrorPro(QMainWindow):
             return
         user_id = self.current_user_id
         print(f"[SESSION] {user_id} signed out ({reason}).", flush=True)
-        self.show_toast("✓ Signed out", is_success=True)
+        self.message_veil.flash("SUCCESSFULLY LOGGED OUT")
         self._signed_out_user = user_id
         self._signed_out_face_gone = 0.0
         self._auth_method = ""

@@ -660,7 +660,8 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._handle_gesture(dict(gesture(event='tap', **at), event_id=7))
         self.assertNotEqual(m._last_state, 'user')
         self.assertIsNone(m.current_user_id)
-        self.assertIn("Signed out", m.toast_lbl.text())
+        self.assertTrue(m.message_veil.isVisible())
+        self.assertEqual(m.message_veil.text, "SUCCESSFULLY LOGGED OUT")
 
     def test_scanning_the_same_id_again_signs_out(self):
         m = self.mirror
