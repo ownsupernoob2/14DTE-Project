@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QRect, QRectF, QPoint, QPointF, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QRadialGradient
+from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient
 
 from config import *
 from timing_config import (
@@ -295,11 +295,39 @@ class VideoSurface(QWidget):
 
 
 class GestureDemoOverlay(QWidget):
-    """The in-session tutorial: the video over a semi-transparent dark overlay."""
+    """The in-session tutorial: the video over the screen, dimmed.
+
+    It used to be a see-through dark layer over the live screen. At 1920x1080
+    on the Pi that meant every frame of the video, the pulsing scan hint and
+    the practice made Qt redraw the whole guest screen underneath first: the
+    UI fell to ~20 fps. Now it shows a dimmed snapshot of the screen taken
+    when it opens, and is opaque, so nothing beneath is redrawn while it's up.
+    """
+    DIM = QColor(0, 0, 0, 184)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._backdrop = None
+
+    def set_backdrop(self, pixmap):
+        """A snapshot of what's behind (None: plain see-through dimming)."""
+        if pixmap is not None and not pixmap.isNull():
+            dimmed = QPixmap(pixmap)
+            p = QPainter(dimmed)
+            p.fillRect(dimmed.rect(), self.DIM)
+            p.end()
+            self._backdrop = dimmed
+        else:
+            self._backdrop = None
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, self._backdrop is not None)
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 184))
+        if self._backdrop is not None:
+            painter.drawPixmap(event.rect(), self._backdrop, event.rect())
+        else:
+            painter.fillRect(self.rect(), self.DIM)
         painter.end()
 
 
@@ -2418,6 +2446,32 @@ class SmartMirrorPro(QMainWindow):
         self._last_activity_time = time.time()     # so the idle timer doesn't instantly re-show it
         self._fade_out_gesture_scrim()
 
+    def _snapshot_behind_tutorial(self):
+        """Give the tutorial a still of the screen behind it (see GestureDemoOverlay)."""
+        overlay = self.gesture_demo_overlay
+        if overlay is None or not overlay.isVisible() or self._scrim_fading_out:
+            return
+        fading_in = self._anim_in is not None and self._anim_in.state() == QPropertyAnimation.State.Running
+        if fading_in:                       # mid-dissolve: see-through until it settles
+            QTimer.singleShot(150, self._snapshot_behind_tutorial)
+            return
+        # grab() renders the whole widget tree: leave our own layers out of it.
+        layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
+                              self.too_close_hint, self.gesture_trail, self.debug_overlay)
+                  if w is not None and w.isVisible()]
+        for w in layers:
+            w.setVisible(False)
+        try:
+            shot = self.central_widget.grab()
+        finally:
+            for w in layers:
+                w.setVisible(True)
+        overlay.set_backdrop(shot)
+        overlay.raise_()
+        for w in (self.guest_scan_callout, self.too_close_hint, self.gesture_trail):
+            if w.isVisible():
+                w.raise_()
+
     def _on_demo_looped(self):
         if self._practice_state == 'pending' and self._demo_overlay_active():
             self._start_practice()
@@ -2479,6 +2533,8 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_trail.raise_()
         self.edge_arrow_label.hide()        # back once the tutorial closes
         self.edge_arrow_caption.hide()
+        self.gesture_demo_overlay.set_backdrop(None)
+        self._snapshot_behind_tutorial()    # (waits if the screen is still fading in)
 
         self._set_skip_hover(False)
 
