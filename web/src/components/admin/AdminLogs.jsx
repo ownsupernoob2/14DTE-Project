@@ -9,6 +9,7 @@ const LOG_TYPES = [
   { id: 'ffmpeg', label: 'FFmpeg Stream', file: 'ffmpeg.log', icon: 'sync' },
   { id: 'start', label: 'Startup', file: 'start.log', icon: 'power_settings_new' },
   { id: 'server', label: 'Server', file: 'server.log', icon: 'dns' },
+  { id: 'updater', label: 'Updater', file: 'updater.log', icon: 'system_update' },
 ]
 
 const ago = (unix) => {

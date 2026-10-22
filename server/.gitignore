@@ -41,3 +41,8 @@ local_tests/
 # Data folder (contains dynamically fetched notices and timetable configurations)
 data/
 
+
+# Face scanning Python (setup-face-python.ps1) and the updater log
+.venv/
+.python/
+updater.log
