@@ -1553,6 +1553,7 @@ class SmartMirrorPro(QMainWindow):
         self.practice_panel.set_fade(t)
         bottom = mix(r0.bottom(), max(r1.bottom(), panel.bottom()))
         self.skip_btn.move((W - self.skip_btn.width()) // 2, bottom + 22)
+        self.practice_must_lbl.setGeometry(0, bottom + 22, W, self.skip_btn.height())
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -1663,6 +1664,13 @@ class SmartMirrorPro(QMainWindow):
         self.skip_btn.setFixedSize(260, 72)
         self._skip_hover = None
         self._set_skip_hover(False)
+        # In its place while the practice is up: it can't be skipped.
+        self.practice_must_lbl = QLabel("COMPLETE THE TUTORIAL TO CONTINUE", self.gesture_demo_overlay)
+        self.practice_must_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.practice_must_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 800; "
+            "letter-spacing: 3px; color: #cbd5e1; background: transparent;")
+        self.practice_must_lbl.hide()
         self.gesture_demo_overlay.hide()
 
         # Nobody at the mirror: the screensaver chosen in the admin dashboard
@@ -2561,7 +2569,7 @@ class SmartMirrorPro(QMainWindow):
             f"letter-spacing: 6px; color: #000000; background: {bg}; border: none; border-radius: 36px;")
 
     def _skip_rect(self):
-        if not self._demo_overlay_active():
+        if not self._demo_overlay_active() or self.skip_btn.isHidden():
             return QRect()
         return QRect(self.skip_btn.mapTo(self.central_widget, QPoint(0, 0)), self.skip_btn.size())
 
@@ -2613,6 +2621,8 @@ class SmartMirrorPro(QMainWindow):
         """Slide the still-playing video aside and bring in the practice."""
         self._practice_state = 'active'
         self._practice_started_at = time.time()
+        self.skip_btn.hide()                 # the practice has to be finished
+        self.practice_must_lbl.show()
         self.practice_panel.reset()
         self.practice_panel.show()
         self.practice_panel.raise_()
@@ -2673,6 +2683,8 @@ class SmartMirrorPro(QMainWindow):
             n.hold_auto_scroll(True)        # nobody can see it scroll under the tutorial
 
         self._set_skip_hover(False)
+        self.skip_btn.show()
+        self.practice_must_lbl.hide()
 
         # Guests who haven't scanned yet: the gesture OR the ID scanner. Once
         # they've scanned they know about it, so just the gesture.

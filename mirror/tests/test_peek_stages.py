@@ -877,7 +877,21 @@ class TestPracticeABTest(unittest.TestCase):
         self.assertLess(m.demo_surface.geometry().right(), m.width() // 2)    # moved left
         self.assertLess(m.demo_surface.width(), before.width())
         self.assertGreater(m.practice_panel.x(), m.width() // 2)
+        # It has to be finished: no SKIP while it's up, just the message.
+        self.assertFalse(m.skip_btn.isVisible())
+        self.assertTrue(m.practice_must_lbl.isVisible())
+        self.assertTrue(m._skip_rect().isEmpty())
+
+    def test_later_tutorials_can_be_skipped_again(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._skip_tutorial()                      # (only possible from code)
+        settle(m)
+        m._show_gesture_scrim()
+        settle(m)
         self.assertTrue(m.skip_btn.isVisible())
+        self.assertFalse(m.practice_must_lbl.isVisible())
 
     def test_doing_the_practice_finishes_it_and_records_it(self):
         m = self.mirror
