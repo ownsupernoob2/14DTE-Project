@@ -1343,7 +1343,7 @@ class SmartMirrorPro(QMainWindow):
 
         # Hand cursor (dot + trail), drawn above everything else
         self.gesture_trail = GestureTrailOverlay(
-            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW', '1') != '0')
+            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW') == '1')
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
     def _set_arrow_hover(self, hover):
