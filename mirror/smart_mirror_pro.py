@@ -93,7 +93,6 @@ INDICATOR_BAR_HEIGHT = 100
 KINGS_IDLE_MS        = 20_000
 
 TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): this long before the demo
-TOO_CLOSE_HIDE_SEC = 0.8     # the "step back" hint stays this long after the hand is far enough
 MAGNET_REACH = 90            # px around a button within which the cursor is drawn towards it
 MAGNET_PULL = 0.7            # how strongly (0 none, 1 straight onto its centre)
 SIGNED_OUT_FACE_HOLD_SEC = 5.0   # after signing out, ignore their face until it's gone this long
@@ -1344,7 +1343,7 @@ class SmartMirrorPro(QMainWindow):
 
         # Hand cursor (dot + trail), drawn above everything else
         self.gesture_trail = GestureTrailOverlay(
-            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW', '1') != '0')
+            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW') == '1')
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
     def _set_arrow_hover(self, hover):
@@ -1610,11 +1609,6 @@ class SmartMirrorPro(QMainWindow):
         self.stand_close_hint = GuestScanCallout(self.central_widget)
         self.stand_close_hint.message = "STAND 1m AWAY TO INTERACT"
         self.stand_close_hint.hide()
-        # Gestures track badly up close: say so while the hand is too near.
-        self.too_close_hint = GuestScanCallout(self.central_widget)
-        self.too_close_hint.message = "STEP BACK  \u00b7  STAND 1m AWAY"
-        self.too_close_hint.hide()
-        self._too_close_seen = 0.0
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
@@ -2517,7 +2511,7 @@ class SmartMirrorPro(QMainWindow):
             return
         # grab() renders the whole widget tree: leave our own layers out of it.
         layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
-                              self.too_close_hint, self.debug_overlay)
+                              self.debug_overlay)
                   if w is not None and w.isVisible()]
         if not self.gesture_trail.own_window and self.gesture_trail.isVisible():
             layers.append(self.gesture_trail)
@@ -2530,7 +2524,7 @@ class SmartMirrorPro(QMainWindow):
                 w.setVisible(True)
         overlay.set_backdrop(shot)
         overlay.raise_()
-        for w in (self.guest_scan_callout, self.too_close_hint, self.gesture_trail):
+        for w in (self.guest_scan_callout, self.gesture_trail):
             if w.isVisible():
                 w.raise_()
 
@@ -2939,16 +2933,6 @@ class SmartMirrorPro(QMainWindow):
         if present:
             self._last_interaction_time = time.time()
             self._last_hand_time = time.time()
-        if present and data.get("too_close"):
-            self._too_close_seen = now
-            hint = self.too_close_hint
-            if hint.isHidden():
-                hint.setGeometry(0, (self.height() - 120) // 2, self.width(), 120)
-                hint.set_fade(1.0)
-                hint.show()
-                hint.start()
-            hint.raise_()
-
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             if present:
                 hx = data.get("hand_x", 0.5)
@@ -3451,9 +3435,6 @@ class SmartMirrorPro(QMainWindow):
                     self._show_gesture_scrim()
 
         self._position_sign_out()
-        if not self.too_close_hint.isHidden() and time.time() - self._too_close_seen > TOO_CLOSE_HIDE_SEC:
-            self.too_close_hint.stop()
-            self.too_close_hint.hide()
 
         # Status dot
         if self.face_recognized:

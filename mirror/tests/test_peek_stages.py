@@ -598,14 +598,11 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         self._arrive_as_guest()
         self.assertFalse(m.stand_close_hint.isVisible())
 
-    def test_a_hand_too_close_gets_told_to_step_back(self):
+    def test_no_step_back_message_on_the_guest_screen(self):
         m = self.mirror
         self._arrive_as_guest()
         m._handle_gesture(dict(gesture(x=0.3), too_close=True))
-        self.assertTrue(m.too_close_hint.isVisible())
-        m._too_close_seen -= smp.TOO_CLOSE_HIDE_SEC + 1
-        m._update_inputs()
-        self.assertFalse(m.too_close_hint.isVisible())
+        self.assertFalse(hasattr(m, 'too_close_hint') and m.too_close_hint.isVisible())
 
     def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
         m = self.mirror
