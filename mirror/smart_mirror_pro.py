@@ -1312,11 +1312,11 @@ class SmartMirrorPro(QMainWindow):
         # left edge, big white text, no outline. Colours are set per level.
         self.banner_frame = QFrame(self.central_widget)
         self.banner_frame.setObjectName("BannerFrame")
-        self.banner_frame.setFixedHeight(108)    # grows for long messages: _fit_banner
+        self.banner_frame.setFixedHeight(78)     # grows for long messages: _fit_banner
         self.banner_frame.hide()
 
         lay = QVBoxLayout(self.banner_frame)
-        lay.setContentsMargins(34, 14, 34, 14)
+        lay.setContentsMargins(26, 10, 26, 10)
         lay.setSpacing(4)
         lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
@@ -1327,7 +1327,7 @@ class SmartMirrorPro(QMainWindow):
         self.banner_label.setWordWrap(True)
         self.banner_label.setStyleSheet(
             'font-family: "Segoe UI", system-ui, sans-serif; color: #ffffff; background: transparent; '
-            'border: none; font-size: 30px; font-weight: 700;'
+            'border: none; font-size: 22px; font-weight: 700;'
         )
         lay.addWidget(self.banner_label)
 
@@ -1520,7 +1520,8 @@ class SmartMirrorPro(QMainWindow):
         if getattr(self, 'demo_surface', None) is None:
             return
         W, H = self.width(), self.height()
-        free = H - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
+        top = self._banner_space()          # the notice banner stays visible above it
+        free = H - top - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
         foot = 22 + self.skip_btn.height()
         margin = 16
         avail_h = max(160, free - foot - 2 * margin)
@@ -1528,7 +1529,7 @@ class SmartMirrorPro(QMainWindow):
         # The video alone: as big as fits, up to 70% of the width
         vw0 = min(int(W * 0.70), int(avail_h * 16 / 9), 1100)
         vh0 = vw0 * 9 // 16
-        r0 = QRect((W - vw0) // 2, max(margin, (free - vh0 - foot) // 2), vw0, vh0)
+        r0 = QRect((W - vw0) // 2, top + max(margin, (free - vh0 - foot) // 2), vw0, vh0)
 
         # With the practice: two columns
         gutter = 32
@@ -1536,7 +1537,7 @@ class SmartMirrorPro(QMainWindow):
         vw1 = min(col, int(avail_h * 16 / 9), 900)
         vh1 = vw1 * 9 // 16
         ph = min(avail_h, max(vh1, int(col * 0.8)))
-        top1 = max(margin, (free - ph - foot) // 2)
+        top1 = top + max(margin, (free - ph - foot) // 2)
         r1 = QRect(W // 2 - gutter // 2 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
         panel = QRect(W // 2 + gutter // 2, top1, col, ph)
 
@@ -2011,7 +2012,7 @@ class SmartMirrorPro(QMainWindow):
         """)
         self.tag_lbl.setText(tag)
         self.tag_lbl.setStyleSheet(
-            f'font-family: "Consolas", "SFMono-Regular", "Segoe UI", monospace; font-size: 17px; '
+            f'font-family: "Consolas", "SFMono-Regular", "Segoe UI", monospace; font-size: 13px; '
             f'font-weight: 800; letter-spacing: 2px; color: {accent}; background: transparent; border: none;'
         )
         self.banner_label.setText(self._admin_banner_msg)
@@ -2020,12 +2021,12 @@ class SmartMirrorPro(QMainWindow):
         self._refresh_banner(relayout=True)     # the height may have changed
 
     def _fit_banner(self, width=None):
-        """Size the notice to its text: at least 108 px, taller if it wraps."""
+        """Size the notice to its text: at least 78 px, taller if it wraps."""
         width = width or self.banner_frame.width()
-        text_w = max(200, width - 34 * 2 - 8)
-        h = (14 * 2 + 4 + self.tag_lbl.sizeHint().height()
+        text_w = max(200, width - 26 * 2 - 8)
+        h = (10 * 2 + 4 + self.tag_lbl.sizeHint().height()
              + self.banner_label.heightForWidth(text_w))
-        self.banner_frame.setFixedHeight(max(108, h))
+        self.banner_frame.setFixedHeight(max(78, h))
 
     def _banner_space(self):
         """Pixels the screens move down so the notice doesn't cover them."""
@@ -3032,6 +3033,12 @@ class SmartMirrorPro(QMainWindow):
             else:
                 self.gesture_trail.fade_out()
 
+        # A click lands where the pinch began (the engine says where): by the
+        # time the fingers part the hand has drifted, and with the cursor's
+        # lag that sent clicks to the wrong place.
+        if event == "tap" and data.get("tap_x") is not None:
+            data = self._apply_magnet(dict(data, hand_x=data["tap_x"], hand_y=data["tap_y"]))
+
         was_pinched, self._hand_pinched = self._hand_pinched, present and bool(data.get("pinched", False))
         if was_pinched and not self._hand_pinched and self._overscroll:
             self._wake_scroller()            # let go of a stretched list: spring back
@@ -3176,11 +3183,13 @@ class SmartMirrorPro(QMainWindow):
                     if hasattr(self, 'telemetry') and self.telemetry is not None:
                         self.telemetry.record_modal_close()
                 elif hasattr(notices, 'activate_selected'):
+                    if hasattr(notices, 'select_at_point'):
+                        notices.select_at_point(data.get("hand_x", 0.25), data.get("hand_y", 0.5))
                     if notices.activate_selected() and self.telemetry is not None:
                         self.telemetry.record_modal_open("notice")
                 elif hasattr(notices, 'toggle_scroll_pause'):
                     notices.toggle_scroll_pause()
-            elif event not in ("scroll", "fling"):
+            elif event not in ("scroll", "fling") and not data.get("pinched"):   # hold still mid-pinch
                 if hasattr(notices, 'select_at_point'):
                     hx = data.get("hand_x", 0.25)
                     hy = data.get("hand_y", 0.5)
@@ -3234,7 +3243,7 @@ class SmartMirrorPro(QMainWindow):
                         if hasattr(active_target, 'activate_selected') and active_target.activate_selected():
                             if self.telemetry is not None:
                                 self.telemetry.record_modal_open("article")
-                elif event not in ("scroll", "fling"):
+                elif event not in ("scroll", "fling") and not data.get("pinched"):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
 

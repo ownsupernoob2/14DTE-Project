@@ -918,3 +918,17 @@ class TestEngagementThroughTheFrameLoop(unittest.TestCase):
             self.e.step(make_hand(0.4, 0.5), None, t + 0.05 * i)
         self.e.step(make_hand(0.4, 0.5, pinch=True), None, t + 0.35)
         self.assertEqual(self.e.step(make_hand(0.4, 0.5), None, t + 0.5), "tap")
+
+
+class TestTapPosition(unittest.TestCase):
+    """A tap reports where its pinch began: the hand drifts while the fingers part."""
+
+    def test_the_tap_carries_the_pinch_start(self):
+        e = StubEngine()
+        t = 1000.0
+        e.process_landmarks(make_hand(0.30, 0.50), t)
+        e.process_landmarks(make_hand(0.30, 0.50, pinch=True), t + 0.05)
+        start = (e.hand_x, e.hand_y)
+        e.process_landmarks(make_hand(0.31, 0.51, pinch=True), t + 0.15)   # a small drift
+        self.assertEqual(e.process_landmarks(make_hand(0.33, 0.52), t + 0.25), "tap")
+        self.assertEqual(e.tap_at, start)

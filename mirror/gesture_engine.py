@@ -562,6 +562,7 @@ class GestureEngine:
         if pinched:
             if self.pinch_start is None:
                 self.pinch_start = now
+                self.pinch_at = (self.hand_x, self.hand_y)   # where they aimed
                 self.drag_start_y = sy
                 self.last_drag_y = sy
                 self.drag_dist = 0.0
@@ -607,6 +608,7 @@ class GestureEngine:
                               or now - self.last_tap_time > TAP_COOLDOWN_SEC)
                     if cooled:
                         self.last_tap_time = now
+                        self.tap_at = getattr(self, 'pinch_at', (self.hand_x, self.hand_y))
                         if event is None:
                             event = "tap"
                 elif had_scroll and abs(released_velocity) > FLING_MIN_VELOCITY:
@@ -734,6 +736,9 @@ class GestureEngine:
             "dwell_side":           getattr(self, 'dwell_side', None),
             "too_close":            self.too_close,
             "event":                event,
+            # A tap acts where its pinch began, not where the hand drifted to.
+            "tap_x":                round(self.tap_at[0], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,
+            "tap_y":                round(self.tap_at[1], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,
             "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
             "seq":                  self.seq,

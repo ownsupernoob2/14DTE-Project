@@ -567,6 +567,17 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._update_inputs()
         self.assertFalse(m.gesture_demo_overlay.isVisible())
 
+    def test_a_click_lands_where_the_pinch_began(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        r = m._skip_rect()
+        aimed = dict(x=r.center().x() / m.width(), y=r.center().y() / m.height())
+        drifted = gesture(event='tap', x=aimed['x'], y=0.05)          # released far above SKIP
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(drifted, event_id=5, tap_x=aimed['x'], tap_y=aimed['y']))
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+
     def test_the_tutorial_shows_a_circle_not_a_trail(self):
         m = self.mirror
         self._arrive_as_guest()
