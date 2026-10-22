@@ -398,10 +398,26 @@ class TestStatusFile(unittest.TestCase):
         self.path = os.path.join(self.tmp, 'gesture_status.json')
         self._orig = gesture_engine.GESTURE_STATUS_FILE
         gesture_engine.GESTURE_STATUS_FILE = self.path
+        # The file is a fallback, normally refreshed only every half second;
+        # these tests are about what is published, so write every change.
+        self._every = gesture_engine.STATUS_FILE_EVERY
+        gesture_engine.STATUS_FILE_EVERY = 0.0
         self.e = StubEngine()
 
     def tearDown(self):
         gesture_engine.GESTURE_STATUS_FILE = self._orig
+        gesture_engine.STATUS_FILE_EVERY = self._every
+
+    def test_the_file_is_only_refreshed_now_and_then(self):
+        gesture_engine.STATUS_FILE_EVERY = 60.0
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status(force=True)
+        first = self._read()['seq']
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.1)
+        self.e.write_status()                       # sent over UDP, not to disk
+        self.assertEqual(self._read()['seq'], first)
+        self.e.write_status(event="tap")            # events always reach the file
+        self.assertEqual(self._read()['event'], "tap")
 
     def _read(self):
         with open(self.path) as f:
@@ -811,3 +827,37 @@ class TestCursorSmoothing(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestEngagement(unittest.TestCase):
+    """Only a hand held up like the demo takes control; scratching your head doesn't."""
+
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_an_open_palm_engages_after_a_moment(self):
+        hand = make_hand(0.5, 0.5)
+        self.assertFalse(self.e.update_engagement(hand, None, 1000.0))
+        self.assertTrue(self.e.update_engagement(hand, None, 1000.0 + gesture_engine.ENGAGE_SEC))
+
+    def test_a_curled_hand_never_engages(self):
+        fist = make_hand(0.5, 0.5, closed=True)
+        for i in range(10):
+            self.assertFalse(self.e.update_engagement(fist, None, 1000.0 + 0.05 * i))
+
+    def test_once_engaged_any_shape_keeps_control_until_the_hand_is_lost(self):
+        self.e.update_engagement(make_hand(0.5, 0.5), None, 1000.0)
+        self.e.update_engagement(make_hand(0.5, 0.5), None, 1000.2)
+        self.assertTrue(self.e.update_engagement(make_hand(0.5, 0.5, closed=True), None, 1000.3))
+        self.e.present, self.e.last_seen = True, 1000.3
+        self.e.mark_absent(1000.3 + gesture_engine.HAND_LOST_SEC + 0.01)
+        self.assertFalse(self.e.engaged)
+
+    def test_a_hand_too_close_is_flagged(self):
+        big = make_hand(0.5, 0.5, scale=0.5)
+        self.e.update_too_close(big, 1000.0)
+        self.assertFalse(self.e.too_close)
+        self.e.update_too_close(big, 1000.0 + gesture_engine.TOO_CLOSE_SEC)
+        self.assertTrue(self.e.too_close)
+        self.e.update_too_close(make_hand(0.5, 0.5), 1001.0)
+        self.assertFalse(self.e.too_close)

@@ -72,7 +72,9 @@ if ! command -v rpicam-vid &>/dev/null && command -v libcamera-vid &>/dev/null; 
     RPICAM_BIN="libcamera-vid"
 fi
 
-$RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 \
+# --exposure sport favours short exposures (raising gain instead), so a moving
+# hand is sharp rather than smeared: blur made the tracked hand jump about.
+$RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30     --exposure sport \
     2> "$APP_DIR/rpicam.log" | \
 ffmpeg -hide_banner -loglevel warning \
     -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \

@@ -116,6 +116,21 @@ BACKHAND_REJECT          = 0.25
 BACKHAND_MIN_LABEL_SCORE = 0.6
 CURRENT_HAND_BONUS       = 1.35   # stickiness, so two similar hands don't trade control
 
+# Engaging. A hand only takes control once it is held up like the demo shows:
+# palm to the camera, at least three fingers out (a pinch leaves three out).
+# Scratching your head or pushing your hair back doesn't look like that, so it
+# no longer moves the cursor. Once engaged, the hand keeps control until it is
+# lost, whatever shape it makes.
+ENGAGE_SEC          = 0.12    # presented this long (~3 frames) to take control
+ENGAGE_MIN_FACING   = 0.15    # palm at least this square to the camera
+ENGAGE_MIN_FINGERS  = 3
+
+# Too close: past roughly half a metre the hand fills the frame and tracks badly.
+TOO_CLOSE_PALM      = 0.24    # wrist→knuckle span as a share of the frame height
+TOO_CLOSE_SEC       = 0.5
+
+STATUS_FILE_EVERY   = 0.5     # the JSON file is only a fallback for UDP: rarely
+
 
 class OneEuroFilter:
     """Speed-adaptive low-pass filter (Casiez et al., CHI 2012)."""
@@ -278,6 +293,12 @@ class GestureEngine:
         self.last_payload = None
 
         self._tmp_file = f"{GESTURE_STATUS_FILE}.{os.getpid()}.{id(self):x}.tmp"
+        self._last_file_write = 0.0
+
+        self.engaged = False
+        self._engage_since = None
+        self.too_close = False
+        self._close_since = None
 
     def _init_tracker(self):
         """Build the MediaPipe hand tracker."""
@@ -292,7 +313,10 @@ class GestureEngine:
             options = mp_vision.GestureRecognizerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
                 running_mode=mp_vision.RunningMode.VIDEO,
-                num_hands=2,
+                # One hand. Asked for two, MediaPipe runs its palm detector on
+                # every frame while only one is visible (nearly always), which
+                # cost ~20 ms a frame on the Pi. With one, a tracked hand skips it.
+                num_hands=1,
                 min_hand_detection_confidence=0.4,   # lower = fewer skipped frames
                 min_tracking_confidence=0.4,          # lower = faster tracking recovery
             )
@@ -345,6 +369,46 @@ class GestureEngine:
         if handedness not in ('Left', 'Right') or label_score < BACKHAND_MIN_LABEL_SCORE:
             return False
         return cls.palm_facing(lm, handedness) < -BACKHAND_REJECT
+
+    def fingers_out(self, lm):
+        """How many of index..pinky are extended (tip further from the wrist than its middle joint)."""
+        wrist = lm[0]
+        out = 0
+        for pip, tip in ((6, 8), (10, 12), (14, 16), (18, 20)):
+            if self._distance(lm[tip], wrist) > 1.1 * self._distance(lm[pip], wrist):
+                out += 1
+        return out
+
+    def is_presented(self, lm, handedness=None):
+        """Held up to control the mirror: palm to the camera, fingers out."""
+        if self._palm_size(lm) < MIN_PALM_SIZE:
+            return False
+        if handedness in ('Left', 'Right') and self.palm_facing(lm, handedness) < ENGAGE_MIN_FACING:
+            return False
+        return self.fingers_out(lm) >= ENGAGE_MIN_FINGERS
+
+    def update_engagement(self, lm, handedness, now):
+        """Whether this hand is in control (see ENGAGE_SEC)."""
+        if self.engaged:
+            return True
+        if self.is_presented(lm, handedness):
+            if self._engage_since is None:
+                self._engage_since = now
+            if now - self._engage_since >= ENGAGE_SEC:
+                self.engaged = True
+                self._engage_since = None
+        else:
+            self._engage_since = None
+        return self.engaged
+
+    def update_too_close(self, lm, now):
+        if self._palm_size(lm) > TOO_CLOSE_PALM:
+            if self._close_since is None:
+                self._close_since = now
+            self.too_close = now - self._close_since >= TOO_CLOSE_SEC
+        else:
+            self._close_since = None
+            self.too_close = False
 
     @staticmethod
     def _in_frame(lm, margin=0.02):
@@ -532,10 +596,17 @@ class GestureEngine:
 
     def mark_absent(self, now):
         if not self.present:
+            if now - self.last_seen >= HAND_LOST_SEC:
+                self.engaged = False          # a hand that was never in control
+                self._engage_since = None
             return False
         if now - self.last_seen < HAND_LOST_SEC:
             return False
         self.present = False
+        self.engaged = False
+        self._engage_since = None
+        self.too_close = False
+        self._close_since = None
         self.region = None
         self._filter_x.reset()
         self._filter_y.reset()
@@ -575,7 +646,8 @@ class GestureEngine:
         else:
             self._last_event_hold = None
 
-        payload = (self.present, self.region, event, self._quantised_position(), self.pinched, round(self.right_dwell_progress, 2))
+        payload = (self.present, self.region, event, self._quantised_position(), self.pinched,
+                   round(self.right_dwell_progress, 2), self.too_close)
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -592,6 +664,7 @@ class GestureEngine:
                         "pinched":              self.pinched,
                         "right_dwell_progress": round(self.right_dwell_progress, 3),
                         "dwell_side":           getattr(self, 'dwell_side', None),
+                        "too_close":            self.too_close,
                         "event":                None,
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
@@ -616,6 +689,7 @@ class GestureEngine:
             "pinched":              self.pinched,
             "right_dwell_progress": round(self.right_dwell_progress, 3),
             "dwell_side":           getattr(self, 'dwell_side', None),
+            "too_close":            self.too_close,
             "event":                event,
             "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
@@ -633,6 +707,9 @@ class GestureEngine:
         except Exception:
             pass
 
+        if not (force or event) and now - self._last_file_write < STATUS_FILE_EVERY:
+            return
+        self._last_file_write = now
         try:
             with open(self._tmp_file, "w") as f:
                 json.dump(data, f)
@@ -753,10 +830,11 @@ class GestureEngine:
                 event = None
 
                 if results.hand_landmarks:
-                    best_lm, _ = self.select_best_hand(
+                    best_lm, hand_name = self.select_best_hand(
                         results.hand_landmarks, getattr(results, 'handedness', None)
                     )
-                    if best_lm is not None:
+                    if best_lm is not None and self.update_engagement(best_lm, hand_name, now):
+                        self.update_too_close(best_lm, now)
                         event = self.process_landmarks(best_lm, now)
                         self.write_status(event, self.scroll_delta)
                     else:

@@ -149,13 +149,14 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self.mirror._last_state = 'user'
         self.mirror._timetable_slid_away = False
         self.mirror._update_arrow_indicator()
-        # Arrow is hidden when timetable is visible
-        self.assertTrue(self.mirror.edge_arrow_label.isHidden())
+        # Timetable showing: the arrow points down, back to King's Week
+        self.assertEqual(self.mirror.edge_arrow_label.text(), "\u25bc")
 
-        # Arrow is shown when timetable has slid away
+        # Timetable slid away: the arrow points up to it
         self.mirror._timetable_slid_away = True
         self.mirror._update_arrow_indicator()
         self.assertFalse(self.mirror.edge_arrow_label.isHidden())
+        self.assertEqual(self.mirror.edge_arrow_label.text(), "\u25b2")
 
         self.mirror._handle_gesture({
             'present': True,

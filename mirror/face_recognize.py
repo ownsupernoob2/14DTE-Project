@@ -67,6 +67,9 @@ from timing_config import (
     BARCODE_SCAN_EVERY_N_FRAMES,
 )
 
+# A camera snapshot for debugging tools, only when asked for (MIRROR_VISION_FILE=1)
+SAVE_VISION_FILE = os.environ.get("MIRROR_VISION_FILE") == "1"
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 STATE_IDLE  = "idle"
@@ -637,9 +640,18 @@ def main():
     faces_count        = 0
     frame_counter      = 0
 
+    # Presence and recognition don't need every camera frame. Working through
+    # all 30 a second took ~50% of a core even with nobody there, which the
+    # hand tracker needs far more: 10 a second is plenty to notice a face.
+    FACE_LOOP_SEC = 1.0 / float(os.environ.get('MIRROR_FACE_FPS', '10'))
+    loop_started = 0.0
+
     try:
         while True:
-            now = time.time()
+            wait = FACE_LOOP_SEC - (time.time() - loop_started)
+            if wait > 0:
+                time.sleep(wait)
+            loop_started = now = time.time()
 
             # ── Grab frame ───────────────────────────────────────────────────
             ret, frame = cap.read()
@@ -650,15 +662,16 @@ def main():
 
             frame_counter += 1
 
-            # Save every 5th frame for the AI vision file (used by other tools)
-            if frame_counter % 5 == 0:
+            # A snapshot for debugging tools, only when asked for (it was a JPEG
+            # encode and an SD card write six times a second)
+            if SAVE_VISION_FILE and frame_counter % 5 == 0:
                 try:
                     cv2.imwrite(VISION_FILE, frame)
                 except Exception:
                     pass
 
-            # ── Haar face detection (every 3rd frame — reduces CPU load) ────
-            if frame_counter % 3 == 0:
+            # ── Haar face detection (every 2nd frame: 5 a second) ───────────
+            if frame_counter % 2 == 0:
                 small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
                 gray  = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
                 faces = face_cascade.detectMultiScale(gray, 1.1, 4)

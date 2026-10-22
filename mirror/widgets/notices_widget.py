@@ -87,6 +87,9 @@ def format_fetched_at(iso_str):
 # Notice Card matching the web UI
 # ─────────────────────────────────────────────────────────────────────────────
 
+CARD_STICKY_PX = 24     # how far past its edge the hand can go before the selection moves
+
+
 class NoticeDetailModal(QFrame):
     """Full expanded notice overlay showing clear large typography and full text."""
 
@@ -716,6 +719,8 @@ class NoticesWidget(QFrame):
         if not cards:
             return None
         index = max(0, min(len(cards) - 1, index))
+        if index == getattr(self, 'selected_index', -1) and cards[index].selected:
+            return cards[index]                # unchanged: nothing to redo
         self.selected_index = index
         selected_card = None
         for i, card in enumerate(cards):
@@ -737,6 +742,14 @@ class NoticesWidget(QFrame):
         win_h = self.window().height() if self.window() else 1080
         hand_global_y = int(y_frac * win_h)
         local_y = hand_global_y - top_y + self.scroll_area.verticalScrollBar().value()
+
+        # Sticky: stay on the selected card until the hand is clearly past it,
+        # so jitter on a boundary doesn't flick between two cards.
+        cur = getattr(self, 'selected_index', -1)
+        if 0 <= cur < len(cards):
+            c = cards[cur]
+            if c.y() - CARD_STICKY_PX <= local_y <= c.y() + c.height() + CARD_STICKY_PX:
+                return self.select_index(cur)
 
         best_idx, min_dist = -1, float('inf')
         for idx, card in enumerate(cards):
@@ -885,12 +898,6 @@ class NoticesWidget(QFrame):
     # ──────────────────────────────────────────────────────────────────────
 
     def update_ui(self):
-        # Clear existing cards
-        while self.cards_lay.count():
-            item = self.cards_lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
             cat_order_list = getattr(self, 'cat_order', [])
@@ -944,6 +951,21 @@ class NoticesWidget(QFrame):
 
         count_text = f"{len(filtered)} today" if filtered else "0 today"
         self.count_label.setText(count_text)
+
+        # Notices are re-fetched every 15 s but rarely change. Rebuilding every
+        # card each time froze the UI for 100-200 ms (the cursor stopped, then
+        # jumped) and dropped whatever the hand had selected, so only rebuild
+        # when what's shown would actually differ.
+        sig = (error_msg, tuple((n.get('id'), n.get('title'), n.get('notice'), n.get('category'),
+                                 n.get('importance')) for n in filtered))
+        if sig == getattr(self, '_cards_sig', None):
+            return
+        self._cards_sig = sig
+
+        while self.cards_lay.count():
+            item = self.cards_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
         if not filtered:
             if error_msg:

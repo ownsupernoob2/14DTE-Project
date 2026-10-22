@@ -774,6 +774,11 @@ class KingsWeekWidget(QFrame):
         y = _clamp01(y_frac) * viewport.height() + \
             self.scroll_area.verticalScrollBar().value()
 
+        # Sticky: stay on the selected box until the hand is clearly past it.
+        if 0 <= self.selected_index < len(self.cards) and \
+                rect_distance(self.cards[self.selected_index].geometry(), x, y) <= 24:
+            return self.select_index(self.selected_index)
+
         best, best_dist = -1, None
         for i, card in enumerate(self.cards):
             dist = rect_distance(card.geometry(), x, y)

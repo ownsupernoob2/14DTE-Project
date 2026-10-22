@@ -252,7 +252,8 @@ export default function FaceCaptureModal({ isOpen, onClose }) {
         localStorage.setItem('lastFaceScan', Date.now().toString())
       } else {
         const data = await res.json().catch(() => ({}))
-        setErrorMsg(data.error || (res.status === 429 ? 'You can update your face scan again in 24 hours, or delete your data in Settings to register fresh.' : 'Upload failed. Please try again.'))
+        const reason = data.error || (res.status === 429 ? 'You can update your face scan again in 24 hours, or delete your data in Settings to register fresh.' : 'Upload failed. Please try again.')
+        setErrorMsg(`${reason} (error ${res.status})`)
         setPhase('error')
       }
     } catch {

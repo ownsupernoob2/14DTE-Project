@@ -147,6 +147,19 @@ func listLoggedMirrors() []mirrorLogSummary {
 // GET /api/admin/logs?mirror=<id>&name=<log> (admin) — the newest copy of one
 // log, plus every mirror that has reported (most recent first).
 func getAdminLogs(c echo.Context) error {
+	if c.QueryParam("name") == "server" { // this server's own log, not a mirror's
+		resp := map[string]interface{}{"name": "server", "mirrors": listLoggedMirrors(), "content": "", "updated_at": int64(0)}
+		data, err := os.ReadFile(serverLogPath())
+		if err != nil {
+			resp["content"] = "The server log is empty."
+			return c.JSON(http.StatusOK, resp)
+		}
+		resp["content"] = tailBytes(string(data), mirrorLogMaxBytes)
+		if info, err := os.Stat(serverLogPath()); err == nil {
+			resp["updated_at"] = info.ModTime().Unix()
+		}
+		return c.JSON(http.StatusOK, resp)
+	}
 	key, file, ok := resolveLogFileName(firstNonEmpty(c.QueryParam("name"), "mirror"))
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Unknown log"})

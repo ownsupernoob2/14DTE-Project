@@ -8,6 +8,7 @@ const LOG_TYPES = [
   { id: 'rpicam', label: 'RPiCam Video', file: 'rpicam.log', icon: 'videocam' },
   { id: 'ffmpeg', label: 'FFmpeg Stream', file: 'ffmpeg.log', icon: 'sync' },
   { id: 'start', label: 'Startup', file: 'start.log', icon: 'power_settings_new' },
+  { id: 'server', label: 'Server', file: 'server.log', icon: 'dns' },
 ]
 
 const ago = (unix) => {
