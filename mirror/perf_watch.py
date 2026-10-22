@@ -77,3 +77,55 @@ class StallWatch:
                 where = " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno} {f.name}"
                                     for f in reversed(stack))
             print(f"[STALL] UI blocked {blocked * 1000:.0f}+ ms in {where}", flush=True)
+
+
+class PaintStats:
+    """Which widgets repaint, how often, and how much screen they cover.
+
+    Install with MIRROR_PAINT_STATS=1; every REPORT_SEC it logs the busiest:
+        [PAINT] GuestScanCallout x30/s 1920x210, VideoSurface x24/s 720x405 ...
+    Software painting at 1920x1080 is costly, so area x rate is what to look at.
+    """
+    REPORT_SEC = 15
+
+    def __init__(self):
+        from PyQt6.QtCore import QObject
+        from PyQt6.QtGui import QPaintEvent
+        from PyQt6.QtWidgets import QWidget
+
+        stats = self
+
+        class _Filter(QObject):
+            def eventFilter(self, obj, event):
+                if isinstance(event, QPaintEvent) and isinstance(obj, QWidget):
+                    r = event.rect()
+                    key = obj.objectName() or type(obj).__name__
+                    parent = obj.parent()
+                    if parent is not None and not obj.objectName():
+                        key += "<" + (parent.objectName() or type(parent).__name__)
+                    effect = obj.graphicsEffect()
+                    if effect is not None and effect.isEnabled():
+                        key += "[effect]"
+                    n, area = stats._counts.get(key, (0, 0))
+                    stats._counts[key] = (n + 1, area + r.width() * r.height())
+                return False
+
+        self._filter = _Filter()
+        self._counts = {}
+        self._since = time.monotonic()
+
+    def install(self, app):
+        app.installEventFilter(self._filter)
+        return self
+
+    def maybe_report(self):
+        now = time.monotonic()
+        secs = now - self._since
+        if secs < self.REPORT_SEC:
+            return
+        top = sorted(self._counts.items(), key=lambda kv: kv[1][1], reverse=True)[:8]
+        mpix = sum(a for _, a in self._counts.values()) / secs / 1e6
+        parts = [f"{k} x{n / secs:.0f}/s {a / secs / 1e6:.2f}Mpx/s" for k, (n, a) in top]
+        print(f"[PAINT] {mpix:.1f} Mpx/s painted: " + ", ".join(parts), flush=True)
+        self._counts.clear()
+        self._since = now

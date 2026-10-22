@@ -557,6 +557,12 @@ class KingsWeekWidget(QFrame):
 
     def _apply_frame_style(self):
         """No outline on KingsWeekWidget frame."""
+        # Setting a stylesheet re-styles every card inside (~100 ms on the Pi).
+        # This one never changes, but it was re-applied each time the hand
+        # crossed between panels, freezing the cursor: set it once.
+        if getattr(self, '_frame_styled', False):
+            return
+        self._frame_styled = True
         self.setStyleSheet("""
             #KingsWeekWidget {
                 background-color: #000000;

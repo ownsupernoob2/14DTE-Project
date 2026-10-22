@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QRect, QRectF, QPoint, QPointF, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient
+from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient, QRegion
 
 from config import *
 from timing_config import (
@@ -38,7 +38,7 @@ from widgets.kings_week_widget import KingsWeekWidget
 from telemetry import TelemetryTracker
 from screensaver import ScreensaverClient, SlideshowView
 from debug_overlay import DebugOverlay, TripleClickWatcher, read_system_stats
-from perf_watch import StallWatch
+from perf_watch import PaintStats, StallWatch
 from log_forwarder import start_log_forwarder
 
 
@@ -464,7 +464,7 @@ class GestureTrailOverlay(QWidget):
         self._ipoints = []           # (x, y, t, pinched) head positions, newest last
         self._ripples = []           # (x, y, t_start, duration, QColor)
         self._max_age = 0.28         # trail length in seconds
-        self._dirty = QRect()
+        self._dirty = QRegion()
 
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -585,30 +585,41 @@ class GestureTrailOverlay(QWidget):
             self._timer.stop()
             self._active = False
             self.update(self._dirty)
-            self._dirty = QRect()
+            self._dirty = QRegion()
             self.hide()
             return
 
         self._repaint_region()
 
-    def _bounds(self):
-        xs, ys = [p[0] for p in self._ipoints], [p[1] for p in self._ipoints]
+    _REGION_BOXES = 12        # the trail is invalidated as about this many small boxes
+
+    def _region(self):
+        """What to repaint: a chain of small boxes along the trail.
+
+        One rectangle around the whole trail made Qt repaint everything beneath
+        it (notices, cards) at the trail's full size, 80 times a second while a
+        hand swept across: ~200 megapixels a second, enough to drop frames on
+        the Pi. Boxes along the path cover a fraction of that.
+        """
+        pts = [(p[0], p[1]) for p in self._ipoints]
         if self._rx is not None:
-            xs.append(self._rx)
-            ys.append(self._ry)
+            pts.append((self._rx, self._ry))
         pad = 18
-        rect = QRect()
-        if xs:
-            rect = QRect(int(min(xs)) - pad, int(min(ys)) - pad,
-                         int(max(xs) - min(xs)) + 2 * pad, int(max(ys) - min(ys)) + 2 * pad)
+        region = QRegion()
+        step = max(1, len(pts) // self._REGION_BOXES)
+        for i in range(0, max(1, len(pts) - 1), step):
+            seg = pts[i:i + step + 1]
+            xs, ys = [p[0] for p in seg], [p[1] for p in seg]
+            region += QRect(int(min(xs)) - pad, int(min(ys)) - pad,
+                            int(max(xs) - min(xs)) + 2 * pad, int(max(ys) - min(ys)) + 2 * pad)
         for rx, ry, _, _, _ in self._ripples:
-            rect = rect.united(QRect(int(rx) - 30, int(ry) - 30, 60, 60))
-        return rect
+            region += QRect(int(rx) - 30, int(ry) - 30, 60, 60)
+        return region
 
     def _repaint_region(self):
-        rect = self._bounds()
-        self.update(rect.united(self._dirty))
-        self._dirty = rect
+        region = self._region()
+        self.update(region.united(self._dirty))
+        self._dirty = region
 
     @staticmethod
     def _smooth_path(pts):
@@ -1114,6 +1125,9 @@ class SmartMirrorPro(QMainWindow):
         self._frame_meter.start(16)
         # Logs where the UI thread is whenever it freezes (see perf_watch.py)
         self._stall_watch = StallWatch(lambda: self._frame_last).start()
+        self._paint_stats = None
+        if os.environ.get('MIRROR_PAINT_STATS') == '1':      # which widgets repaint, how much
+            self._paint_stats = PaintStats().install(QApplication.instance())
 
         # ── Debug panel (triple-click with a mouse) ───────────────────────
         self._last_gesture_data = {}
@@ -2446,6 +2460,10 @@ class SmartMirrorPro(QMainWindow):
         self._last_activity_time = time.time()     # so the idle timer doesn't instantly re-show it
         self._fade_out_gesture_scrim()
 
+    def _tutorial_fully_shown(self):
+        if self.gesture_demo_overlay.isVisible() and not self._scrim_fading_out:
+            self.gesture_demo_overlay.setGraphicsEffect(None)
+
     def _snapshot_behind_tutorial(self):
         """Give the tutorial a still of the screen behind it (see GestureDemoOverlay)."""
         overlay = self.gesture_demo_overlay
@@ -2535,6 +2553,8 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_caption.hide()
         self.gesture_demo_overlay.set_backdrop(None)
         self._snapshot_behind_tutorial()    # (waits if the screen is still fading in)
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(True)        # nobody can see it scroll under the tutorial
 
         self._set_skip_hover(False)
 
@@ -2579,10 +2599,11 @@ class SmartMirrorPro(QMainWindow):
         anim_in.setStartValue(0.0)
         anim_in.setEndValue(1.0)
         anim_in.valueChanged.connect(lambda v: self.guest_scan_callout.set_fade(v))
-        # Once fully shown, drop the effect: while it is on, every video frame
-        # re-renders the whole overlay off-screen, which was most of the lag
-        # people felt during the tutorial.
-        anim_in.finished.connect(lambda: effect.setEnabled(False))
+        # Once fully shown, remove the effect altogether. A widget carrying a
+        # graphics effect (even a disabled one) is never treated as opaque, so
+        # every video frame, pulse of the scan hint, or notices scroll step also
+        # repainted the whole screen hidden beneath it: ~15 fps on the Pi.
+        anim_in.finished.connect(self._tutorial_fully_shown)
         anim_in.start()
         self._demo_anim = anim_in
 
@@ -2614,6 +2635,9 @@ class SmartMirrorPro(QMainWindow):
             if self.telemetry is not None:
                 self.telemetry.record_practice_ended(completed=False, steps=self.practice_panel.steps_done,
                                                      seconds=time.time() - self._practice_started_at)
+
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(False)
 
         def on_done():
             self.gesture_demo_overlay.hide()
@@ -2762,6 +2786,8 @@ class SmartMirrorPro(QMainWindow):
         self._frame_last = now
         if len(self._frame_gaps) > 240:             # ~4 s of history
             del self._frame_gaps[:len(self._frame_gaps) - 240]
+        if self._paint_stats is not None:
+            self._paint_stats.maybe_report()
         if now - self._perf_logged >= 30.0:
             self._perf_logged = now
             fps, worst = self._ui_frame_stats()
@@ -3516,6 +3542,8 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container.setGraphicsEffect(None)
         if hasattr(self, 'dwell_hint_pill'):
             self.dwell_hint_pill.hide()
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(False)
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.hide()
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:

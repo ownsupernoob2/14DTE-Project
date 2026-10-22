@@ -804,6 +804,12 @@ class NoticesWidget(QFrame):
 
     def _apply_frame_style(self):
         """No frame outline -- border removed per user request."""
+        # Setting a stylesheet re-styles every card inside (~100 ms on the Pi).
+        # This one never changes, but it was re-applied each time the hand
+        # crossed between panels, freezing the cursor: set it once.
+        if getattr(self, '_frame_styled', False):
+            return
+        self._frame_styled = True
         self.setStyleSheet("""
             #NoticesWidget {
                 background-color: #000000;
@@ -1003,7 +1009,13 @@ class NoticesWidget(QFrame):
     # Auto scroll loop
     # ──────────────────────────────────────────────────────────────────────
 
+    def hold_auto_scroll(self, hold):
+        """Pause the slow automatic scroll (while something covers the panel)."""
+        self._auto_scroll_held = bool(hold)
+
     def _auto_scroll_tick(self):
+        if getattr(self, '_auto_scroll_held', False):
+            return
         now = time.time()
 
         # Resume auto-scroll from current position if no manual scroll for 10s.
