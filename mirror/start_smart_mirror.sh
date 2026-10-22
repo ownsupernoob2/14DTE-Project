@@ -103,6 +103,27 @@ echo "[START] gesture_engine.py started."
 
 sleep 2
 
+# ── Display resolution ───────────────────────────────────────────────────────
+# The UI is drawn in software, so every pixel costs CPU the hand tracker needs.
+# 1280x720 paints less than half as many pixels as 1920x1080 (the monitor
+# scales it up; text is a little softer). MIRROR_RESOLUTION in
+# ~/.config/smart-mirror/env: e.g. 1280x720 (default), 1920x1080, or "native"
+# to put a monitor back on its own preferred mode.
+RES="${MIRROR_RESOLUTION:-1280x720}"
+if command -v wlr-randr >/dev/null; then
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+    for OUT in $(wlr-randr 2>/dev/null | awk '/^[^ ]/ {print $1}'); do
+        if [ "$RES" = "native" ]; then
+            case "$OUT" in NOOP-*) ;; *) wlr-randr --output "$OUT" --preferred ;; esac
+        else
+            wlr-randr --output "$OUT" --mode "$RES" 2>/dev/null                 || wlr-randr --output "$OUT" --custom-mode "$RES" 2>/dev/null                 || echo "[WARN] Could not set $OUT to $RES."
+        fi
+    done
+    echo "[START] Display: $(wlr-randr 2>/dev/null | grep -m1 current | xargs)"
+    sleep 1
+fi
+
 # ── Launch Smart Mirror UI ───────────────────────────────────────────────────
 export DISPLAY=:0
 # The daemons above are already running, so stop the UI spawning a second pair
