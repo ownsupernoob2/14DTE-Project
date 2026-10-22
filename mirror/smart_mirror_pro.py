@@ -203,6 +203,12 @@ class DemoVideoDecoder(QThread):
             return None
 
     def run(self):
+        # Lowest priority for this thread (and the decoder threads it starts):
+        # the hand tracker comes first, and at worst the demo drops a frame.
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 15)
+        except (AttributeError, OSError):
+            pass                             # Windows: no per-thread niceness
         while True:
             with self._cond:
                 self._cond.wait_for(lambda: self._playing or self._quit)
