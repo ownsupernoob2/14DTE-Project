@@ -861,3 +861,51 @@ class TestEngagement(unittest.TestCase):
         self.assertTrue(self.e.too_close)
         self.e.update_too_close(make_hand(0.5, 0.5), 1001.0)
         self.assertFalse(self.e.too_close)
+
+
+class TestEngagementThroughTheFrameLoop(unittest.TestCase):
+    """The real per-frame path: a held-up hand takes control after a few frames.
+
+    (A bug reset the engage timer on every frame a hand was not yet in control,
+    so no hand ever took control on the Pi.)
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = gesture_engine.GESTURE_STATUS_FILE
+        gesture_engine.GESTURE_STATUS_FILE = os.path.join(self.tmp, 'g.json')
+        self.e = StubEngine()
+
+    def tearDown(self):
+        gesture_engine.GESTURE_STATUS_FILE = self._orig
+
+    def test_a_held_up_hand_takes_control_within_a_few_frames(self):
+        hand = make_hand(0.4, 0.5)
+        t = 1000.0
+        for i in range(6):                         # ~20 fps
+            self.e.step(hand, None, t + 0.05 * i)
+        self.assertTrue(self.e.engaged)
+        self.assertTrue(self.e.present)
+
+    def test_a_curled_hand_never_does(self):
+        fist = make_hand(0.4, 0.5, closed=True)
+        for i in range(20):
+            self.e.step(fist, None, 1000.0 + 0.05 * i)
+        self.assertFalse(self.e.engaged)
+        self.assertFalse(self.e.present)
+
+    def test_control_ends_once_the_hand_is_gone(self):
+        hand = make_hand(0.4, 0.5)
+        for i in range(6):
+            self.e.step(hand, None, 1000.0 + 0.05 * i)
+        for i in range(20):
+            self.e.step(None, None, 1000.5 + 0.05 * i)
+        self.assertFalse(self.e.engaged)
+        self.assertFalse(self.e.present)
+
+    def test_a_pinch_after_taking_control_still_clicks(self):
+        t = 1000.0
+        for i in range(6):
+            self.e.step(make_hand(0.4, 0.5), None, t + 0.05 * i)
+        self.e.step(make_hand(0.4, 0.5, pinch=True), None, t + 0.35)
+        self.assertEqual(self.e.step(make_hand(0.4, 0.5), None, t + 0.5), "tap")

@@ -297,6 +297,8 @@ class GestureEngine:
 
         self.engaged = False
         self._engage_since = None
+        self._hand_seen_at = 0.0     # any hand in view, in control or not
+        self._last_engage_log = 0.0
         self.too_close = False
         self._close_since = None
 
@@ -594,10 +596,31 @@ class GestureEngine:
                         event = "fling"
         return event
 
+    def step(self, lm, handedness, now):
+        """One camera frame: the chosen hand (or None). Publishes, returns the event."""
+        if lm is not None:
+            self._hand_seen_at = now
+            if self.update_engagement(lm, handedness, now):
+                self.update_too_close(lm, now)
+                event = self.process_landmarks(lm, now)
+                self.write_status(event, self.scroll_delta)
+                return event
+            if now - self._last_engage_log > 3.0:   # why a visible hand isn't in control
+                self._last_engage_log = now
+                facing = self.palm_facing(lm, handedness) if handedness in ('Left', 'Right') else None
+                print(f"[GESTURE] Hand seen, not in control yet: fingers out {self.fingers_out(lm)}, "
+                      f"palm facing {facing if facing is None else round(facing, 2)} ({handedness})", flush=True)
+        became_absent = self.mark_absent(now)
+        self.write_status(force=became_absent)
+        return None
+
     def mark_absent(self, now):
         if not self.present:
-            if now - self.last_seen >= HAND_LOST_SEC:
-                self.engaged = False          # a hand that was never in control
+            # A hand held up but not yet in control keeps its engage timer;
+            # only forget it once no hand at all has been seen for a moment.
+            # (Resetting it on every such frame meant no hand ever took control.)
+            if now - max(self.last_seen, self._hand_seen_at) >= HAND_LOST_SEC:
+                self.engaged = False
                 self._engage_since = None
             return False
         if now - self.last_seen < HAND_LOST_SEC:
@@ -829,20 +852,12 @@ class GestureEngine:
                 self.scroll_delta = 0
                 event = None
 
+                best_lm, hand_name = None, None
                 if results.hand_landmarks:
                     best_lm, hand_name = self.select_best_hand(
                         results.hand_landmarks, getattr(results, 'handedness', None)
                     )
-                    if best_lm is not None and self.update_engagement(best_lm, hand_name, now):
-                        self.update_too_close(best_lm, now)
-                        event = self.process_landmarks(best_lm, now)
-                        self.write_status(event, self.scroll_delta)
-                    else:
-                        became_absent = self.mark_absent(now)
-                        self.write_status(force=became_absent)
-                else:
-                    became_absent = self.mark_absent(now)
-                    self.write_status(force=became_absent)
+                event = self.step(best_lm, hand_name, now)
 
                 if event:
                     print(f"[GESTURE] {event} region={self.region} delta={self.scroll_delta}")
