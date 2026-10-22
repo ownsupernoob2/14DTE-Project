@@ -92,7 +92,7 @@ INDICATOR_BAR_HEIGHT = 100
 
 KINGS_IDLE_MS        = 20_000
 
-TUTORIAL_FIRST_DELAY_SEC = 5.0   # after a scan (or a face sign-in), this long before the demo
+TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): this long before the demo
 TOO_CLOSE_HIDE_SEC = 0.8     # the "step back" hint stays this long after the hand is far enough
 MAGNET_REACH = 90            # px around a button within which the cursor is drawn towards it
 MAGNET_PULL = 0.7            # how strongly (0 none, 1 straight onto its centre)
@@ -441,11 +441,29 @@ class GestureTrailOverlay(QWidget):
     _STILL_SQ       = 8 ** 2  # no trail unless the hand travelled this far (px²)
     _DOT_FADE_SEC   = 0.25    # how long the head lingers after the hand is lost
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, parent=None, own_window=False):
+        """own_window: draw in a separate see-through window above the mirror.
+
+        As a child widget, every trail repaint made Qt repaint the notices and
+        cards beneath it too (in software, at 1920x1080), 80 times a second
+        while a hand moved: the UI fell to ~30 fps just from hovering. In its
+        own window the compositor blends it over the mirror instead, and only
+        the trail itself is ever repainted.
+        """
+        if own_window:
+            super().__init__(parent, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                             | Qt.WindowType.WindowStaysOnTopHint
+                             | Qt.WindowType.WindowTransparentForInput
+                             | Qt.WindowType.WindowDoesNotAcceptFocus
+                             | Qt.WindowType.X11BypassWindowManagerHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        else:
+            super().__init__(parent)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+            self.setStyleSheet("background: transparent; border: none;")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.own_window = own_window
 
         self._was_pinched = False
         self._pinched = False
@@ -463,7 +481,7 @@ class GestureTrailOverlay(QWidget):
 
         self._ipoints = []           # (x, y, t, pinched) head positions, newest last
         self._ripples = []           # (x, y, t_start, duration, QColor)
-        self._max_age = 0.28         # trail length in seconds
+        self._max_age = 0.16         # trail length in seconds (short: less to repaint)
         self._dirty = QRegion()
 
         self._timer = QTimer(self)
@@ -471,7 +489,19 @@ class GestureTrailOverlay(QWidget):
         self._timer.setInterval(self._TICK_MS)
         self._timer.timeout.connect(self._tick)
         self._active = False
-        self.hide()
+        if not own_window:
+            self.hide()
+
+    def raise_(self):
+        if not self.own_window:      # a window above the mirror already; restacking it is churn
+            super().raise_()
+
+    def setVisible(self, visible):
+        # Kept mapped as a window: mapping and unmapping it at every hand
+        # movement would be churn. An empty trail paints nothing.
+        if self.own_window and not visible and self.parent() is not None and self.parent().isVisible():
+            return
+        super().setVisible(visible)
 
     def is_empty(self):
         return self._rx is None and not self._ipoints and not self._ripples
@@ -604,7 +634,7 @@ class GestureTrailOverlay(QWidget):
         pts = [(p[0], p[1]) for p in self._ipoints]
         if self._rx is not None:
             pts.append((self._rx, self._ry))
-        pad = 18
+        pad = 12
         region = QRegion()
         step = max(1, len(pts) // self._REGION_BOXES)
         for i in range(0, max(1, len(pts) - 1), step):
@@ -657,11 +687,11 @@ class GestureTrailOverlay(QWidget):
         pts = self._ipoints
         moved = len(pts) >= 2 and (pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2 >= self._STILL_SQ
         if moved:
-            path = self._smooth_path(pts)
-            for width, alpha in ((12, 70), (5, 150), (2.2, 230)):
-                painter.setPen(QPen(QColor(r, g, b, alpha), width, Qt.PenStyle.SolidLine,
-                                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-                painter.drawPath(path)
+            # One stroke (it used to be three, a wide glow under a core): far
+            # cheaper to draw, and the cursor is what people watch, not the glow.
+            painter.setPen(QPen(QColor(r, g, b, 220), 5, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(self._smooth_path(pts))
 
         painter.end()
 
@@ -713,12 +743,11 @@ class OverscrollGlow(QWidget):
 
 
 class GuestScanCallout(QWidget):
-    """Bouncing + pulsing STUDENT ID SCAN callout drawn entirely in paintEvent.
+    """The STUDENT ID SCAN callout (or one centred line of text), painted.
 
-    Avoids QGraphicsOpacityEffect (which conflicts with the overlay's own
-    fade effect and causes UI freezes). The widget drives its own 60 fps
-    timer and uses time.time() + math.sin() to compute both the bounce
-    offset and the alpha pulse on every frame.
+    Still: it used to pulse and its arrow bounced, which people didn't need
+    and which repainted a full-width strip 30 times a second. set_fade() is
+    only for fading in and out with the tutorial.
     """
 
     def __init__(self, parent=None):
@@ -728,10 +757,6 @@ class GuestScanCallout(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
         self.setStyleSheet("background: transparent;")
 
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._timer.setInterval(33)   # a gentle pulse; 30 fps is plenty and costs half
-        self._timer.timeout.connect(self.update)
         self._fade = 1.0
         self.show_or = False      # "OR": over the tutorial, scanning is the other way in
         self.message = None       # set: one centred line instead (variant B's hint, "step back")
@@ -741,23 +766,13 @@ class GuestScanCallout(QWidget):
         self.update()
 
     def start(self):
-        self._timer.start()
         self.update()
 
     def stop(self):
-        self._timer.stop()
+        pass
 
     def paintEvent(self, event):
-        import math as _math
-        t = time.time()
-
-        # Pulse: 0.55 -> 1.0 oscillation at ~0.8 Hz
-        pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math.sin(t * _math.pi * 1.6))
-
-        # Bounce: arrow moves up/down 12px at ~1.2 Hz
-        bounce = 12.0 * _math.sin(t * _math.pi * 2.4)
-
-        alpha = int(255 * pulse * self._fade)
+        alpha = int(255 * self._fade)
         w = self.width()
 
         painter = QPainter(self)
@@ -779,15 +794,13 @@ class GuestScanCallout(QWidget):
             painter.end()
             return
 
-        # The small lines hold steady (no pulse) so they're easy to read.
-        steady = int(255 * self._fade)
+        steady = alpha
         if self.show_or:
             line("OR", 0, 34, 26, QFont.Weight.Bold, 6, int(steady * 0.7))
         line("STUDENT ID SCAN", 36, 56, 44, QFont.Weight.Black, 7, alpha)
         line("SCAN AGAIN TO SIGN OUT", 92, 26, 18, QFont.Weight.DemiBold, 3, int(steady * 0.6))
 
-        # Arrow "v" below, bouncing towards the scanner
-        painter.translate(0.0, bounce)
+        # Arrow below, pointing at the scanner
         line("▼", 122, 70, 56, QFont.Weight.Black, 0, alpha)
         painter.end()
 
@@ -862,6 +875,7 @@ class PracticePanel(QWidget):
             if event == "tap" and self._hover:
                 self._taps += 1
                 self._flash_at = time.monotonic()
+                QTimer.singleShot(260, self.update)    # clear the flash
                 if self._taps >= self.TAPS:
                     self._advance()
         elif self.step == 1 and event in ("scroll", "fling") and delta:
@@ -1180,6 +1194,32 @@ class SmartMirrorPro(QMainWindow):
             self.showFullScreen()
             self.setCursor(Qt.CursorShape.BlankCursor)
 
+    def _place_trail(self):
+        """Lay the trail exactly over the mirror's content (its own window, or a child)."""
+        trail = self.gesture_trail
+        if trail.own_window:
+            trail.setGeometry(QRect(self.central_widget.mapToGlobal(QPoint(0, 0)), self.central_widget.size()))
+            if self.isVisible() and not trail.isVisible():
+                trail.show()
+        else:
+            trail.setGeometry(0, 0, self.central_widget.width(), self.central_widget.height())
+            trail.raise_()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if hasattr(self, 'gesture_trail'):
+            self._place_trail()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'gesture_trail'):
+            self._place_trail()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, 'gesture_trail') and self.gesture_trail.own_window:
+            QWidget.setVisible(self.gesture_trail, False)
+
     def _fetch_server_version(self):
         """Asynchronously query server /health for dynamic version string."""
         def _worker():
@@ -1303,7 +1343,8 @@ class SmartMirrorPro(QMainWindow):
         self.overscroll_glow = OverscrollGlow(self.central_widget)
 
         # Hand cursor (dot + trail), drawn above everything else
-        self.gesture_trail = GestureTrailOverlay(self.central_widget)
+        self.gesture_trail = GestureTrailOverlay(
+            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW', '1') != '0')
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
     def _set_arrow_hover(self, hover):
@@ -1826,8 +1867,7 @@ class SmartMirrorPro(QMainWindow):
             self.overscroll_glow.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
-            self.gesture_trail.setGeometry(0, 0, w, h)
-            self.gesture_trail.raise_()
+            self._place_trail()
 
         if hasattr(self, 'debug_overlay'):
             self.debug_overlay.move(16, 16)
@@ -2477,8 +2517,10 @@ class SmartMirrorPro(QMainWindow):
             return
         # grab() renders the whole widget tree: leave our own layers out of it.
         layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
-                              self.too_close_hint, self.gesture_trail, self.debug_overlay)
+                              self.too_close_hint, self.debug_overlay)
                   if w is not None and w.isVisible()]
+        if not self.gesture_trail.own_window and self.gesture_trail.isVisible():
+            layers.append(self.gesture_trail)
         for w in layers:
             w.setVisible(False)
         try:
@@ -3495,9 +3537,8 @@ class SmartMirrorPro(QMainWindow):
 
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
-            if is_from_idle and new_state == 'guest':
-                self._show_gesture_scrim()      # straight away: people didn't wait for it
-            elif is_from_idle:
+            if is_from_idle:
+                # Give them a moment to look first; the demo comes if they don't start.
                 self._last_activity_time = time.time()
                 self._tutorial_wait = TUTORIAL_FIRST_DELAY_SEC
 

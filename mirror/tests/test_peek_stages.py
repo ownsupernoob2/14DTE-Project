@@ -528,13 +528,15 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
     def tearDown(self):
         close_mirror(self.mirror)
 
-    def _arrive_as_guest(self):
+    def _arrive_as_guest(self, wait_for_tutorial=True):
         m = self.mirror
         m._transitioning = True
         m._last_state = 'guest'
         m._trigger_transition('guest', '', {'config': {}})
         settle(m)
         m._transitioning = False
+        if wait_for_tutorial:
+            self._wait(smp.TUTORIAL_FIRST_DELAY_SEC + 1)
 
     def _wait(self, seconds):
         m = self.mirror
@@ -543,9 +545,13 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._update_inputs()
         settle(m)
 
-    def test_a_guest_gets_the_tutorial_straight_away(self):
+    def test_the_tutorial_comes_after_a_few_seconds(self):
         m = self.mirror
-        self._arrive_as_guest()
+        self._arrive_as_guest(wait_for_tutorial=False)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(2)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+        self._wait(smp.TUTORIAL_FIRST_DELAY_SEC)
         self.assertTrue(m.gesture_demo_overlay.isVisible())
         self.assertTrue(m.guest_scan_callout.isVisible())
         self.assertTrue(m.guest_scan_callout.show_or)       # gesture OR scan
