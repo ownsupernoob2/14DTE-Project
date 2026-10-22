@@ -1009,6 +1009,10 @@ class NoticesWidget(QFrame):
     # Auto scroll loop
     # ──────────────────────────────────────────────────────────────────────
 
+    def pause_auto_scroll(self, seconds):
+        """Hold the automatic scroll for `seconds` from now (a hand is in view)."""
+        self._auto_scroll_paused_until = max(self._auto_scroll_paused_until, time.time() + seconds)
+
     def hold_auto_scroll(self, hold):
         """Pause the slow automatic scroll (while something covers the panel)."""
         self._auto_scroll_held = bool(hold)

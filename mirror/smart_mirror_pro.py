@@ -795,12 +795,12 @@ class GuestScanCallout(QWidget):
 
         steady = alpha
         if self.show_or:
-            line("OR", 0, 34, 26, QFont.Weight.Bold, 6, int(steady * 0.7))
-        line("STUDENT ID SCAN", 36, 56, 44, QFont.Weight.Black, 7, alpha)
-        line("SCAN AGAIN TO SIGN OUT", 92, 26, 18, QFont.Weight.DemiBold, 3, int(steady * 0.6))
+            line("OR", 0, 28, 22, QFont.Weight.Bold, 6, int(steady * 0.7))
+        line("STUDENT ID SCAN", 28, 50, 40, QFont.Weight.Black, 7, alpha)
+        line("SCAN AGAIN TO SIGN OUT", 78, 24, 16, QFont.Weight.DemiBold, 3, int(steady * 0.6))
 
         # Arrow below, pointing at the scanner
-        line("▼", 122, 70, 56, QFont.Weight.Black, 0, alpha)
+        line("▼", 104, 56, 44, QFont.Weight.Black, 0, alpha)
         painter.end()
 
 
@@ -816,9 +816,18 @@ class PracticePanel(QWidget):
 
     TAPS = 2
     DOTS = ((0.32, 0.45), (0.70, 0.60))   # where the dot sits, as fractions of the play area
-    DOT_R, DOT_HIT = 46, 120               # drawn radius, and how near a pinch counts
-    CARDS = 6
+    DOT_R, DOT_HIT = 46, 120               # drawn radius, and how near a pinch counts (at scale 1)
+    CARDS = 14                             # a long list, so there's real scrolling to do
     CARD_H, CARD_GAP, PAD = 64, 12, 18
+    DESIGN_H = 380                         # the height these sizes were drawn for
+
+    @property
+    def scale(self):
+        """Sizes grow with the panel (it's bigger on a bigger screen)."""
+        return max(0.8, min(1.6, self.height() / self.DESIGN_H)) if self.height() > 0 else 1.0
+
+    def dot_radius(self):
+        return int(self.DOT_R * self.scale)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -848,7 +857,8 @@ class PracticePanel(QWidget):
 
     # ── geometry ──
     def play_rect(self):
-        return QRect(0, 104, self.width(), max(120, self.height() - 104))
+        top = int(104 * self.scale)
+        return QRect(0, top, self.width(), max(120, self.height() - top))
 
     def dot_center(self):
         r = self.play_rect()
@@ -856,7 +866,8 @@ class PracticePanel(QWidget):
         return QPointF(r.left() + fx * r.width(), r.top() + fy * r.height())
 
     def scroll_max(self):
-        content = self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP
+        k = self.scale
+        content = (self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP) * k
         return max(1.0, content - self.play_rect().height())
 
     # ── input (hand position in this widget's coordinates) ──
@@ -864,7 +875,7 @@ class PracticePanel(QWidget):
         changed = False
         if self.step == 0:
             c = self.dot_center()
-            hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= self.DOT_HIT
+            hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= self.DOT_HIT * self.scale
             changed = hover != self._hover
             self._hover = hover
             if event == "tap" and self._hover:
@@ -913,12 +924,17 @@ class PracticePanel(QWidget):
             painter.setPen(c)
             painter.drawText(rect, align | Qt.AlignmentFlag.AlignVCenter, t)
 
+        k = self.scale
+
+        def sz(v):
+            return int(round(v * k))
+
         step_lbl = "PRACTICE" if self.step == 2 else f"PRACTICE  {self.step + 1} / 2"
-        text(step_lbl, QRect(0, 0, w, 24), 14, QFont.Weight.Bold, '#94a3b8', spacing=3)
+        text(step_lbl, QRect(0, 0, w, sz(24)), sz(14), QFont.Weight.Bold, '#94a3b8', spacing=3)
         title = ("PINCH THE DOT", "PINCH AND DRAG TO SCROLL", "YOU'RE READY")[self.step]
-        text(title, QRect(0, 26, w, 44), 32, QFont.Weight.Black, '#ffffff', spacing=1)
+        text(title, QRect(0, sz(26), w, sz(44)), sz(32), QFont.Weight.Black, '#ffffff', spacing=1)
         sub = (f"{self._taps} of {self.TAPS}", "Scroll to the end", "Explore the mirror")[self.step]
-        text(sub, QRect(0, 70, w, 26), 18, QFont.Weight.DemiBold, '#cbd5e1')
+        text(sub, QRect(0, sz(70), w, sz(26)), sz(18), QFont.Weight.DemiBold, '#cbd5e1')
 
         area = self.play_rect()
         painter.setPen(Qt.PenStyle.NoPen)
@@ -928,30 +944,35 @@ class PracticePanel(QWidget):
         if self.step == 0:
             c = self.dot_center()
             flash = 1.0 if now - self._flash_at < 0.25 else 0.0     # a pinch landed
-            halo = self.DOT_R + 18 + 26 * flash
+            dot = self.dot_radius()
+            halo = dot + sz(18) + sz(26) * flash
             painter.setBrush(QColor(255, 255, 255, int((26 + 40 * flash) * f)))
             painter.drawEllipse(c, halo, halo)
-            r = self.DOT_R + 8 if self._hover else self.DOT_R
+            r = dot + sz(8) if self._hover else dot
             painter.setBrush(QColor(255, 255, 255, int(255 * f)))
             painter.drawEllipse(c, r, r)
         elif self.step == 1:
             painter.save()
             painter.setClipRect(area)
-            y = area.top() + self.PAD - self._scroll
+            pad, card_h = sz(self.PAD), sz(self.CARD_H)
+            y = area.top() + pad - self._scroll
             for i in range(self.CARDS):
-                card = QRectF(area.left() + self.PAD, y, area.width() - 2 * self.PAD, self.CARD_H)
+                if y > area.bottom() or y + card_h < area.top():
+                    y += card_h + sz(self.CARD_GAP)
+                    continue                         # off screen: skip
+                card = QRectF(area.left() + pad, y, area.width() - 2 * pad, card_h)
                 last = i == self.CARDS - 1
                 painter.setBrush(QColor(30, 30, 30, int(255 * f)))
                 painter.drawRoundedRect(card, 6, 6)
                 painter.setBrush(QColor(56, 189, 248, int(255 * f)) if last else QColor(51, 65, 85, int(255 * f)))
                 painter.drawRect(QRectF(card.left(), card.top(), 4, card.height()))
                 if last:
-                    text("THE END", card.adjusted(20, 0, 0, 0).toRect(), 16, QFont.Weight.Black, '#ffffff', spacing=3)
+                    text("THE END", card.adjusted(sz(20), 0, 0, 0).toRect(), sz(16), QFont.Weight.Black, '#ffffff', spacing=3)
                 else:
                     painter.setBrush(QColor(42, 53, 72, int(255 * f)))
-                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 16, card.width() * 0.32, 10), 3, 3)
-                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 36, card.width() * 0.62, 10), 3, 3)
-                y += self.CARD_H + self.CARD_GAP
+                    painter.drawRoundedRect(QRectF(card.left() + sz(20), card.top() + sz(16), card.width() * 0.32, sz(10)), 3, 3)
+                    painter.drawRoundedRect(QRectF(card.left() + sz(20), card.top() + sz(36), card.width() * 0.62, sz(10)), 3, 3)
+                y += card_h + sz(self.CARD_GAP)
             painter.restore()
             # how far there is to go, along the right edge
             track = QRectF(area.right() - 8, area.top() + 12, 3, area.height() - 24)
@@ -964,6 +985,7 @@ class PracticePanel(QWidget):
             c = QPointF(area.center())
             pop = 1.0
             painter.setBrush(QColor(255, 255, 255, int(255 * f)))
+            pop = k
             painter.drawEllipse(c, 48 * pop, 48 * pop)
             pen = QPen(QColor(0, 0, 0, int(255 * f)), 8)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -1381,7 +1403,7 @@ class SmartMirrorPro(QMainWindow):
         targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect()]
         if self._demo_overlay_active() and self._practice_state == 'active' and self.practice_panel.step == 0:
             c = self.practice_panel.mapTo(self.central_widget, self.practice_panel.dot_center().toPoint())
-            r = self.practice_panel.DOT_R
+            r = self.practice_panel.dot_radius()
             targets.append(QRect(c.x() - r, c.y() - r, 2 * r, 2 * r))
         return [t for t in targets if not t.isEmpty()]
 
@@ -1439,7 +1461,7 @@ class SmartMirrorPro(QMainWindow):
         cy = sh - ch - 4
         self.guest_scan_callout.setGeometry(0, cy, sw, ch)
 
-    SCAN_CALLOUT_H = 210
+    SCAN_CALLOUT_H = 165
 
     def _layout_demo_overlay(self, with_callout):
         """Centre the video, bar and hint in the space the callout leaves free."""
@@ -1447,25 +1469,32 @@ class SmartMirrorPro(QMainWindow):
         self._place_demo()
 
     def _place_demo(self):
-        """Lay out the tutorial: the video alone, or (practice_p → 1) beside the practice."""
+        """Lay out the tutorial: the video alone, or (practice_p → 1) beside the practice.
+
+        Sized from the screen, as big as fits above SKIP and the scan hint.
+        """
         if getattr(self, 'demo_surface', None) is None:
             return
         W, H = self.width(), self.height()
         free = H - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
         foot = 22 + self.skip_btn.height()
+        margin = 16
+        avail_h = max(160, free - foot - 2 * margin)
 
-        vw0 = min(720, W - 32)
+        # The video alone: as big as fits, up to 70% of the width
+        vw0 = min(int(W * 0.70), int(avail_h * 16 / 9), 1100)
         vh0 = vw0 * 9 // 16
-        r0 = QRect((W - vw0) // 2, max(16, (free - vh0 - foot) // 2), vw0, vh0)
+        r0 = QRect((W - vw0) // 2, max(margin, (free - vh0 - foot) // 2), vw0, vh0)
 
-        half = W // 2
-        vw1 = max(160, min(600, half - 48))
+        # With the practice: two columns
+        gutter = 32
+        col = (W - 3 * gutter) // 2
+        vw1 = min(col, int(avail_h * 16 / 9), 900)
         vh1 = vw1 * 9 // 16
-        pw = max(200, min(520, half - 48))
-        ph = max(vh1, min(380, free - foot - 32))
-        top1 = max(16, (free - ph - foot) // 2)
-        r1 = QRect(half - 24 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
-        panel = QRect(half + 24, top1, pw, ph)
+        ph = min(avail_h, max(vh1, int(col * 0.8)))
+        top1 = max(margin, (free - ph - foot) // 2)
+        r1 = QRect(W // 2 - gutter // 2 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
+        panel = QRect(W // 2 + gutter // 2, top1, col, ph)
 
         t = QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(self._practice_p)
 
@@ -1551,7 +1580,10 @@ class SmartMirrorPro(QMainWindow):
         """The tutorial's clips in order: assets/touchless_intro.mp4 (this display
         is not a touchscreen) when it exists, then the gesture demo."""
         intro = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'touchless_intro.mp4')
-        return ([intro] if os.path.exists(intro) else []) + [cls._demo_video('540p')]
+        demo = cls._demo_video('480p')     # decoding costs CPU the hand tracker needs: smallest copy that looks right
+        if not demo.endswith('_480p.mp4'):
+            demo = cls._demo_video('540p')
+        return ([intro] if os.path.exists(intro) else []) + [demo]
 
     def _build_gesture_demo(self):
         has_video = os.path.exists(self._demo_video())
@@ -2623,9 +2655,9 @@ class SmartMirrorPro(QMainWindow):
                 and self.demo_movie is not None):
             self._practice_offered = True
             self._practice_state = 'pending'
-        if self.demo_movie is not None:
-            self.demo_movie.set_target_size(720, 405)
         self._place_demo()
+        if self.demo_movie is not None:
+            self.demo_movie.set_target_size(self.demo_surface.width(), self.demo_surface.height())
 
         if self.demo_movie is not None:
             self.demo_movie.play(loop=True)
@@ -2933,6 +2965,11 @@ class SmartMirrorPro(QMainWindow):
         if present:
             self._last_interaction_time = time.time()
             self._last_hand_time = time.time()
+            # The slow auto-scroll repaints the whole notices column every step
+            # (the gesture layer above it stops Qt from scrolling it cheaply):
+            # it waits while someone is using the mirror.
+            for n in (self.notices_widget, self.guest_notices):
+                n.pause_auto_scroll(8.0)
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             if present:
                 hx = data.get("hand_x", 0.5)
