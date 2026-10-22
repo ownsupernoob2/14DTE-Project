@@ -574,14 +574,23 @@ class TestTracker(unittest.TestCase):
                 engine.tracker.close()
 
     def test_a_missing_model_disables_gestures_without_raising(self):
-        real = gesture_engine.MODEL_PATH
-        gesture_engine.MODEL_PATH = os.path.join(tempfile.gettempdir(),
-                                                 'definitely-not-a-model.task')
+        real = gesture_engine.MODEL_PATH, gesture_engine.LANDMARKER_PATH
+        missing = os.path.join(tempfile.gettempdir(), 'definitely-not-a-model.task')
+        gesture_engine.MODEL_PATH = gesture_engine.LANDMARKER_PATH = missing
         try:
             engine = GestureEngine()      # must not raise
             self.assertIsNone(engine.tracker)
         finally:
-            gesture_engine.MODEL_PATH = real
+            gesture_engine.MODEL_PATH, gesture_engine.LANDMARKER_PATH = real
+
+    def test_the_hand_landmarker_is_preferred(self):
+        if gesture_engine.mp is None or not os.path.exists(gesture_engine.LANDMARKER_PATH):
+            self.skipTest('mediapipe or hand_landmarker.task missing')
+        engine = GestureEngine()
+        try:
+            self.assertEqual(type(engine.tracker).__name__, 'HandLandmarker')
+        finally:
+            engine.tracker.close()
 
 
 class TestCameraArgs(unittest.TestCase):

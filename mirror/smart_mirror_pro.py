@@ -435,7 +435,7 @@ class GestureTrailOverlay(QWidget):
     _PINCH_RGB = ( 59, 130, 246)
 
     _TICK_MS        = 16      # display rate
-    _HEAD_TAU       = 0.035   # seconds for the head to close ~63% of the gap
+    _HEAD_TAU       = 0.018   # seconds for the head to close ~63% of the gap (was 35 ms: felt laggy)
     _PREDICT_SHARE  = 0.6     # extrapolate at most this share of one report interval
     _VELOCITY_BLEND = 0.5     # weight of the newest velocity sample
     _STILL_SQ       = 8 ** 2  # no trail unless the hand travelled this far (px²)
@@ -2463,6 +2463,8 @@ class SmartMirrorPro(QMainWindow):
     def _tutorial_fully_shown(self):
         if self.gesture_demo_overlay.isVisible() and not self._scrim_fading_out:
             self.gesture_demo_overlay.setGraphicsEffect(None)
+            if self._practice_state == 'pending':
+                self._start_practice()      # beside the video straight away, not after it
 
     def _snapshot_behind_tutorial(self):
         """Give the tutorial a still of the screen behind it (see GestureDemoOverlay)."""
@@ -2576,7 +2578,7 @@ class SmartMirrorPro(QMainWindow):
 
 
         # Variant B, first tutorial of a visit that began as a guest from the
-        # idle screen: once the clip has played through, the practice.
+        # idle screen: the practice slides in beside the video once it's shown.
         self._practice_state = None
         self._practice_p = 0.0
         self.practice_panel.hide()
@@ -2718,7 +2720,7 @@ class SmartMirrorPro(QMainWindow):
             self.idle_demo_movie.play(loop=False)
         else:
             images = cfg['slides'] if mode == 'slideshow' else [cfg['logo']]
-            demo.slides.set_images(images, cfg.get('slide_seconds', 8))
+            demo.slides.set_images(images, cfg.get('slide_seconds', 8), logo=mode == 'logo')
             demo.slides.start()
         anim = self._animate_idle_demo(1.0, IDLE_DEMO_FADE_IN_SEC)
         # Fully opaque: drop the effect so each video frame isn't composited twice.

@@ -275,7 +275,7 @@ class NoticeCard(QFrame):
         self._bw = 0.0
         self._bw_timer = QTimer(self)
         self._bw_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._bw_timer.setInterval(12)
+        self._bw_timer.setInterval(33)   # a short fade: 30 fps is plenty, and costs a third
         self._bw_timer.timeout.connect(self._tick_border)
         self._build_ui()
 
@@ -404,7 +404,7 @@ class NoticeCard(QFrame):
 
     def _tick_border(self):
         target = SELECT_BORDER_PX if self._selected else 0.0
-        self._bw += 0.28 * (target - self._bw)          # exponential lerp
+        self._bw += 0.58 * (target - self._bw)          # exponential lerp
         if abs(self._bw - target) < 0.08:
             self._bw = target
             self._bw_timer.stop()

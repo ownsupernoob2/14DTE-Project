@@ -48,9 +48,12 @@ GESTURE_STATUS_FILE = os.path.join(
 )
 
 # The hand tracker's weights. Resolved next to this file rather than against the
-# working directory.
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "gesture_recognizer.task")
+# working directory. The plain hand landmarker is preferred: the gesture
+# recognizer runs the same hand model plus a gesture classifier on every frame
+# with a hand in it, and nothing here uses that classifier.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+LANDMARKER_PATH = os.path.join(_HERE, "hand_landmarker.task")
+MODEL_PATH = os.path.join(_HERE, "gesture_recognizer.task")
 
 # The Pi reads its own v4l2loopback device that start_smart_mirror.sh feeds.
 # v4l2loopback only lets one reader stream at a time, so the face daemon gets
@@ -105,8 +108,8 @@ POSITION_QUANTUM    = 1.0 / 96
 # hand is smoothed down to MIN_CUTOFF Hz so landmark jitter disappears; the
 # cutoff rises with speed (BETA), so a moving hand is followed with almost no
 # lag. Raise MIN_CUTOFF for a twitchier cursor, BETA for less lag on fast moves.
-CURSOR_MIN_CUTOFF   = 1.2
-CURSOR_BETA         = 6.0
+CURSOR_MIN_CUTOFF   = 2.5   # was 1.2: slow, aiming movements lagged behind the
+CURSOR_BETA         = 9.0   # hand. The magnet and sticky selection absorb the jitter.
 CURSOR_D_CUTOFF     = 1.0
 
 # Picking the hand to follow. A hand whose back faces the camera (by more than
@@ -307,11 +310,26 @@ class GestureEngine:
         if mp is None:
             print("[GESTURE] mediapipe not installed — gesture control disabled.")
             return
-        if not os.path.exists(MODEL_PATH):
-            print(f"[GESTURE] Missing {os.path.basename(MODEL_PATH)} — download gesture_recognizer.task. "
-                  f"Gesture control disabled.")
+        use_landmarker = os.path.exists(LANDMARKER_PATH)
+        if not use_landmarker and not os.path.exists(MODEL_PATH):
+            print("[GESTURE] Missing hand_landmarker.task (and gesture_recognizer.task). "
+                  "Gesture control disabled.")
             return
         try:
+            if use_landmarker:
+                options = mp_vision.HandLandmarkerOptions(
+                    base_options=mp_python.BaseOptions(model_asset_path=LANDMARKER_PATH),
+                    running_mode=mp_vision.RunningMode.VIDEO,
+                    num_hands=1,
+                    min_hand_detection_confidence=0.4,
+                    min_hand_presence_confidence=0.4,
+                    min_tracking_confidence=0.4,
+                )
+                landmarker = mp_vision.HandLandmarker.create_from_options(options)
+                self._infer = landmarker.detect_for_video
+                self.tracker = landmarker
+                print("[GESTURE] Using the hand landmarker.", flush=True)
+                return
             options = mp_vision.GestureRecognizerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
                 running_mode=mp_vision.RunningMode.VIDEO,
@@ -323,6 +341,8 @@ class GestureEngine:
                 min_tracking_confidence=0.4,          # lower = faster tracking recovery
             )
             self.tracker = mp_vision.GestureRecognizer.create_from_options(options)
+            self._infer = self.tracker.recognize_for_video
+            print("[GESTURE] Using the gesture recognizer (hand_landmarker.task not found).", flush=True)
         except Exception as e:
             print(f"[GESTURE] Could not start the hand tracker: {e}")
 
@@ -823,6 +843,7 @@ class GestureEngine:
         start = time.time()
         last_stamp_ms = -1
         stats_since, stats_frames, stats_busy = time.time(), 0, 0.0
+        stats_model, stats_hand = 0.0, 0
         last_frame_at = 0.0
         try:
             while self.running:
@@ -846,7 +867,10 @@ class GestureEngine:
 
                 stamp_ms = max(int((time.time() - start) * 1000), last_stamp_ms + 1)
                 last_stamp_ms = stamp_ms
-                results = self.tracker.recognize_for_video(image, stamp_ms)
+                t_model = time.time()
+                results = self._infer(image, stamp_ms)
+                stats_model += time.time() - t_model
+                stats_hand += 1 if results.hand_landmarks else 0
 
                 now = time.time()
                 self.scroll_delta = 0
@@ -866,8 +890,11 @@ class GestureEngine:
                 stats_busy += time.time() - t_frame
                 if t_frame - stats_since >= 10.0:
                     print(f"[GESTURE] {stats_frames / (t_frame - stats_since):.1f} fps, "
-                          f"{1000 * stats_busy / stats_frames:.0f} ms per frame", flush=True)
+                          f"{1000 * stats_busy / stats_frames:.0f} ms per frame "
+                          f"({1000 * stats_model / stats_frames:.0f} in the model), "
+                          f"hand in view {100 * stats_hand / stats_frames:.0f}%", flush=True)
                     stats_since, stats_frames, stats_busy = t_frame, 0, 0.0
+                    stats_model, stats_hand = 0.0, 0
         except KeyboardInterrupt:
             pass
         finally:

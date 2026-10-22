@@ -131,13 +131,18 @@ class ArticleCard(QFrame):
 
         self._pixmap = None
         self._scaled = None
+        self._composed = None        # photo + scrim + rounded corners, drawn once
+        self._composed_key = None
+        # It paints every pixel (on black, like the panel), so nothing behind
+        # it is redrawn when it changes.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._selected = False
 
         # Animated border: lerps 0 -> 3.0 on select, 3.0 -> 0 on deselect
         self._bw = 0.0
         self._bw_timer = QTimer(self)
         self._bw_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._bw_timer.setInterval(12)   # ~83fps border animation
+        self._bw_timer.setInterval(33)   # a short fade: 30 fps is plenty, and costs a third
         self._bw_timer.timeout.connect(self._tick_border)
 
         self.setMinimumHeight(FEATURE_MIN_HEIGHT if feature else CARD_MIN_HEIGHT)
@@ -217,7 +222,7 @@ class ArticleCard(QFrame):
 
     def _tick_border(self):
         target = 3.0 if self._selected else 0.0
-        self._bw += 0.28 * (target - self._bw)   # exponential lerp
+        self._bw += 0.58 * (target - self._bw)   # exponential lerp
         if abs(self._bw - target) < 0.08:
             self._bw = target
             self._bw_timer.stop()
@@ -245,18 +250,29 @@ class ArticleCard(QFrame):
             )
         return self._scaled
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
+    def _card_image(self):
+        """The card's photo, scrim and rounded corners, composed once per size/state.
+
+        Composing this on every paint (an antialiased clip path, a faded photo
+        and a gradient over the whole box) took tens of milliseconds a card on
+        the Pi, and a moving hand repaints cards constantly: the UI froze for
+        ~100 ms at a time. Now a repaint is one copy of this image.
+        """
+        key = (self.width(), self.height(), self._selected,
+               self._pixmap.cacheKey() if self._pixmap is not None else 0)
+        if self._composed is not None and self._composed_key == key:
+            return self._composed
+        image = QPixmap(self.size())
+        image.fill(QColor(0, 0, 0))
+        painter = QPainter(image)
         painter.setRenderHints(
             QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
         rect = self.rect()
         shape = QPainterPath()
         shape.addRoundedRect(QRectF(rect), CARD_RADIUS, CARD_RADIUS)
-
         painter.setClipPath(shape)
         painter.fillPath(shape, QColor(12, 12, 18))
-
         cover = self._cover_pixmap()
         if cover is not None:
             painter.setOpacity(1.0 if self._selected else 0.78)
@@ -266,17 +282,24 @@ class ArticleCard(QFrame):
                 cover,
             )
             painter.setOpacity(1.0)
-
         # Dark at the bottom where the text sits, clear at the top.
         scrim = QLinearGradient(0, rect.height() * 0.18, 0, rect.height())
         scrim.setColorAt(0.0, QColor(6, 6, 12, 40))
         scrim.setColorAt(0.55, QColor(5, 5, 11, 175))
         scrim.setColorAt(1.0, QColor(3, 3, 8, 240))
         painter.fillPath(shape, QBrush(scrim))
+        painter.end()
+        self._composed, self._composed_key = image, key
+        return image
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.drawPixmap(event.rect(), self._card_image(), event.rect())
 
         # Animated border: draw only if meaningfully wide
         if self._bw > 0.15:
-            painter.setClipping(False)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = self.rect()
             inset = self._bw * 0.5
             alpha = int(255 * min(1.0, self._bw / 3.0))
             painter.setPen(QPen(QColor(255, 255, 255, alpha), self._bw))

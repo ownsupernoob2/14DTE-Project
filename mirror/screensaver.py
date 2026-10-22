@@ -19,7 +19,7 @@ import threading
 import time
 
 import requests
-from PyQt6.QtCore import QObject, Qt, QTimer, QVariantAnimation, QEasingCurve, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, QVariantAnimation, QEasingCurve, QSize, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtWidgets import QWidget
 
@@ -174,9 +174,12 @@ class SlideshowView(QWidget):
         self._anim.valueChanged.connect(self._on_fade)
         self._anim.finished.connect(self._on_fade_done)
 
-    def set_images(self, paths, seconds=8):
-        """Show `paths` in turn (one path = a still logo)."""
+    LOGO_SCALE = (0.40, 0.45)        # a logo fits in this share of the screen (w, h)
+
+    def set_images(self, paths, seconds=8, logo=False):
+        """Show `paths` in turn; logo=True shows one image smaller, centred."""
         self.stop()
+        self._logo = bool(logo)
         self._paths = list(paths)
         self._interval_ms = max(3, int(seconds)) * 1000
         self._index, self._next, self._fade = 0, None, 0.0
@@ -206,7 +209,12 @@ class SlideshowView(QWidget):
             if img.isNull():
                 continue
             if self.width() > 0 and self.height() > 0:
-                img = img.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                box = self.size()
+                if getattr(self, '_logo', False):
+                    box = QSize(int(box.width() * self.LOGO_SCALE[0]), int(box.height() * self.LOGO_SCALE[1]))
+                    if img.width() <= box.width() and img.height() <= box.height():
+                        box = img.size()             # small logos aren't blown up
+                img = img.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
                                  Qt.TransformationMode.SmoothTransformation)
             self._images.append(img)
         self._index = min(self._index, max(0, len(self._images) - 1))
