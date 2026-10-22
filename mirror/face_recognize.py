@@ -67,6 +67,20 @@ from timing_config import (
     BARCODE_SCAN_EVERY_N_FRAMES,
 )
 
+GESTURE_STATUS_FILE = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "/tmp")),
+                                   "gesture_status.json")
+
+
+def hand_in_use():
+    """Whether the gesture engine has a hand in control right now."""
+    try:
+        with open(GESTURE_STATUS_FILE) as f:
+            g = json.load(f)
+        return bool(g.get("present")) and time.time() - float(g.get("timestamp", 0)) < 1.5
+    except Exception:
+        return False
+
+
 # A camera snapshot for debugging tools, only when asked for (MIRROR_VISION_FILE=1)
 SAVE_VISION_FILE = os.environ.get("MIRROR_VISION_FILE") == "1"
 
@@ -779,7 +793,17 @@ def main():
             should_call = (detected and now - last_api_call >= poll) or \
                           (not detected and now - last_heartbeat >= HEARTBEAT_INTERVAL)
 
-            if should_call:
+            if should_call and not detected:
+                # Nobody in view (Haar says so): report that directly. Running
+                # the full HOG scan on an empty frame every few seconds cost
+                # hundreds of ms of CPU each time, stealing it from gestures.
+                last_heartbeat = now
+                on_api_result(None, [], None, server_online)
+            elif should_call and state == STATE_USER and hand_in_use():
+                # A signed-in student is using gestures: their re-check can
+                # wait. Its CPU bursts were the random lag spikes in the cursor.
+                pass
+            elif should_call:
                 with api_lock:
                     busy = api_state["busy"]
                 if not busy:

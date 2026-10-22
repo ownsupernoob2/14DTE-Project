@@ -85,10 +85,16 @@ ffmpeg -hide_banner -loglevel warning \
 echo "[START] Camera pipeline started. Waiting 5s..."
 sleep 5
 
+# Background work (face recognition, the log uploader) shares CPU core 0, so
+# it can never crowd out the hand tracker: competing for the CPU nearly
+# doubled the model's time per frame (31 ms alone, ~55 ms with everything).
+CORE0=""
+command -v taskset >/dev/null && CORE0="taskset -c 0"
+
 # ── Launch Face Recognition Daemon ──────────────────────────────────────────
 # Lower CPU priority: recognising a face a fraction of a second later is
 # invisible, but gestures and the UI stuttering is not.
-PYTHONUNBUFFERED=1 nice -n 10 "$PYTHON" -u face_recognize.py --rpi > "$APP_DIR/face_daemon.log" 2>&1 &
+PYTHONUNBUFFERED=1 $CORE0 nice -n 10 "$PYTHON" -u face_recognize.py --rpi > "$APP_DIR/face_daemon.log" 2>&1 &
 echo "[START] face_recognize.py started."
 
 # ── Launch Gesture Engine Daemon ─────────────────────────────────────────────
@@ -104,7 +110,7 @@ export DISPLAY=:0
 MIRROR_FACE_DAEMON=0 MIRROR_GESTURES=0 "$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
 
 # ── Launch Log Forwarder Daemon ──────────────────────────────────────────────
-PYTHONUNBUFFERED=1 nice -n 15 "$PYTHON" -u log_forwarder.py > "$APP_DIR/log_forwarder.log" 2>&1 &
+PYTHONUNBUFFERED=1 $CORE0 nice -n 15 "$PYTHON" -u log_forwarder.py > "$APP_DIR/log_forwarder.log" 2>&1 &
 echo "[START] log_forwarder.py started."
 
 echo "[START] Smart Mirror is running."
