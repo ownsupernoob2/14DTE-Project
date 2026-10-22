@@ -127,6 +127,7 @@ class DemoVideoDecoder(QThread):
         self._loop = False
         self._generation = 0          # bumped by play()/stop() to interrupt a run
         self._playing = False
+        self._paused = False
         self._quit = False
         self.fps = 30.0
         self.frame_count = 0
@@ -152,12 +153,18 @@ class DemoVideoDecoder(QThread):
     def play(self, loop=False):
         """Start from the first frame; with loop=False, emit played_once at the end."""
         with self._cond:
+            self._paused = False
             self._loop = loop
             self._playing = True
             self._generation += 1
             self._cond.notify_all()
         if not self.isRunning():
             self.start()
+
+    def set_paused(self, paused):
+        """Hold the current frame without decoding (True), or carry on (False)."""
+        with self._cond:
+            self._paused = bool(paused)
 
     def stop(self):
         with self._cond:
@@ -252,6 +259,12 @@ class DemoVideoDecoder(QThread):
                 with self._cond:
                     if gen != self._generation or self._quit:
                         return 'stopped'
+                    paused = self._paused
+                if paused:                      # hold this frame; carry on from it later
+                    t_pause = time.monotonic()
+                    time.sleep(0.05)
+                    t0 += time.monotonic() - t_pause
+                    continue
                 lag = time.monotonic() - (t0 + shown * interval)
                 if lag < 0:
                     time.sleep(min(-lag, 0.05))
@@ -909,6 +922,14 @@ class PracticePanel(QWidget):
         fx, fy = self.DOTS[min(self._taps, len(self.DOTS) - 1)]
         return QPointF(r.left() + fx * r.width(), r.top() + fy * r.height())
 
+    def end_card_rect(self):
+        """THE END card where it's drawn now (people pinch it instead of scrolling)."""
+        k = self.scale
+        area = self.play_rect()
+        pad, card_h, gap = int(round(self.PAD * k)), int(round(self.CARD_H * k)), int(round(self.CARD_GAP * k))
+        y = area.top() + pad - self._scroll + (self.CARDS - 1) * (card_h + gap)
+        return QRect(area.left() + pad, int(y), area.width() - 2 * pad, card_h).intersected(area)
+
     def scroll_max(self):
         k = self.scale
         content = (self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP) * k
@@ -934,6 +955,12 @@ class PracticePanel(QWidget):
             changed = True
             if self._scroll >= self.scroll_max() - 1:
                 self._advance()
+        elif self.step == 1 and event == "tap":
+            end = self.end_card_rect()
+            if not end.isEmpty() and end.adjusted(-20, -20, 20, 20).contains(point.toPoint()):
+                self._scroll = self.scroll_max()
+                self._advance()            # pinching THE END counts as getting there
+                changed = True
         if changed:
             self.update()
 
@@ -1445,10 +1472,15 @@ class SmartMirrorPro(QMainWindow):
     def _magnet_targets(self):
         """Window rects of what the hand can press right now."""
         targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect()]
-        if self._demo_overlay_active() and self._practice_state == 'active' and self.practice_panel.step == 0:
-            c = self.practice_panel.mapTo(self.central_widget, self.practice_panel.dot_center().toPoint())
-            r = self.practice_panel.dot_radius()
+        pp = self.practice_panel
+        if self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 0:
+            c = pp.mapTo(self.central_widget, pp.dot_center().toPoint())
+            r = pp.dot_radius()
             targets.append(QRect(c.x() - r, c.y() - r, 2 * r, 2 * r))
+        elif self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 1:
+            end = pp.end_card_rect()
+            if not end.isEmpty():
+                targets.append(QRect(pp.mapTo(self.central_widget, end.topLeft()), end.size()))
         return [t for t in targets if not t.isEmpty()]
 
     def _apply_magnet(self, data):
@@ -1655,6 +1687,7 @@ class SmartMirrorPro(QMainWindow):
         self.practice_panel = PracticePanel(self.gesture_demo_overlay)
         self.practice_panel.finished.connect(self._on_practice_finished)
         self._practice_state = None      # None | pending | active | done
+        self._demo_paused = False
         self._practice_anim = None
         self._practice_started_at = 0.0
 
@@ -2717,6 +2750,7 @@ class SmartMirrorPro(QMainWindow):
         if self.demo_movie is not None:
             self.demo_movie.set_target_size(self.demo_surface.width(), self.demo_surface.height())
 
+        self._demo_paused = False
         if self.demo_movie is not None:
             self.demo_movie.play(loop=True)
         if self.telemetry is not None:
@@ -3065,6 +3099,12 @@ class SmartMirrorPro(QMainWindow):
                 return
             if self._practice_state == 'active' and present:
                 self.practice_panel.handle(self._practice_point(data), event, delta)
+                # Nobody watches the demo while doing the practice: pause it, and
+                # the hand tracker gets the CPU its decoding took. Resumes once
+                # the hand drops (_update_inputs).
+                if self.demo_movie is not None and not self._demo_paused:
+                    self._demo_paused = True
+                    self.demo_movie.set_paused(True)
             return
 
         # Buttons the hand can pinch: SIGN OUT, and the TIMETABLE arrow.
@@ -3530,6 +3570,10 @@ class SmartMirrorPro(QMainWindow):
         self._update_idle_demo()
 
         # ── Gesture Inactivity Tutorial Overlay ───────────────────────────
+        if self._demo_paused and time.time() - self._last_hand_time > 1.5:
+            self._demo_paused = False
+            if self.demo_movie is not None:
+                self.demo_movie.set_paused(False)
         if self._last_state in ('guest', 'user') and not self._transitioning:
             idle_threshold = self._tutorial_wait or getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
             # A raised hand is someone already trying: don't cover the screen.

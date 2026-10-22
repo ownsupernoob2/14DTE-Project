@@ -907,6 +907,32 @@ class TestPracticeABTest(unittest.TestCase):
         s = m.telemetry.current_session
         self.assertEqual((s['practice_shown'], s['practice_completed'], s['practice_steps']), (1, 1, 2))
 
+    def test_pinching_the_end_card_finishes_the_list(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        pp = m.practice_panel
+        for _ in range(pp.TAPS):
+            self._hand_at(pp.dot_center(), event='tap')
+        self.assertEqual(pp.step, 1)
+        pp._scroll = pp.scroll_max() - 30            # THE END peeking in, not reached
+        end = pp.end_card_rect()
+        self.assertFalse(end.isEmpty())
+        self._hand_at(QPointF(end.center()), event='tap')
+        self.assertEqual(pp.step, 2)
+
+    def test_the_demo_pauses_while_the_hand_does_the_practice(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        self._hand_at(QPointF(10, 200))
+        self.assertTrue(m._demo_paused)
+        self.assertTrue(m.demo_movie._paused)
+        m._last_hand_time -= 3                       # the hand dropped
+        m._update_inputs()
+        self.assertFalse(m._demo_paused)
+        self.assertFalse(m.demo_movie._paused)
+
     def test_skip_ends_it_and_records_the_skip(self):
         m = self.mirror
         self._arrive('B')
