@@ -398,10 +398,26 @@ class TestStatusFile(unittest.TestCase):
         self.path = os.path.join(self.tmp, 'gesture_status.json')
         self._orig = gesture_engine.GESTURE_STATUS_FILE
         gesture_engine.GESTURE_STATUS_FILE = self.path
+        # The file is a fallback, normally refreshed only every half second;
+        # these tests are about what is published, so write every change.
+        self._every = gesture_engine.STATUS_FILE_EVERY
+        gesture_engine.STATUS_FILE_EVERY = 0.0
         self.e = StubEngine()
 
     def tearDown(self):
         gesture_engine.GESTURE_STATUS_FILE = self._orig
+        gesture_engine.STATUS_FILE_EVERY = self._every
+
+    def test_the_file_is_only_refreshed_now_and_then(self):
+        gesture_engine.STATUS_FILE_EVERY = 60.0
+        self.e.process_landmarks(make_hand(0.2, 0.5), 1000.0)
+        self.e.write_status(force=True)
+        first = self._read()['seq']
+        self.e.process_landmarks(make_hand(0.8, 0.5), 1000.1)
+        self.e.write_status()                       # sent over UDP, not to disk
+        self.assertEqual(self._read()['seq'], first)
+        self.e.write_status(event="tap")            # events always reach the file
+        self.assertEqual(self._read()['event'], "tap")
 
     def _read(self):
         with open(self.path) as f:
@@ -558,14 +574,23 @@ class TestTracker(unittest.TestCase):
                 engine.tracker.close()
 
     def test_a_missing_model_disables_gestures_without_raising(self):
-        real = gesture_engine.MODEL_PATH
-        gesture_engine.MODEL_PATH = os.path.join(tempfile.gettempdir(),
-                                                 'definitely-not-a-model.task')
+        real = gesture_engine.MODEL_PATH, gesture_engine.LANDMARKER_PATH
+        missing = os.path.join(tempfile.gettempdir(), 'definitely-not-a-model.task')
+        gesture_engine.MODEL_PATH = gesture_engine.LANDMARKER_PATH = missing
         try:
             engine = GestureEngine()      # must not raise
             self.assertIsNone(engine.tracker)
         finally:
-            gesture_engine.MODEL_PATH = real
+            gesture_engine.MODEL_PATH, gesture_engine.LANDMARKER_PATH = real
+
+    def test_the_hand_landmarker_is_preferred(self):
+        if gesture_engine.mp is None or not os.path.exists(gesture_engine.LANDMARKER_PATH):
+            self.skipTest('mediapipe or hand_landmarker.task missing')
+        engine = GestureEngine()
+        try:
+            self.assertEqual(type(engine.tracker).__name__, 'HandLandmarker')
+        finally:
+            engine.tracker.close()
 
 
 class TestCameraArgs(unittest.TestCase):
@@ -811,3 +836,99 @@ class TestCursorSmoothing(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestEngagement(unittest.TestCase):
+    """Only a hand held up like the demo takes control; scratching your head doesn't."""
+
+    def setUp(self):
+        self.e = StubEngine()
+
+    def test_an_open_palm_engages_after_a_moment(self):
+        hand = make_hand(0.5, 0.5)
+        self.assertFalse(self.e.update_engagement(hand, None, 1000.0))
+        self.assertTrue(self.e.update_engagement(hand, None, 1000.0 + gesture_engine.ENGAGE_SEC))
+
+    def test_a_curled_hand_never_engages(self):
+        fist = make_hand(0.5, 0.5, closed=True)
+        for i in range(10):
+            self.assertFalse(self.e.update_engagement(fist, None, 1000.0 + 0.05 * i))
+
+    def test_once_engaged_any_shape_keeps_control_until_the_hand_is_lost(self):
+        self.e.update_engagement(make_hand(0.5, 0.5), None, 1000.0)
+        self.e.update_engagement(make_hand(0.5, 0.5), None, 1000.2)
+        self.assertTrue(self.e.update_engagement(make_hand(0.5, 0.5, closed=True), None, 1000.3))
+        self.e.present, self.e.last_seen = True, 1000.3
+        self.e.mark_absent(1000.3 + gesture_engine.HAND_LOST_SEC + 0.01)
+        self.assertFalse(self.e.engaged)
+
+    def test_a_hand_too_close_is_flagged(self):
+        big = make_hand(0.5, 0.5, scale=0.5)
+        self.e.update_too_close(big, 1000.0)
+        self.assertFalse(self.e.too_close)
+        self.e.update_too_close(big, 1000.0 + gesture_engine.TOO_CLOSE_SEC)
+        self.assertTrue(self.e.too_close)
+        self.e.update_too_close(make_hand(0.5, 0.5), 1001.0)
+        self.assertFalse(self.e.too_close)
+
+
+class TestEngagementThroughTheFrameLoop(unittest.TestCase):
+    """The real per-frame path: a held-up hand takes control after a few frames.
+
+    (A bug reset the engage timer on every frame a hand was not yet in control,
+    so no hand ever took control on the Pi.)
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = gesture_engine.GESTURE_STATUS_FILE
+        gesture_engine.GESTURE_STATUS_FILE = os.path.join(self.tmp, 'g.json')
+        self.e = StubEngine()
+
+    def tearDown(self):
+        gesture_engine.GESTURE_STATUS_FILE = self._orig
+
+    def test_a_held_up_hand_takes_control_within_a_few_frames(self):
+        hand = make_hand(0.4, 0.5)
+        t = 1000.0
+        for i in range(6):                         # ~20 fps
+            self.e.step(hand, None, t + 0.05 * i)
+        self.assertTrue(self.e.engaged)
+        self.assertTrue(self.e.present)
+
+    def test_a_curled_hand_never_does(self):
+        fist = make_hand(0.4, 0.5, closed=True)
+        for i in range(20):
+            self.e.step(fist, None, 1000.0 + 0.05 * i)
+        self.assertFalse(self.e.engaged)
+        self.assertFalse(self.e.present)
+
+    def test_control_ends_once_the_hand_is_gone(self):
+        hand = make_hand(0.4, 0.5)
+        for i in range(6):
+            self.e.step(hand, None, 1000.0 + 0.05 * i)
+        for i in range(20):
+            self.e.step(None, None, 1000.5 + 0.05 * i)
+        self.assertFalse(self.e.engaged)
+        self.assertFalse(self.e.present)
+
+    def test_a_pinch_after_taking_control_still_clicks(self):
+        t = 1000.0
+        for i in range(6):
+            self.e.step(make_hand(0.4, 0.5), None, t + 0.05 * i)
+        self.e.step(make_hand(0.4, 0.5, pinch=True), None, t + 0.35)
+        self.assertEqual(self.e.step(make_hand(0.4, 0.5), None, t + 0.5), "tap")
+
+
+class TestTapPosition(unittest.TestCase):
+    """A tap reports where its pinch began: the hand drifts while the fingers part."""
+
+    def test_the_tap_carries_the_pinch_start(self):
+        e = StubEngine()
+        t = 1000.0
+        e.process_landmarks(make_hand(0.30, 0.50), t)
+        e.process_landmarks(make_hand(0.30, 0.50, pinch=True), t + 0.05)
+        start = (e.hand_x, e.hand_y)
+        e.process_landmarks(make_hand(0.31, 0.51, pinch=True), t + 0.15)   # a small drift
+        self.assertEqual(e.process_landmarks(make_hand(0.33, 0.52), t + 0.25), "tap")
+        self.assertEqual(e.tap_at, start)

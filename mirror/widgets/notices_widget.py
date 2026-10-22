@@ -87,6 +87,9 @@ def format_fetched_at(iso_str):
 # Notice Card matching the web UI
 # ─────────────────────────────────────────────────────────────────────────────
 
+CARD_STICKY_PX = 24     # how far past its edge the hand can go before the selection moves
+
+
 class NoticeDetailModal(QFrame):
     """Full expanded notice overlay showing clear large typography and full text."""
 
@@ -272,7 +275,7 @@ class NoticeCard(QFrame):
         self._bw = 0.0
         self._bw_timer = QTimer(self)
         self._bw_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._bw_timer.setInterval(12)
+        self._bw_timer.setInterval(33)   # a short fade: 30 fps is plenty, and costs a third
         self._bw_timer.timeout.connect(self._tick_border)
         self._build_ui()
 
@@ -401,7 +404,7 @@ class NoticeCard(QFrame):
 
     def _tick_border(self):
         target = SELECT_BORDER_PX if self._selected else 0.0
-        self._bw += 0.28 * (target - self._bw)          # exponential lerp
+        self._bw += 0.58 * (target - self._bw)          # exponential lerp
         if abs(self._bw - target) < 0.08:
             self._bw = target
             self._bw_timer.stop()
@@ -716,6 +719,8 @@ class NoticesWidget(QFrame):
         if not cards:
             return None
         index = max(0, min(len(cards) - 1, index))
+        if index == getattr(self, 'selected_index', -1) and cards[index].selected:
+            return cards[index]                # unchanged: nothing to redo
         self.selected_index = index
         selected_card = None
         for i, card in enumerate(cards):
@@ -737,6 +742,14 @@ class NoticesWidget(QFrame):
         win_h = self.window().height() if self.window() else 1080
         hand_global_y = int(y_frac * win_h)
         local_y = hand_global_y - top_y + self.scroll_area.verticalScrollBar().value()
+
+        # Sticky: stay on the selected card until the hand is clearly past it,
+        # so jitter on a boundary doesn't flick between two cards.
+        cur = getattr(self, 'selected_index', -1)
+        if 0 <= cur < len(cards):
+            c = cards[cur]
+            if c.y() - CARD_STICKY_PX <= local_y <= c.y() + c.height() + CARD_STICKY_PX:
+                return self.select_index(cur)
 
         best_idx, min_dist = -1, float('inf')
         for idx, card in enumerate(cards):
@@ -791,6 +804,12 @@ class NoticesWidget(QFrame):
 
     def _apply_frame_style(self):
         """No frame outline -- border removed per user request."""
+        # Setting a stylesheet re-styles every card inside (~100 ms on the Pi).
+        # This one never changes, but it was re-applied each time the hand
+        # crossed between panels, freezing the cursor: set it once.
+        if getattr(self, '_frame_styled', False):
+            return
+        self._frame_styled = True
         self.setStyleSheet("""
             #NoticesWidget {
                 background-color: #000000;
@@ -885,12 +904,6 @@ class NoticesWidget(QFrame):
     # ──────────────────────────────────────────────────────────────────────
 
     def update_ui(self):
-        # Clear existing cards
-        while self.cards_lay.count():
-            item = self.cards_lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         with self._lock:
             filtered = [n for n in self.notices if self._passes_filter(n)]
             cat_order_list = getattr(self, 'cat_order', [])
@@ -945,6 +958,21 @@ class NoticesWidget(QFrame):
         count_text = f"{len(filtered)} today" if filtered else "0 today"
         self.count_label.setText(count_text)
 
+        # Notices are re-fetched every 15 s but rarely change. Rebuilding every
+        # card each time froze the UI for 100-200 ms (the cursor stopped, then
+        # jumped) and dropped whatever the hand had selected, so only rebuild
+        # when what's shown would actually differ.
+        sig = (error_msg, tuple((n.get('id'), n.get('title'), n.get('notice'), n.get('category'),
+                                 n.get('importance')) for n in filtered))
+        if sig == getattr(self, '_cards_sig', None):
+            return
+        self._cards_sig = sig
+
+        while self.cards_lay.count():
+            item = self.cards_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         if not filtered:
             if error_msg:
                 # Top downtime notice card in large bold typography
@@ -981,7 +1009,17 @@ class NoticesWidget(QFrame):
     # Auto scroll loop
     # ──────────────────────────────────────────────────────────────────────
 
+    def pause_auto_scroll(self, seconds):
+        """Hold the automatic scroll for `seconds` from now (a hand is in view)."""
+        self._auto_scroll_paused_until = max(self._auto_scroll_paused_until, time.time() + seconds)
+
+    def hold_auto_scroll(self, hold):
+        """Pause the slow automatic scroll (while something covers the panel)."""
+        self._auto_scroll_held = bool(hold)
+
     def _auto_scroll_tick(self):
+        if getattr(self, '_auto_scroll_held', False):
+            return
         now = time.time()
 
         # Resume auto-scroll from current position if no manual scroll for 10s.

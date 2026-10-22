@@ -159,6 +159,10 @@ ensure_files() {
         wget -O gesture_recognizer.task -q \
             https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
     fi
+    if [ ! -f hand_landmarker.task ]; then    # preferred: same hand model, no gesture classifier
+        wget -O hand_landmarker.task -q \
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+    fi
 }
 
 ensure_env_file() {

@@ -86,11 +86,13 @@ func trainFace(c echo.Context) error {
 		}
 	}
 	if saved == 0 {
+		log.Printf("[FACE] Scan from %s rejected: none of %d photos could be read", userID, len(req.Images))
 		os.RemoveAll(workDir)
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "None of the photos could be read"})
 	}
 
 	job := startFaceJob(userID)
+	log.Printf("[FACE] Scan started for %s: %d of %d photos usable", userID, saved, len(req.Images))
 	go func() {
 		defer os.RemoveAll(workDir)
 		code, body := runFaceTraining(userID, workDir)
@@ -167,6 +169,7 @@ func faceErr(msg string) map[string]interface{} { return map[string]interface{}{
 func runFaceTraining(userID, workDir string) (int, map[string]interface{}) {
 	py := facePython()
 	if py == nil {
+		log.Printf("[FACE] Scan for %s failed: no Python with face_recognition on this server", userID)
 		return http.StatusServiceUnavailable, faceErr("Face scanning is unavailable on the server right now. Please try again later or contact " + ContactEmail + ".")
 	}
 

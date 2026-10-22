@@ -1,4 +1,5 @@
 # mirror/smart_mirror_pro.py
+import gc
 import sys
 import os
 import json
@@ -21,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QRect, QRectF, QPoint, QPointF, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QRadialGradient
+from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient, QRegion
 
 from config import *
 from timing_config import (
@@ -37,6 +38,7 @@ from widgets.kings_week_widget import KingsWeekWidget
 from telemetry import TelemetryTracker
 from screensaver import ScreensaverClient, SlideshowView
 from debug_overlay import DebugOverlay, TripleClickWatcher, read_system_stats
+from perf_watch import PaintStats, StallWatch
 from log_forwarder import start_log_forwarder
 
 
@@ -90,10 +92,10 @@ INDICATOR_BAR_HEIGHT = 100
 
 KINGS_IDLE_MS        = 20_000
 
-PINCH_EXIT_HOLD_SEC = 1.0    # how long to hold pinch to dismiss the tutorial
-TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): give them this long before the demo
+TUTORIAL_FIRST_DELAY_SEC = 5.0   # someone arrives (or scans): this long before the demo
+MAGNET_REACH = 90            # px around a button within which the cursor is drawn towards it
+MAGNET_PULL = 0.7            # how strongly (0 none, 1 straight onto its centre)
 SIGNED_OUT_FACE_HOLD_SEC = 5.0   # after signing out, ignore their face until it's gone this long
-PINCH_DROPOUT_SEC   = 0.25   # tolerate brief tracking drops without resetting
 SCAN_TEASE_HOLD_SEC = 4.0    # how long STUDENT ID SCAN stays up after a brief sighting
 TEASER_VISIT_WINDOW_SEC = 15.0   # a visit starting this soon after the teaser came from it
 PRACTICE_SLIDE_MS = 650      # video sliding aside for the practice (variant B)
@@ -115,22 +117,27 @@ class DemoVideoDecoder(QThread):
     looped = pyqtSignal()          # a looping clip reached its end and started again
 
     def __init__(self, path, speed=1.0, parent=None):
+        """path: one clip, or a list played one after another."""
         super().__init__(parent)
-        self.path = path
+        self.paths = [path] if isinstance(path, str) else [p for p in path if p]
+        self.path = self.paths[-1]
         self.speed = max(0.1, float(speed))
         self._cond = threading.Condition()
         self._size = (0, 0)
         self._loop = False
         self._generation = 0          # bumped by play()/stop() to interrupt a run
         self._playing = False
+        self._paused = False
         self._quit = False
         self.fps = 30.0
         self.frame_count = 0
         try:
-            cap = cv2.VideoCapture(path)
-            self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            self.frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-            cap.release()
+            for i, clip in enumerate(self.paths):
+                cap = cv2.VideoCapture(clip)
+                if i == 0:
+                    self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                self.frame_count += int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                cap.release()
         except Exception:
             pass
 
@@ -146,12 +153,18 @@ class DemoVideoDecoder(QThread):
     def play(self, loop=False):
         """Start from the first frame; with loop=False, emit played_once at the end."""
         with self._cond:
+            self._paused = False
             self._loop = loop
             self._playing = True
             self._generation += 1
             self._cond.notify_all()
         if not self.isRunning():
             self.start()
+
+    def set_paused(self, paused):
+        """Hold the current frame without decoding (True), or carry on (False)."""
+        with self._cond:
+            self._paused = bool(paused)
 
     def stop(self):
         with self._cond:
@@ -189,7 +202,7 @@ class DemoVideoDecoder(QThread):
     def first_frame(self):
         """A still of the opening frame, shown while the overlay fades in."""
         try:
-            cap = cv2.VideoCapture(self.path)
+            cap = cv2.VideoCapture(self.paths[0])
             ok, frame = cap.read()
             cap.release()
             return self._to_image(frame) if ok else None
@@ -197,6 +210,12 @@ class DemoVideoDecoder(QThread):
             return None
 
     def run(self):
+        # Lowest priority for this thread (and the decoder threads it starts):
+        # the hand tracker comes first, and at worst the demo drops a frame.
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 15)
+        except (AttributeError, OSError):
+            pass                             # Windows: no per-thread niceness
         while True:
             with self._cond:
                 self._cond.wait_for(lambda: self._playing or self._quit)
@@ -206,18 +225,46 @@ class DemoVideoDecoder(QThread):
             self._play_through(gen, loop)
 
     def _play_through(self, gen, loop):
-        cap = cv2.VideoCapture(self.path)
-        if not cap.isOpened():
+        """Play the clips in order; looping, start again (emitting looped) after the last."""
+        i, played = 0, False
+        while True:
+            result = self._play_clip(self.paths[i], gen)
+            if result == 'stopped':
+                return
+            played = played or result == 'ended'
+            i += 1
+            if i < len(self.paths):
+                continue
+            if loop and played:
+                self.looped.emit()
+                i, played = 0, False
+                continue
             with self._cond:
+                if gen != self._generation:
+                    return
                 self._playing = False
+            self.played_once.emit()
             return
-        interval = 1.0 / (self.fps * self.speed)
+
+    def _play_clip(self, path, gen):
+        """'ended' at the end of the clip, 'missing' if it won't open, 'stopped' if interrupted."""
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            return 'missing'
+        fps = cap.get(cv2.CAP_PROP_FPS) or self.fps
+        interval = 1.0 / (fps * self.speed)
         t0, shown = time.monotonic(), 0
         try:
             while True:
                 with self._cond:
                     if gen != self._generation or self._quit:
-                        return
+                        return 'stopped'
+                    paused = self._paused
+                if paused:                      # hold this frame; carry on from it later
+                    t_pause = time.monotonic()
+                    time.sleep(0.05)
+                    t0 += time.monotonic() - t_pause
+                    continue
                 lag = time.monotonic() - (t0 + shown * interval)
                 if lag < 0:
                     time.sleep(min(-lag, 0.05))
@@ -228,17 +275,7 @@ class DemoVideoDecoder(QThread):
                 ok, frame = cap.read()
                 shown += 1
                 if not ok:
-                    if loop:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        t0, shown = time.monotonic(), 0
-                        self.looped.emit()
-                        continue
-                    with self._cond:
-                        if gen != self._generation:
-                            return
-                        self._playing = False
-                    self.played_once.emit()
-                    return
+                    return 'ended'
                 self.frame_ready.emit(self._to_image(frame))
         finally:
             cap.release()
@@ -252,6 +289,10 @@ class VideoSurface(QWidget):
         self._image = None
         self._background = background
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if background is not None:
+            # It covers its whole rect, so each new frame repaints only itself,
+            # not the dimmed screen and widgets underneath.
+            self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
 
     def set_image(self, img):
         self._image = img
@@ -272,11 +313,39 @@ class VideoSurface(QWidget):
 
 
 class GestureDemoOverlay(QWidget):
-    """The in-session tutorial: the video over a semi-transparent dark overlay."""
+    """The in-session tutorial: the video over the screen, dimmed.
+
+    It used to be a see-through dark layer over the live screen. At 1920x1080
+    on the Pi that meant every frame of the video, the pulsing scan hint and
+    the practice made Qt redraw the whole guest screen underneath first: the
+    UI fell to ~20 fps. Now it shows a dimmed snapshot of the screen taken
+    when it opens, and is opaque, so nothing beneath is redrawn while it's up.
+    """
+    DIM = QColor(0, 0, 0, 184)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._backdrop = None
+
+    def set_backdrop(self, pixmap):
+        """A snapshot of what's behind (None: plain see-through dimming)."""
+        if pixmap is not None and not pixmap.isNull():
+            dimmed = QPixmap(pixmap)
+            p = QPainter(dimmed)
+            p.fillRect(dimmed.rect(), self.DIM)
+            p.end()
+            self._backdrop = dimmed
+        else:
+            self._backdrop = None
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, self._backdrop is not None)
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 184))
+        if self._backdrop is not None:
+            painter.drawPixmap(event.rect(), self._backdrop, event.rect())
+        else:
+            painter.fillRect(self.rect(), self.DIM)
         painter.end()
 
 
@@ -384,17 +453,35 @@ class GestureTrailOverlay(QWidget):
     _PINCH_RGB = ( 59, 130, 246)
 
     _TICK_MS        = 16      # display rate
-    _HEAD_TAU       = 0.035   # seconds for the head to close ~63% of the gap
+    _HEAD_TAU       = 0.018   # seconds for the head to close ~63% of the gap (was 35 ms: felt laggy)
     _PREDICT_SHARE  = 0.6     # extrapolate at most this share of one report interval
     _VELOCITY_BLEND = 0.5     # weight of the newest velocity sample
     _STILL_SQ       = 8 ** 2  # no trail unless the hand travelled this far (px²)
     _DOT_FADE_SEC   = 0.25    # how long the head lingers after the hand is lost
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, parent=None, own_window=False):
+        """own_window: draw in a separate see-through window above the mirror.
+
+        As a child widget, every trail repaint made Qt repaint the notices and
+        cards beneath it too (in software, at 1920x1080), 80 times a second
+        while a hand moved: the UI fell to ~30 fps just from hovering. In its
+        own window the compositor blends it over the mirror instead, and only
+        the trail itself is ever repainted.
+        """
+        if own_window:
+            super().__init__(parent, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                             | Qt.WindowType.WindowStaysOnTopHint
+                             | Qt.WindowType.WindowTransparentForInput
+                             | Qt.WindowType.WindowDoesNotAcceptFocus
+                             | Qt.WindowType.X11BypassWindowManagerHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        else:
+            super().__init__(parent)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+            self.setStyleSheet("background: transparent; border: none;")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.own_window = own_window
 
         self._was_pinched = False
         self._pinched = False
@@ -412,15 +499,27 @@ class GestureTrailOverlay(QWidget):
 
         self._ipoints = []           # (x, y, t, pinched) head positions, newest last
         self._ripples = []           # (x, y, t_start, duration, QColor)
-        self._max_age = 0.28         # trail length in seconds
-        self._dirty = QRect()
+        self._max_age = 0.16         # trail length in seconds (short: less to repaint)
+        self._dirty = QRegion()
 
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(self._TICK_MS)
         self._timer.timeout.connect(self._tick)
         self._active = False
-        self.hide()
+        if not own_window:
+            self.hide()
+
+    def raise_(self):
+        if not self.own_window:      # a window above the mirror already; restacking it is churn
+            super().raise_()
+
+    def setVisible(self, visible):
+        # Kept mapped as a window: mapping and unmapping it at every hand
+        # movement would be churn. An empty trail paints nothing.
+        if self.own_window and not visible and self.parent() is not None and self.parent().isVisible():
+            return
+        super().setVisible(visible)
 
     def is_empty(self):
         return self._rx is None and not self._ipoints and not self._ripples
@@ -534,30 +633,63 @@ class GestureTrailOverlay(QWidget):
             self._timer.stop()
             self._active = False
             self.update(self._dirty)
-            self._dirty = QRect()
+            self._dirty = QRegion()
             self.hide()
             return
 
         self._repaint_region()
 
-    def _bounds(self):
-        xs, ys = [p[0] for p in self._ipoints], [p[1] for p in self._ipoints]
+    _REGION_BOXES = 12        # the trail is invalidated as about this many small boxes
+    _CURSOR_R = 20            # cursor mode: the circle's radius (its halo reaches ~1.8x)
+
+    def set_cursor_mode(self, on):
+        """A circle where the hand is, instead of a trail (the tutorial).
+
+        People couldn't find their hand during the tutorial: a trail only
+        shows while the hand moves. The circle shows even when it's still,
+        and shrinks and turns blue while pinched.
+        """
+        on = bool(on)
+        if on != getattr(self, '_cursor_mode', False):
+            self._cursor_mode = on
+            self._ipoints.clear()
+            self.update(self._dirty)
+
+    def _region(self):
+        """What to repaint: a chain of small boxes along the trail.
+
+        One rectangle around the whole trail made Qt repaint everything beneath
+        it (notices, cards) at the trail's full size, 80 times a second while a
+        hand swept across: ~200 megapixels a second, enough to drop frames on
+        the Pi. Boxes along the path cover a fraction of that.
+        """
+        if getattr(self, '_cursor_mode', False):
+            region = QRegion()
+            if self._rx is not None:
+                reach = int(self._CURSOR_R * 1.8) + 4
+                region += QRect(int(self._rx) - reach, int(self._ry) - reach, 2 * reach, 2 * reach)
+            for rx, ry, _, _, _ in self._ripples:
+                region += QRect(int(rx) - 30, int(ry) - 30, 60, 60)
+            return region
+        pts = [(p[0], p[1]) for p in self._ipoints]
         if self._rx is not None:
-            xs.append(self._rx)
-            ys.append(self._ry)
-        pad = 18
-        rect = QRect()
-        if xs:
-            rect = QRect(int(min(xs)) - pad, int(min(ys)) - pad,
-                         int(max(xs) - min(xs)) + 2 * pad, int(max(ys) - min(ys)) + 2 * pad)
+            pts.append((self._rx, self._ry))
+        pad = 12
+        region = QRegion()
+        step = max(1, len(pts) // self._REGION_BOXES)
+        for i in range(0, max(1, len(pts) - 1), step):
+            seg = pts[i:i + step + 1]
+            xs, ys = [p[0] for p in seg], [p[1] for p in seg]
+            region += QRect(int(min(xs)) - pad, int(min(ys)) - pad,
+                            int(max(xs) - min(xs)) + 2 * pad, int(max(ys) - min(ys)) + 2 * pad)
         for rx, ry, _, _, _ in self._ripples:
-            rect = rect.united(QRect(int(rx) - 30, int(ry) - 30, 60, 60))
-        return rect
+            region += QRect(int(rx) - 30, int(ry) - 30, 60, 60)
+        return region
 
     def _repaint_region(self):
-        rect = self._bounds()
-        self.update(rect.united(self._dirty))
-        self._dirty = rect
+        region = self._region()
+        self.update(region.united(self._dirty))
+        self._dirty = region
 
     @staticmethod
     def _smooth_path(pts):
@@ -590,16 +722,32 @@ class GestureTrailOverlay(QWidget):
 
         r, g, b = self._PINCH_RGB if self._pinched else self._OPEN_RGB
 
+        if getattr(self, '_cursor_mode', False):
+            if self._rx is not None:
+                alpha = self._dot_alpha(now)
+                c = QPointF(self._rx, self._ry)
+                rad = self._CURSOR_R * (0.75 if self._pinched else 1.0)
+                # The mirror's accent blue: it stands out on the white practice
+                # dot and on black alike. Deeper blue and smaller while pinched.
+                cr, cg, cb = (37, 99, 235) if self._pinched else (56, 189, 248)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(cr, cg, cb, int(70 * alpha)))   # soft halo: easy to spot
+                painter.drawEllipse(c, rad * 1.8, rad * 1.8)
+                painter.setBrush(QColor(cr, cg, cb, int(245 * alpha)))
+                painter.drawEllipse(c, rad, rad)
+            painter.end()
+            return
+
         # Trail: a fading ribbon behind a moving hand. A still hand draws
         # nothing — there is no cursor, only the trail while it moves.
         pts = self._ipoints
         moved = len(pts) >= 2 and (pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2 >= self._STILL_SQ
         if moved:
-            path = self._smooth_path(pts)
-            for width, alpha in ((12, 70), (5, 150), (2.2, 230)):
-                painter.setPen(QPen(QColor(r, g, b, alpha), width, Qt.PenStyle.SolidLine,
-                                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-                painter.drawPath(path)
+            # One stroke (it used to be three, a wide glow under a core): far
+            # cheaper to draw, and the cursor is what people watch, not the glow.
+            painter.setPen(QPen(QColor(r, g, b, 220), 5, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(self._smooth_path(pts))
 
         painter.end()
 
@@ -651,12 +799,11 @@ class OverscrollGlow(QWidget):
 
 
 class GuestScanCallout(QWidget):
-    """Bouncing + pulsing STUDENT ID SCAN callout drawn entirely in paintEvent.
+    """The STUDENT ID SCAN callout (or one centred line of text), painted.
 
-    Avoids QGraphicsOpacityEffect (which conflicts with the overlay's own
-    fade effect and causes UI freezes). The widget drives its own 60 fps
-    timer and uses time.time() + math.sin() to compute both the bounce
-    offset and the alpha pulse on every frame.
+    Still: it used to pulse and its arrow bounced, which people didn't need
+    and which repainted a full-width strip 30 times a second. set_fade() is
+    only for fading in and out with the tutorial.
     """
 
     def __init__(self, parent=None):
@@ -666,36 +813,22 @@ class GuestScanCallout(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
         self.setStyleSheet("background: transparent;")
 
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._timer.setInterval(16)   # 60 fps
-        self._timer.timeout.connect(self.update)
         self._fade = 1.0
         self.show_or = False      # "OR": over the tutorial, scanning is the other way in
-        self.stand_close = False  # variant B's brief-encounter hint, centred, one line
+        self.message = None       # set: one centred line instead (variant B's hint, "step back")
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
         self.update()
 
     def start(self):
-        self._timer.start()
         self.update()
 
     def stop(self):
-        self._timer.stop()
+        pass
 
     def paintEvent(self, event):
-        import math as _math
-        t = time.time()
-
-        # Pulse: 0.55 -> 1.0 oscillation at ~0.8 Hz
-        pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math.sin(t * _math.pi * 1.6))
-
-        # Bounce: arrow moves up/down 12px at ~1.2 Hz
-        bounce = 12.0 * _math.sin(t * _math.pi * 2.4)
-
-        alpha = int(255 * pulse * self._fade)
+        alpha = int(255 * self._fade)
         w = self.width()
 
         painter = QPainter(self)
@@ -712,21 +845,78 @@ class GuestScanCallout(QWidget):
             painter.drawText(QRect(0, int(top), w, height),
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
 
-        if self.stand_close:
-            line("STAND CLOSE TO INTERACT", 0, self.height(), 46, QFont.Weight.Black, 7, alpha)
+        if self.message:
+            line(self.message, 0, self.height(), 46, QFont.Weight.Black, 7, alpha)
             painter.end()
             return
 
-        # The small lines hold steady (no pulse) so they're easy to read.
-        steady = int(255 * self._fade)
+        steady = alpha
         if self.show_or:
-            line("OR", 0, 34, 26, QFont.Weight.Bold, 6, int(steady * 0.7))
-        line("STUDENT ID SCAN", 36, 56, 44, QFont.Weight.Black, 7, alpha)
-        line("SCAN AGAIN TO SIGN OUT", 92, 26, 18, QFont.Weight.DemiBold, 3, int(steady * 0.6))
+            line("OR", 0, 28, 22, QFont.Weight.Bold, 6, int(steady * 0.7))
+        line("STUDENT ID SCAN", 28, 50, 40, QFont.Weight.Black, 7, alpha)
+        line("SCAN AGAIN TO SIGN OUT", 78, 24, 16, QFont.Weight.DemiBold, 3, int(steady * 0.6))
 
-        # Arrow "v" below, bouncing towards the scanner
-        painter.translate(0.0, bounce)
-        line("▼", 122, 70, 56, QFont.Weight.Black, 0, alpha)
+        # Arrow below, pointing at the scanner
+        line("▼", 104, 56, 44, QFont.Weight.Black, 0, alpha)
+        painter.end()
+
+
+class MessageVeil(QWidget):
+    """A brief full-screen message over a darkened screen ("SUCCESSFULLY LOGGED OUT").
+
+    Painted, fading in and out with its own alpha (no graphics effect), and
+    transparent to input.
+    """
+    FADE_MS = 250
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.text = ""
+        self._alpha = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self.FADE_MS)
+        self._anim.valueChanged.connect(self._on_alpha)
+        self._anim.finished.connect(self._on_anim_done)
+        self._hold = QTimer(self)
+        self._hold.setSingleShot(True)
+        self._hold.timeout.connect(lambda: self._fade_to(0.0))
+        self.hide()
+
+    def flash(self, text, seconds=2.0):
+        self.text = text
+        self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self._hold.start(int(seconds * 1000) + self.FADE_MS)
+        self._fade_to(1.0)
+
+    def _fade_to(self, end):
+        self._anim.stop()
+        self._anim.setStartValue(self._alpha)
+        self._anim.setEndValue(end)
+        self._anim.start()
+
+    def _on_alpha(self, v):
+        self._alpha = float(v)
+        self.update()
+
+    def _on_anim_done(self):
+        if self._alpha <= 0.0:
+            self.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, int(200 * self._alpha)))
+        font = painter.font()
+        font.setFamily("Segoe UI")
+        font.setPixelSize(44)
+        font.setWeight(QFont.Weight.Black)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 6)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, int(255 * self._alpha)))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text)
         painter.end()
 
 
@@ -741,18 +931,27 @@ class PracticePanel(QWidget):
     finished = pyqtSignal()
 
     TAPS = 2
-    DOTS = ((0.34, 0.42), (0.70, 0.66))   # where the dot sits, as fractions of the play area
-    CARDS = 6
+    DOTS = ((0.32, 0.45), (0.70, 0.60))   # where the dot sits, as fractions of the play area
+    DOT_R, DOT_HIT = 46, 120               # drawn radius, and how near a pinch counts (at scale 1)
+    CARDS = 14                             # a long list, so there's real scrolling to do
     CARD_H, CARD_GAP, PAD = 64, 12, 18
+    DESIGN_H = 380                         # the height these sizes were drawn for
+
+    @property
+    def scale(self):
+        """Sizes grow with the panel (it's bigger on a bigger screen)."""
+        return max(0.8, min(1.6, self.height() / self.DESIGN_H)) if self.height() > 0 else 1.0
+
+    def dot_radius(self):
+        return int(self.DOT_R * self.scale)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self.update)
+        # Nothing here animates on its own: it repaints only when something
+        # changes (the hand moving onto the dot, a pinch, the list scrolling).
+        # A 60 fps timer used to repaint it, and the tutorial beneath, nonstop.
         self._fade = 0.0
         self.reset()
         self.hide()
@@ -768,44 +967,61 @@ class PracticePanel(QWidget):
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
+        # Fully in, it paints every pixel, so nothing behind it is repainted.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, self._fade >= 1.0)
         self.update()
-
-    def showEvent(self, event):
-        self._timer.start()
-        super().showEvent(event)
-
-    def hideEvent(self, event):
-        self._timer.stop()
-        super().hideEvent(event)
 
     # ── geometry ──
     def play_rect(self):
-        return QRect(0, 104, self.width(), max(120, self.height() - 104))
+        top = int(104 * self.scale)
+        return QRect(0, top, self.width(), max(120, self.height() - top))
 
     def dot_center(self):
         r = self.play_rect()
         fx, fy = self.DOTS[min(self._taps, len(self.DOTS) - 1)]
         return QPointF(r.left() + fx * r.width(), r.top() + fy * r.height())
 
+    def end_card_rect(self):
+        """THE END card where it's drawn now (people pinch it instead of scrolling)."""
+        k = self.scale
+        area = self.play_rect()
+        pad, card_h, gap = int(round(self.PAD * k)), int(round(self.CARD_H * k)), int(round(self.CARD_GAP * k))
+        y = area.top() + pad - self._scroll + (self.CARDS - 1) * (card_h + gap)
+        return QRect(area.left() + pad, int(y), area.width() - 2 * pad, card_h).intersected(area)
+
     def scroll_max(self):
-        content = self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP
+        k = self.scale
+        content = (self.PAD * 2 + self.CARDS * self.CARD_H + (self.CARDS - 1) * self.CARD_GAP) * k
         return max(1.0, content - self.play_rect().height())
 
     # ── input (hand position in this widget's coordinates) ──
     def handle(self, point, event, delta=0):
+        changed = False
         if self.step == 0:
             c = self.dot_center()
-            self._hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= 70
+            hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= self.DOT_HIT * self.scale
+            changed = hover != self._hover
+            self._hover = hover
             if event == "tap" and self._hover:
                 self._taps += 1
                 self._flash_at = time.monotonic()
+                QTimer.singleShot(260, self.update)    # clear the flash
+                changed = True
                 if self._taps >= self.TAPS:
                     self._advance()
         elif self.step == 1 and event in ("scroll", "fling") and delta:
             self._scroll = max(0.0, min(self.scroll_max(), self._scroll + delta))
+            changed = True
             if self._scroll >= self.scroll_max() - 1:
                 self._advance()
-        self.update()
+        elif self.step == 1 and event == "tap":
+            end = self.end_card_rect()
+            if not end.isEmpty() and end.adjusted(-20, -20, 20, 20).contains(point.toPoint()):
+                self._scroll = self.scroll_max()
+                self._advance()            # pinching THE END counts as getting there
+                changed = True
+        if changed:
+            self.update()
 
     def _advance(self):
         self.step += 1
@@ -822,6 +1038,8 @@ class PracticePanel(QWidget):
         now = time.monotonic()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if f >= 1.0:
+            painter.fillRect(self.rect(), QColor(0, 0, 0))     # opaque once fully in
         w = self.width()
 
         def text(t, rect, px, weight, color, alpha=1.0, spacing=0, align=Qt.AlignmentFlag.AlignLeft):
@@ -836,12 +1054,17 @@ class PracticePanel(QWidget):
             painter.setPen(c)
             painter.drawText(rect, align | Qt.AlignmentFlag.AlignVCenter, t)
 
+        k = self.scale
+
+        def sz(v):
+            return int(round(v * k))
+
         step_lbl = "PRACTICE" if self.step == 2 else f"PRACTICE  {self.step + 1} / 2"
-        text(step_lbl, QRect(0, 0, w, 24), 14, QFont.Weight.Bold, '#94a3b8', spacing=3)
+        text(step_lbl, QRect(0, 0, w, sz(24)), sz(14), QFont.Weight.Bold, '#94a3b8', spacing=3)
         title = ("PINCH THE DOT", "PINCH AND DRAG TO SCROLL", "YOU'RE READY")[self.step]
-        text(title, QRect(0, 26, w, 44), 32, QFont.Weight.Black, '#ffffff', spacing=1)
+        text(title, QRect(0, sz(26), w, sz(44)), sz(32), QFont.Weight.Black, '#ffffff', spacing=1)
         sub = (f"{self._taps} of {self.TAPS}", "Scroll to the end", "Explore the mirror")[self.step]
-        text(sub, QRect(0, 70, w, 26), 18, QFont.Weight.DemiBold, '#cbd5e1')
+        text(sub, QRect(0, sz(70), w, sz(26)), sz(18), QFont.Weight.DemiBold, '#cbd5e1')
 
         area = self.play_rect()
         painter.setPen(Qt.PenStyle.NoPen)
@@ -850,32 +1073,36 @@ class PracticePanel(QWidget):
 
         if self.step == 0:
             c = self.dot_center()
-            pulse = 0.5 + 0.5 * math.sin(now * math.pi * 1.6)
-            flash = max(0.0, 1.0 - (now - self._flash_at) / 0.4)
-            halo = 30 + 22 * pulse + 30 * flash
+            flash = 1.0 if now - self._flash_at < 0.25 else 0.0     # a pinch landed
+            dot = self.dot_radius()
+            halo = dot + sz(18) + sz(26) * flash
             painter.setBrush(QColor(255, 255, 255, int((26 + 40 * flash) * f)))
             painter.drawEllipse(c, halo, halo)
-            r = 36 if self._hover else 28
+            r = dot + sz(8) if self._hover else dot
             painter.setBrush(QColor(255, 255, 255, int(255 * f)))
             painter.drawEllipse(c, r, r)
         elif self.step == 1:
             painter.save()
             painter.setClipRect(area)
-            y = area.top() + self.PAD - self._scroll
+            pad, card_h = sz(self.PAD), sz(self.CARD_H)
+            y = area.top() + pad - self._scroll
             for i in range(self.CARDS):
-                card = QRectF(area.left() + self.PAD, y, area.width() - 2 * self.PAD, self.CARD_H)
+                if y > area.bottom() or y + card_h < area.top():
+                    y += card_h + sz(self.CARD_GAP)
+                    continue                         # off screen: skip
+                card = QRectF(area.left() + pad, y, area.width() - 2 * pad, card_h)
                 last = i == self.CARDS - 1
                 painter.setBrush(QColor(30, 30, 30, int(255 * f)))
                 painter.drawRoundedRect(card, 6, 6)
                 painter.setBrush(QColor(56, 189, 248, int(255 * f)) if last else QColor(51, 65, 85, int(255 * f)))
                 painter.drawRect(QRectF(card.left(), card.top(), 4, card.height()))
                 if last:
-                    text("THE END", card.adjusted(20, 0, 0, 0).toRect(), 16, QFont.Weight.Black, '#ffffff', spacing=3)
+                    text("THE END", card.adjusted(sz(20), 0, 0, 0).toRect(), sz(16), QFont.Weight.Black, '#ffffff', spacing=3)
                 else:
                     painter.setBrush(QColor(42, 53, 72, int(255 * f)))
-                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 16, card.width() * 0.32, 10), 3, 3)
-                    painter.drawRoundedRect(QRectF(card.left() + 20, card.top() + 36, card.width() * 0.62, 10), 3, 3)
-                y += self.CARD_H + self.CARD_GAP
+                    painter.drawRoundedRect(QRectF(card.left() + sz(20), card.top() + sz(16), card.width() * 0.32, sz(10)), 3, 3)
+                    painter.drawRoundedRect(QRectF(card.left() + sz(20), card.top() + sz(36), card.width() * 0.62, sz(10)), 3, 3)
+                y += card_h + sz(self.CARD_GAP)
             painter.restore()
             # how far there is to go, along the right edge
             track = QRectF(area.right() - 8, area.top() + 12, 3, area.height() - 24)
@@ -886,8 +1113,9 @@ class PracticePanel(QWidget):
             painter.drawRoundedRect(QRectF(track.left(), track.top(), 3, done), 1.5, 1.5)
         else:
             c = QPointF(area.center())
-            pop = min(1.0, (now - self._flash_at) / 0.25)
+            pop = 1.0
             painter.setBrush(QColor(255, 255, 255, int(255 * f)))
+            pop = k
             painter.drawEllipse(c, 48 * pop, 48 * pop)
             pen = QPen(QColor(0, 0, 0, int(255 * f)), 8)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -954,6 +1182,7 @@ class SmartMirrorPro(QMainWindow):
 
         # ── Floating Toast Overlay for Alerts / Barcode Scans ────────────
         self._build_toast()
+        self.message_veil = MessageVeil(self.central_widget)   # e.g. "SUCCESSFULLY LOGGED OUT"
 
         # ── Status dot ───────────────────────────────────────────────────
         self.status_dot = QLabel(self.central_widget)
@@ -1060,6 +1289,11 @@ class SmartMirrorPro(QMainWindow):
         self._frame_meter.setTimerType(Qt.TimerType.PreciseTimer)
         self._frame_meter.timeout.connect(self._frame_meter_tick)
         self._frame_meter.start(16)
+        # Logs where the UI thread is whenever it freezes (see perf_watch.py)
+        self._stall_watch = StallWatch(lambda: self._frame_last).start()
+        self._paint_stats = None
+        if os.environ.get('MIRROR_PAINT_STATS') == '1':      # which widgets repaint, how much
+            self._paint_stats = PaintStats().install(QApplication.instance())
 
         # ── Debug panel (triple-click with a mouse) ───────────────────────
         self._last_gesture_data = {}
@@ -1112,6 +1346,32 @@ class SmartMirrorPro(QMainWindow):
             self.showFullScreen()
             self.setCursor(Qt.CursorShape.BlankCursor)
 
+    def _place_trail(self):
+        """Lay the trail exactly over the mirror's content (its own window, or a child)."""
+        trail = self.gesture_trail
+        if trail.own_window:
+            trail.setGeometry(QRect(self.central_widget.mapToGlobal(QPoint(0, 0)), self.central_widget.size()))
+            if self.isVisible() and not trail.isVisible():
+                trail.show()
+        else:
+            trail.setGeometry(0, 0, self.central_widget.width(), self.central_widget.height())
+            trail.raise_()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if hasattr(self, 'gesture_trail'):
+            self._place_trail()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'gesture_trail'):
+            self._place_trail()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, 'gesture_trail') and self.gesture_trail.own_window:
+            QWidget.setVisible(self.gesture_trail, False)
+
     def _fetch_server_version(self):
         """Asynchronously query server /health for dynamic version string."""
         def _worker():
@@ -1139,11 +1399,11 @@ class SmartMirrorPro(QMainWindow):
         # left edge, big white text, no outline. Colours are set per level.
         self.banner_frame = QFrame(self.central_widget)
         self.banner_frame.setObjectName("BannerFrame")
-        self.banner_frame.setFixedHeight(108)    # grows for long messages: _fit_banner
+        self.banner_frame.setFixedHeight(78)     # grows for long messages: _fit_banner
         self.banner_frame.hide()
 
         lay = QVBoxLayout(self.banner_frame)
-        lay.setContentsMargins(34, 14, 34, 14)
+        lay.setContentsMargins(26, 10, 26, 10)
         lay.setSpacing(4)
         lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
@@ -1154,7 +1414,7 @@ class SmartMirrorPro(QMainWindow):
         self.banner_label.setWordWrap(True)
         self.banner_label.setStyleSheet(
             'font-family: "Segoe UI", system-ui, sans-serif; color: #ffffff; background: transparent; '
-            'border: none; font-size: 30px; font-weight: 700;'
+            'border: none; font-size: 22px; font-weight: 700;'
         )
         lay.addWidget(self.banner_label)
 
@@ -1187,14 +1447,14 @@ class SmartMirrorPro(QMainWindow):
         self.edge_arrow_label.setStyleSheet("""
             #EdgeArrow {
                 font-family: 'Segoe UI', system-ui, sans-serif;
-                font-size: 20px;
+                font-size: 30px;
                 font-weight: 700;
                 color: #ffffff;
                 background: transparent;
                 border: none;
             }
         """)
-        self.edge_arrow_label.setFixedSize(32, 32)
+        self.edge_arrow_label.setFixedSize(44, 40)
         self.edge_arrow_label.hide()
 
         # People pinch the arrow instead of reaching above it, so say what it
@@ -1208,7 +1468,7 @@ class SmartMirrorPro(QMainWindow):
         # Sign out with a pinch (scanning the ID again does the same).
         self.sign_out_btn = QLabel("SIGN OUT", self.central_widget)
         self.sign_out_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sign_out_btn.setFixedSize(150, 40)
+        self.sign_out_btn.setFixedSize(240, 64)
         self.sign_out_btn.hide()
         self._sign_out_hover = None
         self._set_sign_out_hover(False)
@@ -1235,26 +1495,27 @@ class SmartMirrorPro(QMainWindow):
         self.overscroll_glow = OverscrollGlow(self.central_widget)
 
         # Hand cursor (dot + trail), drawn above everything else
-        self.gesture_trail = GestureTrailOverlay(self.central_widget)
+        self.gesture_trail = GestureTrailOverlay(
+            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW') == '1')
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
     def _set_arrow_hover(self, hover):
         if hover == self._arrow_hover:
             return
         self._arrow_hover = hover
-        color = '#ffffff' if hover else '#94a3b8'
+        color = '#ffffff' if hover else '#cbd5e1'
         self.edge_arrow_caption.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; font-weight: 800; "
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 900; "
             f"letter-spacing: 2px; color: {color}; background: transparent;")
 
     def _set_sign_out_hover(self, hover):
         if hover == self._sign_out_hover:
             return
         self._sign_out_hover = hover
-        fg, bg = ('#000000', '#ffffff') if hover else ('#e2e8f0', '#111111')
+        fg, bg = ('#000000', '#ffffff') if hover else ('#ffffff', '#1e1e1e')
         self.sign_out_btn.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; font-weight: 800; "
-            f"letter-spacing: 2px; color: {fg}; background: {bg}; border: 1px solid #333333;")
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 900; "
+            f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
 
     def _position_sign_out(self):
         """Bottom-left, under the notices: out of the way, easy to reach."""
@@ -1267,6 +1528,47 @@ class SmartMirrorPro(QMainWindow):
         else:
             self.sign_out_btn.hide()
             self._set_sign_out_hover(False)
+
+    def _magnet_targets(self):
+        """Window rects of what the hand can press right now."""
+        targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect()]
+        pp = self.practice_panel
+        if self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 0:
+            c = pp.mapTo(self.central_widget, pp.dot_center().toPoint())
+            r = pp.dot_radius()
+            targets.append(QRect(c.x() - r, c.y() - r, 2 * r, 2 * r))
+        elif self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 1:
+            end = pp.end_card_rect()
+            if not end.isEmpty():
+                targets.append(QRect(pp.mapTo(self.central_widget, end.topLeft()), end.size()))
+        return [t for t in targets if not t.isEmpty()]
+
+    def _apply_magnet(self, data):
+        """Draw the hand cursor towards a button it is near (a copy of data, moved).
+
+        The hand jitters and the camera lags a little, so people overshot small
+        targets. Within reach of a button the cursor is pulled onto it, more
+        strongly the closer it gets, and the pinch lands where it's drawn.
+        """
+        W, H = self.width(), self.height()
+        if not data.get("present") or W <= 0 or H <= 0:
+            return data
+        x, y = data.get("hand_x", 0.0) * W, data.get("hand_y", 0.0) * H
+        best = None
+        for rect in self._magnet_targets():
+            c = rect.center()
+            reach = max(rect.width(), rect.height()) / 2 + MAGNET_REACH
+            d = math.hypot(c.x() - x, c.y() - y)
+            if d < reach and (best is None or d / reach < best[0]):
+                best = (d / reach, c)
+        if best is None:
+            return data
+        pull = MAGNET_PULL * (1.0 - best[0]) ** 0.5
+        c = best[1]
+        moved = dict(data)
+        moved["hand_x"] = (x + (c.x() - x) * pull) / W
+        moved["hand_y"] = (y + (c.y() - y) * pull) / H
+        return moved
 
     def _hand_near(self, rect, data):
         """Whether the hand cursor is inside rect (window coordinates)."""
@@ -1295,7 +1597,7 @@ class SmartMirrorPro(QMainWindow):
         cy = sh - ch - 4
         self.guest_scan_callout.setGeometry(0, cy, sw, ch)
 
-    SCAN_CALLOUT_H = 210
+    SCAN_CALLOUT_H = 165
 
     def _layout_demo_overlay(self, with_callout):
         """Centre the video, bar and hint in the space the callout leaves free."""
@@ -1303,26 +1605,33 @@ class SmartMirrorPro(QMainWindow):
         self._place_demo()
 
     def _place_demo(self):
-        """Lay out the tutorial: the video alone, or (practice_p → 1) beside the practice."""
+        """Lay out the tutorial: the video alone, or (practice_p → 1) beside the practice.
+
+        Sized from the screen, as big as fits above SKIP and the scan hint.
+        """
         if getattr(self, 'demo_surface', None) is None:
             return
         W, H = self.width(), self.height()
-        free = H - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
-        label_h = self.demo_hold_lbl.sizeHint().height()
-        foot = 18 + 6 + 12 + label_h
+        top = self._banner_space()          # the notice banner stays visible above it
+        free = H - top - (self.SCAN_CALLOUT_H if self._demo_with_callout else 0)
+        foot = 22 + self.skip_btn.height()
+        margin = 16
+        avail_h = max(160, free - foot - 2 * margin)
 
-        vw0 = min(720, W - 32)
+        # The video alone: as big as fits, up to 70% of the width
+        vw0 = min(int(W * 0.70), int(avail_h * 16 / 9), 1100)
         vh0 = vw0 * 9 // 16
-        r0 = QRect((W - vw0) // 2, max(16, (free - vh0 - foot) // 2), vw0, vh0)
+        r0 = QRect((W - vw0) // 2, top + max(margin, (free - vh0 - foot) // 2), vw0, vh0)
 
-        half = W // 2
-        vw1 = max(160, min(600, half - 48))
+        # With the practice: two columns
+        gutter = 32
+        col = (W - 3 * gutter) // 2
+        vw1 = min(col, int(avail_h * 16 / 9), 900)
         vh1 = vw1 * 9 // 16
-        pw = max(200, min(520, half - 48))
-        ph = max(vh1, min(380, free - foot - 32))
-        top1 = max(16, (free - ph - foot) // 2)
-        r1 = QRect(half - 24 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
-        panel = QRect(half + 24, top1, pw, ph)
+        ph = min(avail_h, max(vh1, int(col * 0.8)))
+        top1 = top + max(margin, (free - ph - foot) // 2)
+        r1 = QRect(W // 2 - gutter // 2 - vw1, top1 + (ph - vh1) // 2, vw1, vh1)
+        panel = QRect(W // 2 + gutter // 2, top1, col, ph)
 
         t = QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(self._practice_p)
 
@@ -1335,8 +1644,8 @@ class SmartMirrorPro(QMainWindow):
         self.practice_panel.setGeometry(panel.translated(int(48 * (1 - t)), 0))
         self.practice_panel.set_fade(t)
         bottom = mix(r0.bottom(), max(r1.bottom(), panel.bottom()))
-        self.demo_hold_bar.move((W - self.demo_hold_bar.width()) // 2, bottom + 18)
-        self.demo_hold_lbl.setGeometry(0, bottom + 18 + 6 + 12, W, label_h)
+        self.skip_btn.move((W - self.skip_btn.width()) // 2, bottom + 22)
+        self.practice_must_lbl.setGeometry(0, bottom + 22, W, self.skip_btn.height())
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: Floating Toast Notification
@@ -1404,6 +1713,16 @@ class SmartMirrorPro(QMainWindow):
         scaled = os.path.join(assets, f'gesture_demo_{variant}.mp4')
         return scaled if variant and os.path.exists(scaled) else os.path.join(assets, 'gesture_demo.mp4')
 
+    @classmethod
+    def _tutorial_clips(cls):
+        """The tutorial's clips in order: assets/touchless_intro.mp4 (this display
+        is not a touchscreen) when it exists, then the gesture demo."""
+        intro = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'touchless_intro.mp4')
+        demo = cls._demo_video('480p')     # decoding costs CPU the hand tracker needs: smallest copy that looks right
+        if not demo.endswith('_480p.mp4'):
+            demo = cls._demo_video('540p')
+        return ([intro] if os.path.exists(intro) else []) + [demo]
+
     def _build_gesture_demo(self):
         has_video = os.path.exists(self._demo_video())
 
@@ -1419,7 +1738,7 @@ class SmartMirrorPro(QMainWindow):
         self.demo_surface = VideoSurface(self.gesture_demo_overlay)
         self.demo_surface.setGeometry(0, 0, 720, 405)
         if has_video:
-            self.demo_movie = DemoVideoDecoder(self._demo_video('540p'), GESTURE_TUTORIAL_SPEED_FACTOR, self)
+            self.demo_movie = DemoVideoDecoder(self._tutorial_clips(), GESTURE_TUTORIAL_SPEED_FACTOR, self)
             self.demo_movie.set_target_size(720, 405)
             self.demo_movie.frame_ready.connect(self.demo_surface.set_image)
             self.demo_surface.set_image(self.demo_movie.first_frame())
@@ -1428,21 +1747,23 @@ class SmartMirrorPro(QMainWindow):
         self.practice_panel = PracticePanel(self.gesture_demo_overlay)
         self.practice_panel.finished.connect(self._on_practice_finished)
         self._practice_state = None      # None | pending | active | done
+        self._demo_paused = False
         self._practice_anim = None
         self._practice_started_at = 0.0
 
-        # Pinch-and-hold progress bar beneath the video, and what it is for
-        self.demo_hold_bar = QFrame(self.gesture_demo_overlay)
-        self.demo_hold_bar.setFixedSize(320, 6)
-        self.demo_hold_bar.setStyleSheet("background: rgba(255,255,255,0.16); border: none; border-radius: 3px;")
-        self.demo_hold_fill = QFrame(self.demo_hold_bar)
-        self.demo_hold_fill.setStyleSheet("background: #ffffff; border: none; border-radius: 3px;")
-        self.demo_hold_fill.setGeometry(0, 0, 0, 6)
-        self.demo_hold_lbl = QLabel("HOLD PINCH TO EXIT", self.gesture_demo_overlay)
-        self.demo_hold_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.demo_hold_lbl.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 22px; font-weight: 800; "
-            "letter-spacing: 4px; color: #ffffff; background: transparent;")
+        # A big SKIP button beneath the video: point and pinch
+        self.skip_btn = QLabel("SKIP", self.gesture_demo_overlay)
+        self.skip_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.skip_btn.setFixedSize(260, 72)
+        self._skip_hover = None
+        self._set_skip_hover(False)
+        # In its place while the practice is up: it can't be skipped.
+        self.practice_must_lbl = QLabel("COMPLETE THE TUTORIAL TO CONTINUE", self.gesture_demo_overlay)
+        self.practice_must_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.practice_must_lbl.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 800; "
+            "letter-spacing: 3px; color: #cbd5e1; background: transparent;")
+        self.practice_must_lbl.hide()
         self.gesture_demo_overlay.hide()
 
         # Nobody at the mirror: the screensaver chosen in the admin dashboard
@@ -1464,7 +1785,7 @@ class SmartMirrorPro(QMainWindow):
         self.guest_scan_callout.hide()
         # Variant B says this to someone passing by, in the middle of the screen.
         self.stand_close_hint = GuestScanCallout(self.central_widget)
-        self.stand_close_hint.stand_close = True
+        self.stand_close_hint.message = "STAND 1m AWAY TO INTERACT"
         self.stand_close_hint.hide()
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1718,8 +2039,10 @@ class SmartMirrorPro(QMainWindow):
             self.overscroll_glow.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
-            self.gesture_trail.setGeometry(0, 0, w, h)
-            self.gesture_trail.raise_()
+            self._place_trail()
+
+        if hasattr(self, 'message_veil') and self.message_veil.isVisible():
+            self.message_veil.setGeometry(0, 0, w, h)
 
         if hasattr(self, 'debug_overlay'):
             self.debug_overlay.move(16, 16)
@@ -1793,7 +2116,7 @@ class SmartMirrorPro(QMainWindow):
         """)
         self.tag_lbl.setText(tag)
         self.tag_lbl.setStyleSheet(
-            f'font-family: "Consolas", "SFMono-Regular", "Segoe UI", monospace; font-size: 17px; '
+            f'font-family: "Consolas", "SFMono-Regular", "Segoe UI", monospace; font-size: 13px; '
             f'font-weight: 800; letter-spacing: 2px; color: {accent}; background: transparent; border: none;'
         )
         self.banner_label.setText(self._admin_banner_msg)
@@ -1802,12 +2125,12 @@ class SmartMirrorPro(QMainWindow):
         self._refresh_banner(relayout=True)     # the height may have changed
 
     def _fit_banner(self, width=None):
-        """Size the notice to its text: at least 108 px, taller if it wraps."""
+        """Size the notice to its text: at least 78 px, taller if it wraps."""
         width = width or self.banner_frame.width()
-        text_w = max(200, width - 34 * 2 - 8)
-        h = (14 * 2 + 4 + self.tag_lbl.sizeHint().height()
+        text_w = max(200, width - 26 * 2 - 8)
+        h = (10 * 2 + 4 + self.tag_lbl.sizeHint().height()
              + self.banner_label.heightForWidth(text_w))
-        self.banner_frame.setFixedHeight(max(108, h))
+        self.banner_frame.setFixedHeight(max(78, h))
 
     def _banner_space(self):
         """Pixels the screens move down so the notice doesn't cover them."""
@@ -2234,64 +2557,56 @@ class SmartMirrorPro(QMainWindow):
             self.guest_kings_widget.refresh()
 
     def _update_arrow_indicator(self):
-        """Show subtle arrow (▲) between date and clock in header ONLY when timetable/card is collapsed."""
+        """The arrow between date and clock, and what reaching up (or pinching it) does next.
+
+        Signed in: ▲ TIMETABLE while King's Week fills the column, ▼ KING'S WEEK
+        while the timetable is showing. Guests: the smartmirror.me card instead.
+        """
         if not hasattr(self, 'edge_arrow_label') or self.edge_arrow_label is None:
             return
-
-        is_active = self._last_state in ('user', 'guest')
-        self.edge_arrow_caption.hide()
-
-        if not is_active:
-            self.edge_arrow_label.hide()
-            if hasattr(self, 'dwell_hint_pill'):
-                self.dwell_hint_pill.hide()
-            return
-
-        # Arrow is ONLY shown when timetable or guest card is slid away (collapsed), never when visible
+        if hasattr(self, 'dwell_hint_pill'):
+            self.dwell_hint_pill.hide()
         if self._last_state == 'user':
-            if not self._timetable_slid_away:
-                self.edge_arrow_label.hide()
-                if hasattr(self, 'dwell_hint_pill'):
-                    self.dwell_hint_pill.hide()
-                return
-            self.edge_arrow_label.setText("▲")
+            up = self._timetable_slid_away
+            caption = "TIMETABLE" if up else "KING'S WEEK"
         elif self._last_state == 'guest':
-            if not self._guest_card_slid_away:
-                self.edge_arrow_label.hide()
-                if hasattr(self, 'dwell_hint_pill'):
-                    self.dwell_hint_pill.hide()
-                return
-            self.edge_arrow_label.setText("▲")
+            up = self._guest_card_slid_away
+            caption = "JOIN" if up else "KING'S WEEK"
         else:
+            up = None
+        if up is None or self._demo_overlay_active():     # nothing to toggle, or under the tutorial
             self.edge_arrow_label.hide()
-            if hasattr(self, 'dwell_hint_pill'):
-                self.dwell_hint_pill.hide()
+            self.edge_arrow_caption.hide()
             return
+        self.edge_arrow_label.setText("\u25b2" if up else "\u25bc")
+        self.edge_arrow_caption.setText(caption)
 
         w = self.width()
         left_w = int(w * 0.50)
-        right_w = w - left_w
         content_x = left_w + 30
-        content_w = right_w - 60
+        content_w = (w - left_w) - 60
         top = self._banner_space()
 
-        # Position arrow centered in the header area between date and clock,
-        # with its caption just above it
-        arrow_x = content_x + (content_w - 32) // 2
-        arrow_y = top + 20 + (65 - 32) // 2 + 6
+        # Centred in the gap between the date and the clock: caption above the arrow
+        aw, ah = self.edge_arrow_label.width(), self.edge_arrow_label.height()
+        mid = content_x + content_w // 2
+        clock = self.clock_widget if self._last_state == 'user' else self.guest_clock
+        if clock.isVisible() and clock.date_label.text():
+            d, t = clock.date_label, clock.time_label
+            date_right = d.mapTo(self.central_widget, QPoint(0, 0)).x() + d.fontMetrics().horizontalAdvance(d.text())
+            time_left = t.mapTo(self.central_widget, QPoint(0, 0)).x() + t.width() - t.fontMetrics().horizontalAdvance(t.text())
+            if time_left > date_right:
+                mid = (date_right + time_left) // 2
+        arrow_x = mid - aw // 2
+        arrow_y = top + 20 + (65 - ah) // 2 + 10
         self.edge_arrow_label.move(arrow_x, arrow_y)
         self.edge_arrow_label.show()
         self.edge_arrow_label.raise_()
-        self.edge_arrow_caption.adjustSize()
         cap = self.edge_arrow_caption
-        cap.move(arrow_x + 16 - cap.width() // 2, arrow_y - cap.height() + 4)
+        cap.adjustSize()
+        cap.move(arrow_x + aw // 2 - cap.width() // 2, arrow_y - cap.height() + 6)
         cap.show()
         cap.raise_()
-
-        # Variant B used to add a dwell hint pill here. It's retired: B now
-        # differs only in the practice and the passer-by hint.
-        if hasattr(self, 'dwell_hint_pill'):
-            self.dwell_hint_pill.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture tutorial: pinch-and-hold to dismiss
@@ -2340,33 +2655,59 @@ class SmartMirrorPro(QMainWindow):
                 and self.gesture_demo_overlay.isVisible()
                 and not self._scrim_fading_out)
 
-    def _set_demo_hold_progress(self, p):
-        if not hasattr(self, 'demo_hold_bar') or self.demo_hold_bar is None:
+    def _set_skip_hover(self, hover):
+        if hover == self._skip_hover:
             return
-        p = max(0.0, min(1.0, p))
-        self.demo_hold_fill.setGeometry(0, 0, int(self.demo_hold_bar.width() * p), self.demo_hold_bar.height())
+        self._skip_hover = hover
+        bg = '#38bdf8' if hover else '#ffffff'
+        self.skip_btn.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 30px; font-weight: 900; "
+            f"letter-spacing: 6px; color: #000000; background: {bg}; border: none; border-radius: 36px;")
 
-    def _update_demo_hold(self, pinched):
-        now = time.time()
-        if pinched:
-            self._demo_pinch_last = now
-            if self._demo_pinch_start is None:
-                self._demo_pinch_start = now
-        elif self._demo_pinch_start is not None and now - self._demo_pinch_last > PINCH_DROPOUT_SEC:
-            self._demo_pinch_start = None
+    def _skip_rect(self):
+        if not self._demo_overlay_active() or self.skip_btn.isHidden():
+            return QRect()
+        return QRect(self.skip_btn.mapTo(self.central_widget, QPoint(0, 0)), self.skip_btn.size())
 
-        if self._demo_pinch_start is None:
-            self._set_demo_hold_progress(0.0)
+    def _skip_tutorial(self):
+        if self.telemetry is not None and self._practice_state != 'active':
+            self.telemetry.record_tutorial_dismissed()   # (mid-practice, the fade records the skip)
+        self._last_activity_time = time.time()     # so the idle timer doesn't instantly re-show it
+        self._fade_out_gesture_scrim()
+
+    def _tutorial_fully_shown(self):
+        if self.gesture_demo_overlay.isVisible() and not self._scrim_fading_out:
+            self.gesture_demo_overlay.setGraphicsEffect(None)
+            if self._practice_state == 'pending':
+                self._start_practice()      # beside the video straight away, not after it
+
+    def _snapshot_behind_tutorial(self):
+        """Give the tutorial a still of the screen behind it (see GestureDemoOverlay)."""
+        overlay = self.gesture_demo_overlay
+        if overlay is None or not overlay.isVisible() or self._scrim_fading_out:
             return
-
-        progress = (now - self._demo_pinch_start) / PINCH_EXIT_HOLD_SEC
-        self._set_demo_hold_progress(progress)
-        if progress >= 1.0:
-            self._demo_pinch_start = None
-            if self.telemetry is not None and self._practice_state != 'active':
-                self.telemetry.record_tutorial_dismissed()
-            self._last_activity_time = now      # so the idle timer doesn't instantly re-show it
-            self._fade_out_gesture_scrim()      # mid-practice this is the skip
+        fading_in = self._anim_in is not None and self._anim_in.state() == QPropertyAnimation.State.Running
+        if fading_in:                       # mid-dissolve: see-through until it settles
+            QTimer.singleShot(150, self._snapshot_behind_tutorial)
+            return
+        # grab() renders the whole widget tree: leave our own layers out of it.
+        layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
+                              self.debug_overlay)
+                  if w is not None and w.isVisible()]
+        if not self.gesture_trail.own_window and self.gesture_trail.isVisible():
+            layers.append(self.gesture_trail)
+        for w in layers:
+            w.setVisible(False)
+        try:
+            shot = self.central_widget.grab()
+        finally:
+            for w in layers:
+                w.setVisible(True)
+        overlay.set_backdrop(shot)
+        overlay.raise_()
+        for w in (self.guest_scan_callout, self.gesture_trail):
+            if w.isVisible():
+                w.raise_()
 
     def _on_demo_looped(self):
         if self._practice_state == 'pending' and self._demo_overlay_active():
@@ -2376,10 +2717,11 @@ class SmartMirrorPro(QMainWindow):
         """Slide the still-playing video aside and bring in the practice."""
         self._practice_state = 'active'
         self._practice_started_at = time.time()
+        self.skip_btn.hide()                 # the practice has to be finished
+        self.practice_must_lbl.show()
         self.practice_panel.reset()
         self.practice_panel.show()
         self.practice_panel.raise_()
-        self.demo_hold_lbl.setText("HOLD PINCH TO SKIP")
         if self.telemetry is not None:
             self.telemetry.record_practice_shown()
         anim = QVariantAnimation(self)
@@ -2428,9 +2770,17 @@ class SmartMirrorPro(QMainWindow):
         self.gesture_demo_overlay.show()
         self.gesture_demo_overlay.raise_()
         self.gesture_trail.raise_()
+        self.edge_arrow_label.hide()        # back once the tutorial closes
+        self.edge_arrow_caption.hide()
+        self.gesture_trail.set_cursor_mode(True)
+        self.gesture_demo_overlay.set_backdrop(None)
+        self._snapshot_behind_tutorial()    # (waits if the screen is still fading in)
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(True)        # nobody can see it scroll under the tutorial
 
-        self._demo_pinch_start = None
-        self._set_demo_hold_progress(0.0)
+        self._set_skip_hover(False)
+        self.skip_btn.show()
+        self.practice_must_lbl.hide()
 
         # Guests who haven't scanned yet: the gesture OR the ID scanner. Once
         # they've scanned they know about it, so just the gesture.
@@ -2450,20 +2800,20 @@ class SmartMirrorPro(QMainWindow):
 
 
         # Variant B, first tutorial of a visit that began as a guest from the
-        # idle screen: once the clip has played through, the practice.
+        # idle screen: the practice slides in beside the video once it's shown.
         self._practice_state = None
         self._practice_p = 0.0
         self.practice_panel.hide()
-        self.demo_hold_lbl.setText("HOLD PINCH TO EXIT")
         if (self.current_variant == 'B' and self._last_state == 'guest'
                 and self._visit_from_splash and not self._practice_offered
                 and self.demo_movie is not None):
             self._practice_offered = True
             self._practice_state = 'pending'
-        if self.demo_movie is not None:
-            self.demo_movie.set_target_size(720, 405)
         self._place_demo()
+        if self.demo_movie is not None:
+            self.demo_movie.set_target_size(self.demo_surface.width(), self.demo_surface.height())
 
+        self._demo_paused = False
         if self.demo_movie is not None:
             self.demo_movie.play(loop=True)
         if self.telemetry is not None:
@@ -2474,6 +2824,11 @@ class SmartMirrorPro(QMainWindow):
         anim_in.setStartValue(0.0)
         anim_in.setEndValue(1.0)
         anim_in.valueChanged.connect(lambda v: self.guest_scan_callout.set_fade(v))
+        # Once fully shown, remove the effect altogether. A widget carrying a
+        # graphics effect (even a disabled one) is never treated as opaque, so
+        # every video frame, pulse of the scan hint, or notices scroll step also
+        # repainted the whole screen hidden beneath it: ~15 fps on the Pi.
+        anim_in.finished.connect(self._tutorial_fully_shown)
         anim_in.start()
         self._demo_anim = anim_in
 
@@ -2491,6 +2846,7 @@ class SmartMirrorPro(QMainWindow):
         if effect is None:
             effect = QGraphicsOpacityEffect(self.gesture_demo_overlay)
             self.gesture_demo_overlay.setGraphicsEffect(effect)
+        effect.setEnabled(True)
 
         current_opacity = effect.opacity()
         anim_out = QPropertyAnimation(effect, b"opacity", self)
@@ -2505,12 +2861,16 @@ class SmartMirrorPro(QMainWindow):
                 self.telemetry.record_practice_ended(completed=False, steps=self.practice_panel.steps_done,
                                                      seconds=time.time() - self._practice_started_at)
 
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(False)
+
+        self.gesture_trail.set_cursor_mode(False)
+
         def on_done():
             self.gesture_demo_overlay.hide()
             self._hide_scan_callout()
             self._scrim_fading_out = False
-            self._demo_pinch_start = None
-            self._set_demo_hold_progress(0.0)
+            self._update_arrow_indicator()
             if self._practice_anim is not None:
                 self._practice_anim.stop()
             self.practice_panel.hide()
@@ -2585,7 +2945,7 @@ class SmartMirrorPro(QMainWindow):
             self.idle_demo_movie.play(loop=False)
         else:
             images = cfg['slides'] if mode == 'slideshow' else [cfg['logo']]
-            demo.slides.set_images(images, cfg.get('slide_seconds', 8))
+            demo.slides.set_images(images, cfg.get('slide_seconds', 8), logo=mode == 'logo')
             demo.slides.start()
         anim = self._animate_idle_demo(1.0, IDLE_DEMO_FADE_IN_SEC)
         # Fully opaque: drop the effect so each video frame isn't composited twice.
@@ -2653,6 +3013,8 @@ class SmartMirrorPro(QMainWindow):
         self._frame_last = now
         if len(self._frame_gaps) > 240:             # ~4 s of history
             del self._frame_gaps[:len(self._frame_gaps) - 240]
+        if self._paint_stats is not None:
+            self._paint_stats.maybe_report()
         if now - self._perf_logged >= 30.0:
             self._perf_logged = now
             fps, worst = self._ui_frame_stats()
@@ -2725,6 +3087,7 @@ class SmartMirrorPro(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────
     def _handle_gesture(self, data):
         now = time.time()
+        data = self._apply_magnet(data)
         self._last_gesture_data, self._last_gesture_rx = data, now
         self._gesture_packets = [t for t in self._gesture_packets if now - t < 2.0] + [now]
         if data.get("present", False):
@@ -2759,7 +3122,11 @@ class SmartMirrorPro(QMainWindow):
         if present:
             self._last_interaction_time = time.time()
             self._last_hand_time = time.time()
-
+            # The slow auto-scroll repaints the whole notices column every step
+            # (the gesture layer above it stops Qt from scrolling it cheaply):
+            # it waits while someone is using the mirror.
+            for n in (self.notices_widget, self.guest_notices):
+                n.pause_auto_scroll(8.0)
         if hasattr(self, 'gesture_trail') and self.gesture_trail is not None:
             if present:
                 hx = data.get("hand_x", 0.5)
@@ -2775,18 +3142,32 @@ class SmartMirrorPro(QMainWindow):
             else:
                 self.gesture_trail.fade_out()
 
+        # A click lands where the pinch began (the engine says where): by the
+        # time the fingers part the hand has drifted, and with the cursor's
+        # lag that sent clicks to the wrong place.
+        if event == "tap" and data.get("tap_x") is not None:
+            data = self._apply_magnet(dict(data, hand_x=data["tap_x"], hand_y=data["tap_y"]))
+
         was_pinched, self._hand_pinched = self._hand_pinched, present and bool(data.get("pinched", False))
         if was_pinched and not self._hand_pinched and self._overscroll:
             self._wake_scroller()            # let go of a stretched list: spring back
 
-        # While the tutorial video is up, the only thing that does anything is
-        # a held pinch (fills the bar under the video, exits at 100%).
+        # While the tutorial is up, only its SKIP button (and the practice) respond.
         if self._demo_overlay_active():
+            on_skip = present and self._hand_near(self._skip_rect(), data)
+            self._set_skip_hover(on_skip)
+            if on_skip:
+                if event == "tap":
+                    self._skip_tutorial()
+                return
             if self._practice_state == 'active' and present:
                 self.practice_panel.handle(self._practice_point(data), event, delta)
-                if event in ("scroll", "fling"):
-                    self._demo_pinch_start = None    # dragging the list is not holding to skip
-            self._update_demo_hold(present and bool(data.get("pinched", False)))
+                # Nobody watches the demo while doing the practice: pause it, and
+                # the hand tracker gets the CPU its decoding took. Resumes once
+                # the hand drops (_update_inputs).
+                if self.demo_movie is not None and not self._demo_paused:
+                    self._demo_paused = True
+                    self.demo_movie.set_paused(True)
             return
 
         # Buttons the hand can pinch: SIGN OUT, and the TIMETABLE arrow.
@@ -2917,11 +3298,13 @@ class SmartMirrorPro(QMainWindow):
                     if hasattr(self, 'telemetry') and self.telemetry is not None:
                         self.telemetry.record_modal_close()
                 elif hasattr(notices, 'activate_selected'):
+                    if hasattr(notices, 'select_at_point'):
+                        notices.select_at_point(data.get("hand_x", 0.25), data.get("hand_y", 0.5))
                     if notices.activate_selected() and self.telemetry is not None:
                         self.telemetry.record_modal_open("notice")
                 elif hasattr(notices, 'toggle_scroll_pause'):
                     notices.toggle_scroll_pause()
-            elif event not in ("scroll", "fling"):
+            elif event not in ("scroll", "fling") and not data.get("pinched"):   # hold still mid-pinch
                 if hasattr(notices, 'select_at_point'):
                     hx = data.get("hand_x", 0.25)
                     hy = data.get("hand_y", 0.5)
@@ -2975,7 +3358,7 @@ class SmartMirrorPro(QMainWindow):
                         if hasattr(active_target, 'activate_selected') and active_target.activate_selected():
                             if self.telemetry is not None:
                                 self.telemetry.record_modal_open("article")
-                elif event not in ("scroll", "fling"):
+                elif event not in ("scroll", "fling") and not data.get("pinched"):
                     if hasattr(active_target, 'focus_at'):
                         self._focus_kings_target(active_target, data)
 
@@ -3015,15 +3398,16 @@ class SmartMirrorPro(QMainWindow):
         if self.telemetry is not None:
             self.telemetry.record_timetable_toggle()
         if self._last_state == 'user':
-            if self._timetable_slid_away or getattr(self, '_timetable_full_mode', False):
+            if self._timetable_slid_away:
                 self._show_timetable(animate=True, is_initial_split=True)
             else:
-                self._show_timetable(animate=True, is_initial_split=False)
+                self._slide_timetable_out(animate=True)    # ▼ KING'S WEEK
         elif self._last_state == 'guest':
             if self._guest_card_slid_away:
                 self._show_guest_card(animate=True, is_initial_split=False)
             else:
                 self._slide_guest_card_out(animate=True)
+        self._update_arrow_indicator()
 
     def _hand_over(self, widget, data):
         """Whether the hand cursor is inside `widget` as drawn on screen."""
@@ -3249,9 +3633,10 @@ class SmartMirrorPro(QMainWindow):
         self._update_idle_demo()
 
         # ── Gesture Inactivity Tutorial Overlay ───────────────────────────
-        if self._demo_overlay_active():
-            self._update_demo_hold(False)   # resets the bar if pinch packets stop arriving
-
+        if self._demo_paused and time.time() - self._last_hand_time > 1.5:
+            self._demo_paused = False
+            if self.demo_movie is not None:
+                self.demo_movie.set_paused(False)
         if self._last_state in ('guest', 'user') and not self._transitioning:
             idle_threshold = self._tutorial_wait or getattr(self, '_gesture_tutorial_idle_sec', GESTURE_TUTORIAL_IDLE_SEC)
             # A raised hand is someone already trying: don't cover the screen.
@@ -3316,6 +3701,7 @@ class SmartMirrorPro(QMainWindow):
             visible.lower()
 
         if incoming is not None:
+            self._hide_scan_callout()      # the passer-by hint never outlives the encounter
             # Telemetry: Begin tracked session and assign A/B experiment variant
             recent_barcode = (time.time() - getattr(self, '_last_barcode_scan_time', 0) < 60.0)
             auth = 'barcode' if recent_barcode else (getattr(self, '_auth_method', '') or fdata.get('auth_method', ''))
@@ -3345,7 +3731,7 @@ class SmartMirrorPro(QMainWindow):
             self._prepare(incoming, new_state, new_user_id, fdata)
             self._fade_in(incoming, retire=visible)
             if is_from_idle:
-                # Let them look first; the demo comes if they don't start.
+                # Give them a moment to look first; the demo comes if they don't start.
                 self._last_activity_time = time.time()
                 self._tutorial_wait = TUTORIAL_FIRST_DELAY_SEC
 
@@ -3392,10 +3778,11 @@ class SmartMirrorPro(QMainWindow):
         self.guest_container.setGraphicsEffect(None)
         if hasattr(self, 'dwell_hint_pill'):
             self.dwell_hint_pill.hide()
+        for n in (self.notices_widget, self.guest_notices):
+            n.hold_auto_scroll(False)
+        self.gesture_trail.set_cursor_mode(False)
         if hasattr(self, 'gesture_demo_overlay') and self.gesture_demo_overlay is not None:
             self.gesture_demo_overlay.hide()
-            self._demo_pinch_start = None
-            self._set_demo_hold_progress(0.0)
             if hasattr(self, 'demo_movie') and self.demo_movie is not None:
                 self.demo_movie.stop()
         if self.kings_widget is not None:
@@ -3405,6 +3792,7 @@ class SmartMirrorPro(QMainWindow):
         self._transitioning = False
 
     def closeEvent(self, event):
+        self._stall_watch.stop()
         if hasattr(self, 'telemetry') and self.telemetry is not None:
             self.telemetry.end_session()
         for decoder in (self.demo_movie, getattr(self, 'idle_demo_movie', None)):
@@ -3525,7 +3913,7 @@ class SmartMirrorPro(QMainWindow):
             return
         user_id = self.current_user_id
         print(f"[SESSION] {user_id} signed out ({reason}).", flush=True)
-        self.show_toast("✓ Signed out", is_success=True)
+        self.message_veil.flash("SUCCESSFULLY LOGGED OUT")
         self._signed_out_user = user_id
         self._signed_out_face_gone = 0.0
         self._auth_method = ""
@@ -3749,6 +4137,12 @@ if __name__ == '__main__':
     mirror = SmartMirrorPro()
     mirror.gesture_proc = gestures
     mirror.show()
+    # Garbage collection pauses everything; a full pass over every Qt wrapper
+    # took ~100 ms on the Pi, often mid-gesture. Everything built so far lives
+    # for the whole run, so freeze it out of future passes, and collect less often.
+    gc.collect()
+    gc.freeze()
+    gc.set_threshold(5000, 20, 20)
     try:
         code = app.exec()
     finally:

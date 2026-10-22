@@ -528,13 +528,15 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
     def tearDown(self):
         close_mirror(self.mirror)
 
-    def _arrive_as_guest(self):
+    def _arrive_as_guest(self, wait_for_tutorial=True):
         m = self.mirror
         m._transitioning = True
         m._last_state = 'guest'
         m._trigger_transition('guest', '', {'config': {}})
         settle(m)
         m._transitioning = False
+        if wait_for_tutorial:
+            self._wait(smp.TUTORIAL_FIRST_DELAY_SEC + 1)
 
     def _wait(self, seconds):
         m = self.mirror
@@ -543,30 +545,90 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._update_inputs()
         settle(m)
 
-    def test_the_demo_waits_before_covering_the_screen(self):
+    def test_the_tutorial_comes_after_a_few_seconds(self):
         m = self.mirror
-        self._arrive_as_guest()
+        self._arrive_as_guest(wait_for_tutorial=False)
         self.assertFalse(m.gesture_demo_overlay.isVisible())
         self._wait(2)
         self.assertFalse(m.gesture_demo_overlay.isVisible())
-        self._wait(4)
+        self._wait(smp.TUTORIAL_FIRST_DELAY_SEC)
         self.assertTrue(m.gesture_demo_overlay.isVisible())
         self.assertTrue(m.guest_scan_callout.isVisible())
         self.assertTrue(m.guest_scan_callout.show_or)       # gesture OR scan
-        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO EXIT")
+        self.assertEqual(m.skip_btn.text(), "SKIP")
 
     def test_a_raised_hand_holds_the_demo_off(self):
         m = self.mirror
         self._arrive_as_guest()
+        m._skip_tutorial()
+        settle(m)
         m._last_activity_time -= 30
         m._handle_gesture(gesture(region='left', x=0.3))
         m._update_inputs()
         self.assertFalse(m.gesture_demo_overlay.isVisible())
 
+    def test_a_click_lands_where_the_pinch_began(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        r = m._skip_rect()
+        aimed = dict(x=r.center().x() / m.width(), y=r.center().y() / m.height())
+        drifted = gesture(event='tap', x=aimed['x'], y=0.05)          # released far above SKIP
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(drifted, event_id=5, tap_x=aimed['x'], tap_y=aimed['y']))
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+
+    def test_the_tutorial_shows_a_circle_not_a_trail(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        self.assertTrue(m.gesture_trail._cursor_mode)
+        m._handle_gesture(gesture(x=0.4, y=0.4))
+        app.processEvents()
+        self.assertFalse(m.gesture_trail._region().isEmpty())     # drawn even with the hand still
+        m._skip_tutorial()
+        settle(m)
+        self.assertFalse(m.gesture_trail._cursor_mode)
+
+    def test_pinching_skip_closes_it(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        c = m._skip_rect().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height())
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(m._skip_hover)
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=3))
+        settle(m)
+        self.assertFalse(m.gesture_demo_overlay.isVisible())
+
+    def test_the_cursor_is_drawn_onto_a_nearby_button(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        r = m._skip_rect()
+        near = gesture(x=(r.right() + 40) / m.width(), y=r.center().y() / m.height())
+        moved = m._apply_magnet(near)
+        self.assertLess(moved['hand_x'], near['hand_x'])            # pulled in
+        far = gesture(x=0.05, y=0.05)
+        self.assertEqual(m._apply_magnet(far)['hand_x'], far['hand_x'])
+
+    def test_the_passer_by_hint_goes_once_the_visit_starts(self):
+        m = self.mirror
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        self.assertTrue(m.stand_close_hint.isVisible())
+        self.assertEqual(m.stand_close_hint.message, "STAND 1m AWAY TO INTERACT")
+        self._arrive_as_guest()
+        self.assertFalse(m.stand_close_hint.isVisible())
+
+    def test_no_step_back_message_on_the_guest_screen(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3), too_close=True))
+        self.assertFalse(hasattr(m, 'too_close_hint') and m.too_close_hint.isVisible())
+
     def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
         m = self.mirror
         self._arrive_as_guest()
-        self._wait(6)
         self.assertTrue(m.gesture_demo_overlay.isVisible())
 
         smp.requests.post = lambda *a, **k: _EmptyResponse()
@@ -598,7 +660,8 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._handle_gesture(dict(gesture(event='tap', **at), event_id=7))
         self.assertNotEqual(m._last_state, 'user')
         self.assertIsNone(m.current_user_id)
-        self.assertIn("Signed out", m.toast_lbl.text())
+        self.assertTrue(m.message_veil.isVisible())
+        self.assertEqual(m.message_veil.text, "SUCCESSFULLY LOGGED OUT")
 
     def test_scanning_the_same_id_again_signs_out(self):
         m = self.mirror
@@ -631,18 +694,27 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         daemon_sees('guest', 'guest', detected=False)
         self.assertIsNone(m._signed_out_user)
 
-    def test_pinching_the_timetable_arrow_opens_it(self):
+    def test_pinching_the_timetable_arrow_opens_it_then_it_flips(self):
         m = self.mirror
         self._sign_in()
         m._slide_timetable_out(animate=False)
         settle(m)
         self.assertTrue(m.edge_arrow_caption.isVisible())
-        self.assertEqual(m.edge_arrow_caption.text(), "TIMETABLE")
+        self.assertEqual((m.edge_arrow_label.text(), m.edge_arrow_caption.text()), ("\u25b2", "TIMETABLE"))
         c = m.edge_arrow_label.geometry().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height())
         m._last_rx_tap_time = 0.0
-        m._handle_gesture(dict(gesture(event='tap', x=c.x() / m.width(), y=c.y() / m.height()),
-                               event_id=9))
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=9))
+        settle(m)
         self.assertFalse(m._timetable_slid_away)
+        self.assertEqual((m.edge_arrow_label.text(), m.edge_arrow_caption.text()), ("\u25bc", "KING'S WEEK"))
+        # pinch it again: back to King's Week
+        m._dwell_tap_lock = False
+        m._last_rx_tap_time = 0.0
+        c = m.edge_arrow_label.geometry().center()
+        m._handle_gesture(dict(gesture(event='tap', x=c.x() / m.width(), y=c.y() / m.height()), event_id=10))
+        settle(m)
+        self.assertTrue(m._timetable_slid_away)
 
 
 class TestTimetableMessages(unittest.TestCase):
@@ -806,7 +878,21 @@ class TestPracticeABTest(unittest.TestCase):
         self.assertLess(m.demo_surface.geometry().right(), m.width() // 2)    # moved left
         self.assertLess(m.demo_surface.width(), before.width())
         self.assertGreater(m.practice_panel.x(), m.width() // 2)
-        self.assertEqual(m.demo_hold_lbl.text(), "HOLD PINCH TO SKIP")
+        # It has to be finished: no SKIP while it's up, just the message.
+        self.assertFalse(m.skip_btn.isVisible())
+        self.assertTrue(m.practice_must_lbl.isVisible())
+        self.assertTrue(m._skip_rect().isEmpty())
+
+    def test_later_tutorials_can_be_skipped_again(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._skip_tutorial()                      # (only possible from code)
+        settle(m)
+        m._show_gesture_scrim()
+        settle(m)
+        self.assertTrue(m.skip_btn.isVisible())
+        self.assertFalse(m.practice_must_lbl.isVisible())
 
     def test_doing_the_practice_finishes_it_and_records_it(self):
         m = self.mirror
@@ -822,26 +908,51 @@ class TestPracticeABTest(unittest.TestCase):
         s = m.telemetry.current_session
         self.assertEqual((s['practice_shown'], s['practice_completed'], s['practice_steps']), (1, 1, 2))
 
-    def test_holding_a_pinch_skips_it(self):
+    def test_pinching_the_end_card_finishes_the_list(self):
         m = self.mirror
         self._arrive('B')
         self._clip_ends()
-        m._demo_pinch_start = time.time() - 5
-        m._demo_pinch_last = time.time()
-        m._update_demo_hold(True)
+        pp = m.practice_panel
+        for _ in range(pp.TAPS):
+            self._hand_at(pp.dot_center(), event='tap')
+        self.assertEqual(pp.step, 1)
+        pp._scroll = pp.scroll_max() - 30            # THE END peeking in, not reached
+        end = pp.end_card_rect()
+        self.assertFalse(end.isEmpty())
+        self._hand_at(QPointF(end.center()), event='tap')
+        self.assertEqual(pp.step, 2)
+
+    def test_the_demo_pauses_while_the_hand_does_the_practice(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        self._hand_at(QPointF(10, 200))
+        self.assertTrue(m._demo_paused)
+        self.assertTrue(m.demo_movie._paused)
+        m._last_hand_time -= 3                       # the hand dropped
+        m._update_inputs()
+        self.assertFalse(m._demo_paused)
+        self.assertFalse(m.demo_movie._paused)
+
+    def test_skip_ends_it_and_records_the_skip(self):
+        m = self.mirror
+        self._arrive('B')
+        self._clip_ends()
+        m._skip_tutorial()
         settle(m)
         self.assertFalse(m.gesture_demo_overlay.isVisible())
         s = m.telemetry.current_session
         self.assertEqual((s['practice_skipped'], s['practice_completed']), (1, 0))
         self.assertEqual(s['tutorial_dismissed'], 0)
 
-    def test_dragging_the_list_does_not_count_as_holding_to_skip(self):
+    def test_the_dot_pulls_the_cursor_in(self):
         m = self.mirror
         self._arrive('B')
         self._clip_ends()
-        m._demo_pinch_start = time.time() - 0.9
-        self._hand_at(QPointF(10, 200), event='scroll', delta=40)
-        self.assertLess(m.demo_hold_fill.width(), m.demo_hold_bar.width() * 0.2)
+        pp = m.practice_panel
+        c = pp.mapTo(m.central_widget, pp.dot_center().toPoint())
+        near = gesture(x=(c.x() + pp.DOT_R + 50) / m.width(), y=c.y() / m.height())
+        self.assertLess(m._apply_magnet(near)['hand_x'], near['hand_x'])
 
     def test_it_is_offered_once_per_visit(self):
         m = self.mirror

@@ -48,9 +48,12 @@ GESTURE_STATUS_FILE = os.path.join(
 )
 
 # The hand tracker's weights. Resolved next to this file rather than against the
-# working directory.
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "gesture_recognizer.task")
+# working directory. The plain hand landmarker is preferred: the gesture
+# recognizer runs the same hand model plus a gesture classifier on every frame
+# with a hand in it, and nothing here uses that classifier.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+LANDMARKER_PATH = os.path.join(_HERE, "hand_landmarker.task")
+MODEL_PATH = os.path.join(_HERE, "gesture_recognizer.task")
 
 # The Pi reads its own v4l2loopback device that start_smart_mirror.sh feeds.
 # v4l2loopback only lets one reader stream at a time, so the face daemon gets
@@ -105,8 +108,8 @@ POSITION_QUANTUM    = 1.0 / 96
 # hand is smoothed down to MIN_CUTOFF Hz so landmark jitter disappears; the
 # cutoff rises with speed (BETA), so a moving hand is followed with almost no
 # lag. Raise MIN_CUTOFF for a twitchier cursor, BETA for less lag on fast moves.
-CURSOR_MIN_CUTOFF   = 1.2
-CURSOR_BETA         = 6.0
+CURSOR_MIN_CUTOFF   = 2.5   # was 1.2: slow, aiming movements lagged behind the
+CURSOR_BETA         = 9.0   # hand. The magnet and sticky selection absorb the jitter.
 CURSOR_D_CUTOFF     = 1.0
 
 # Picking the hand to follow. A hand whose back faces the camera (by more than
@@ -115,6 +118,21 @@ CURSOR_D_CUTOFF     = 1.0
 BACKHAND_REJECT          = 0.25
 BACKHAND_MIN_LABEL_SCORE = 0.6
 CURRENT_HAND_BONUS       = 1.35   # stickiness, so two similar hands don't trade control
+
+# Engaging. A hand only takes control once it is held up like the demo shows:
+# palm to the camera, at least three fingers out (a pinch leaves three out).
+# Scratching your head or pushing your hair back doesn't look like that, so it
+# no longer moves the cursor. Once engaged, the hand keeps control until it is
+# lost, whatever shape it makes.
+ENGAGE_SEC          = 0.12    # presented this long (~3 frames) to take control
+ENGAGE_MIN_FACING   = 0.15    # palm at least this square to the camera
+ENGAGE_MIN_FINGERS  = 3
+
+# Too close: past roughly half a metre the hand fills the frame and tracks badly.
+TOO_CLOSE_PALM      = 0.24    # wrist→knuckle span as a share of the frame height
+TOO_CLOSE_SEC       = 0.5
+
+STATUS_FILE_EVERY   = 0.5     # the JSON file is only a fallback for UDP: rarely
 
 
 class OneEuroFilter:
@@ -278,25 +296,53 @@ class GestureEngine:
         self.last_payload = None
 
         self._tmp_file = f"{GESTURE_STATUS_FILE}.{os.getpid()}.{id(self):x}.tmp"
+        self._last_file_write = 0.0
+
+        self.engaged = False
+        self._engage_since = None
+        self._hand_seen_at = 0.0     # any hand in view, in control or not
+        self._last_engage_log = 0.0
+        self.too_close = False
+        self._close_since = None
 
     def _init_tracker(self):
         """Build the MediaPipe hand tracker."""
         if mp is None:
             print("[GESTURE] mediapipe not installed — gesture control disabled.")
             return
-        if not os.path.exists(MODEL_PATH):
-            print(f"[GESTURE] Missing {os.path.basename(MODEL_PATH)} — download gesture_recognizer.task. "
-                  f"Gesture control disabled.")
+        use_landmarker = os.path.exists(LANDMARKER_PATH)
+        if not use_landmarker and not os.path.exists(MODEL_PATH):
+            print("[GESTURE] Missing hand_landmarker.task (and gesture_recognizer.task). "
+                  "Gesture control disabled.")
             return
         try:
+            if use_landmarker:
+                options = mp_vision.HandLandmarkerOptions(
+                    base_options=mp_python.BaseOptions(model_asset_path=LANDMARKER_PATH),
+                    running_mode=mp_vision.RunningMode.VIDEO,
+                    num_hands=1,
+                    min_hand_detection_confidence=0.4,
+                    min_hand_presence_confidence=0.4,
+                    min_tracking_confidence=0.4,
+                )
+                landmarker = mp_vision.HandLandmarker.create_from_options(options)
+                self._infer = landmarker.detect_for_video
+                self.tracker = landmarker
+                print("[GESTURE] Using the hand landmarker.", flush=True)
+                return
             options = mp_vision.GestureRecognizerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
                 running_mode=mp_vision.RunningMode.VIDEO,
-                num_hands=2,
+                # One hand. Asked for two, MediaPipe runs its palm detector on
+                # every frame while only one is visible (nearly always), which
+                # cost ~20 ms a frame on the Pi. With one, a tracked hand skips it.
+                num_hands=1,
                 min_hand_detection_confidence=0.4,   # lower = fewer skipped frames
                 min_tracking_confidence=0.4,          # lower = faster tracking recovery
             )
             self.tracker = mp_vision.GestureRecognizer.create_from_options(options)
+            self._infer = self.tracker.recognize_for_video
+            print("[GESTURE] Using the gesture recognizer (hand_landmarker.task not found).", flush=True)
         except Exception as e:
             print(f"[GESTURE] Could not start the hand tracker: {e}")
 
@@ -345,6 +391,46 @@ class GestureEngine:
         if handedness not in ('Left', 'Right') or label_score < BACKHAND_MIN_LABEL_SCORE:
             return False
         return cls.palm_facing(lm, handedness) < -BACKHAND_REJECT
+
+    def fingers_out(self, lm):
+        """How many of index..pinky are extended (tip further from the wrist than its middle joint)."""
+        wrist = lm[0]
+        out = 0
+        for pip, tip in ((6, 8), (10, 12), (14, 16), (18, 20)):
+            if self._distance(lm[tip], wrist) > 1.1 * self._distance(lm[pip], wrist):
+                out += 1
+        return out
+
+    def is_presented(self, lm, handedness=None):
+        """Held up to control the mirror: palm to the camera, fingers out."""
+        if self._palm_size(lm) < MIN_PALM_SIZE:
+            return False
+        if handedness in ('Left', 'Right') and self.palm_facing(lm, handedness) < ENGAGE_MIN_FACING:
+            return False
+        return self.fingers_out(lm) >= ENGAGE_MIN_FINGERS
+
+    def update_engagement(self, lm, handedness, now):
+        """Whether this hand is in control (see ENGAGE_SEC)."""
+        if self.engaged:
+            return True
+        if self.is_presented(lm, handedness):
+            if self._engage_since is None:
+                self._engage_since = now
+            if now - self._engage_since >= ENGAGE_SEC:
+                self.engaged = True
+                self._engage_since = None
+        else:
+            self._engage_since = None
+        return self.engaged
+
+    def update_too_close(self, lm, now):
+        if self._palm_size(lm) > TOO_CLOSE_PALM:
+            if self._close_since is None:
+                self._close_since = now
+            self.too_close = now - self._close_since >= TOO_CLOSE_SEC
+        else:
+            self._close_since = None
+            self.too_close = False
 
     @staticmethod
     def _in_frame(lm, margin=0.02):
@@ -476,6 +562,7 @@ class GestureEngine:
         if pinched:
             if self.pinch_start is None:
                 self.pinch_start = now
+                self.pinch_at = (self.hand_x, self.hand_y)   # where they aimed
                 self.drag_start_y = sy
                 self.last_drag_y = sy
                 self.drag_dist = 0.0
@@ -521,6 +608,7 @@ class GestureEngine:
                               or now - self.last_tap_time > TAP_COOLDOWN_SEC)
                     if cooled:
                         self.last_tap_time = now
+                        self.tap_at = getattr(self, 'pinch_at', (self.hand_x, self.hand_y))
                         if event is None:
                             event = "tap"
                 elif had_scroll and abs(released_velocity) > FLING_MIN_VELOCITY:
@@ -530,12 +618,40 @@ class GestureEngine:
                         event = "fling"
         return event
 
+    def step(self, lm, handedness, now):
+        """One camera frame: the chosen hand (or None). Publishes, returns the event."""
+        if lm is not None:
+            self._hand_seen_at = now
+            if self.update_engagement(lm, handedness, now):
+                self.update_too_close(lm, now)
+                event = self.process_landmarks(lm, now)
+                self.write_status(event, self.scroll_delta)
+                return event
+            if now - self._last_engage_log > 3.0:   # why a visible hand isn't in control
+                self._last_engage_log = now
+                facing = self.palm_facing(lm, handedness) if handedness in ('Left', 'Right') else None
+                print(f"[GESTURE] Hand seen, not in control yet: fingers out {self.fingers_out(lm)}, "
+                      f"palm facing {facing if facing is None else round(facing, 2)} ({handedness})", flush=True)
+        became_absent = self.mark_absent(now)
+        self.write_status(force=became_absent)
+        return None
+
     def mark_absent(self, now):
         if not self.present:
+            # A hand held up but not yet in control keeps its engage timer;
+            # only forget it once no hand at all has been seen for a moment.
+            # (Resetting it on every such frame meant no hand ever took control.)
+            if now - max(self.last_seen, self._hand_seen_at) >= HAND_LOST_SEC:
+                self.engaged = False
+                self._engage_since = None
             return False
         if now - self.last_seen < HAND_LOST_SEC:
             return False
         self.present = False
+        self.engaged = False
+        self._engage_since = None
+        self.too_close = False
+        self._close_since = None
         self.region = None
         self._filter_x.reset()
         self._filter_y.reset()
@@ -575,7 +691,8 @@ class GestureEngine:
         else:
             self._last_event_hold = None
 
-        payload = (self.present, self.region, event, self._quantised_position(), self.pinched, round(self.right_dwell_progress, 2))
+        payload = (self.present, self.region, event, self._quantised_position(), self.pinched,
+                   round(self.right_dwell_progress, 2), self.too_close)
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -592,6 +709,7 @@ class GestureEngine:
                         "pinched":              self.pinched,
                         "right_dwell_progress": round(self.right_dwell_progress, 3),
                         "dwell_side":           getattr(self, 'dwell_side', None),
+                        "too_close":            self.too_close,
                         "event":                None,
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
@@ -616,7 +734,11 @@ class GestureEngine:
             "pinched":              self.pinched,
             "right_dwell_progress": round(self.right_dwell_progress, 3),
             "dwell_side":           getattr(self, 'dwell_side', None),
+            "too_close":            self.too_close,
             "event":                event,
+            # A tap acts where its pinch began, not where the hand drifted to.
+            "tap_x":                round(self.tap_at[0], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,
+            "tap_y":                round(self.tap_at[1], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,
             "event_id":             getattr(self, '_event_id', 0),
             "scroll_delta":         scroll_delta,
             "seq":                  self.seq,
@@ -633,6 +755,9 @@ class GestureEngine:
         except Exception:
             pass
 
+        if not (force or event) and now - self._last_file_write < STATUS_FILE_EVERY:
+            return
+        self._last_file_write = now
         try:
             with open(self._tmp_file, "w") as f:
                 json.dump(data, f)
@@ -723,6 +848,7 @@ class GestureEngine:
         start = time.time()
         last_stamp_ms = -1
         stats_since, stats_frames, stats_busy = time.time(), 0, 0.0
+        stats_model, stats_hand = 0.0, 0
         last_frame_at = 0.0
         try:
             while self.running:
@@ -746,25 +872,21 @@ class GestureEngine:
 
                 stamp_ms = max(int((time.time() - start) * 1000), last_stamp_ms + 1)
                 last_stamp_ms = stamp_ms
-                results = self.tracker.recognize_for_video(image, stamp_ms)
+                t_model = time.time()
+                results = self._infer(image, stamp_ms)
+                stats_model += time.time() - t_model
+                stats_hand += 1 if results.hand_landmarks else 0
 
                 now = time.time()
                 self.scroll_delta = 0
                 event = None
 
+                best_lm, hand_name = None, None
                 if results.hand_landmarks:
-                    best_lm, _ = self.select_best_hand(
+                    best_lm, hand_name = self.select_best_hand(
                         results.hand_landmarks, getattr(results, 'handedness', None)
                     )
-                    if best_lm is not None:
-                        event = self.process_landmarks(best_lm, now)
-                        self.write_status(event, self.scroll_delta)
-                    else:
-                        became_absent = self.mark_absent(now)
-                        self.write_status(force=became_absent)
-                else:
-                    became_absent = self.mark_absent(now)
-                    self.write_status(force=became_absent)
+                event = self.step(best_lm, hand_name, now)
 
                 if event:
                     print(f"[GESTURE] {event} region={self.region} delta={self.scroll_delta}")
@@ -773,8 +895,11 @@ class GestureEngine:
                 stats_busy += time.time() - t_frame
                 if t_frame - stats_since >= 10.0:
                     print(f"[GESTURE] {stats_frames / (t_frame - stats_since):.1f} fps, "
-                          f"{1000 * stats_busy / stats_frames:.0f} ms per frame", flush=True)
+                          f"{1000 * stats_busy / stats_frames:.0f} ms per frame "
+                          f"({1000 * stats_model / stats_frames:.0f} in the model), "
+                          f"hand in view {100 * stats_hand / stats_frames:.0f}%", flush=True)
                     stats_since, stats_frames, stats_busy = t_frame, 0, 0.0
+                    stats_model, stats_hand = 0.0, 0
         except KeyboardInterrupt:
             pass
         finally:

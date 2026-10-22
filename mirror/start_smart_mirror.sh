@@ -72,7 +72,9 @@ if ! command -v rpicam-vid &>/dev/null && command -v libcamera-vid &>/dev/null; 
     RPICAM_BIN="libcamera-vid"
 fi
 
-$RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30 \
+# --exposure sport favours short exposures (raising gain instead), so a moving
+# hand is sharp rather than smeared: blur made the tracked hand jump about.
+$RPICAM_BIN -t 0 --nopreview --codec yuv420 -o - --width 640 --height 480 --framerate 30     --exposure sport \
     2> "$APP_DIR/rpicam.log" | \
 ffmpeg -hide_banner -loglevel warning \
     -f rawvideo -pixel_format yuv420p -video_size 640x480 -framerate 30 -i - \
@@ -83,10 +85,16 @@ ffmpeg -hide_banner -loglevel warning \
 echo "[START] Camera pipeline started. Waiting 5s..."
 sleep 5
 
+# Background work (face recognition, the log uploader) shares CPU core 0, so
+# it can never crowd out the hand tracker: competing for the CPU nearly
+# doubled the model's time per frame (31 ms alone, ~55 ms with everything).
+CORE0=""
+command -v taskset >/dev/null && CORE0="taskset -c 0"
+
 # ── Launch Face Recognition Daemon ──────────────────────────────────────────
 # Lower CPU priority: recognising a face a fraction of a second later is
 # invisible, but gestures and the UI stuttering is not.
-PYTHONUNBUFFERED=1 nice -n 10 "$PYTHON" -u face_recognize.py --rpi > "$APP_DIR/face_daemon.log" 2>&1 &
+PYTHONUNBUFFERED=1 $CORE0 nice -n 10 "$PYTHON" -u face_recognize.py --rpi > "$APP_DIR/face_daemon.log" 2>&1 &
 echo "[START] face_recognize.py started."
 
 # ── Launch Gesture Engine Daemon ─────────────────────────────────────────────
@@ -95,6 +103,27 @@ echo "[START] gesture_engine.py started."
 
 sleep 2
 
+# ── Display resolution ───────────────────────────────────────────────────────
+# The UI is drawn in software, so every pixel costs CPU the hand tracker needs.
+# 1280x720 paints less than half as many pixels as 1920x1080 (the monitor
+# scales it up; text is a little softer). MIRROR_RESOLUTION in
+# ~/.config/smart-mirror/env: e.g. 1280x720 (default), 1920x1080, or "native"
+# to put a monitor back on its own preferred mode.
+RES="${MIRROR_RESOLUTION:-1280x720}"
+if command -v wlr-randr >/dev/null; then
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+    for OUT in $(wlr-randr 2>/dev/null | awk '/^[^ ]/ {print $1}'); do
+        if [ "$RES" = "native" ]; then
+            case "$OUT" in NOOP-*) ;; *) wlr-randr --output "$OUT" --preferred ;; esac
+        else
+            wlr-randr --output "$OUT" --mode "$RES" 2>/dev/null                 || wlr-randr --output "$OUT" --custom-mode "$RES" 2>/dev/null                 || echo "[WARN] Could not set $OUT to $RES."
+        fi
+    done
+    echo "[START] Display: $(wlr-randr 2>/dev/null | grep -m1 current | xargs)"
+    sleep 1
+fi
+
 # ── Launch Smart Mirror UI ───────────────────────────────────────────────────
 export DISPLAY=:0
 # The daemons above are already running, so stop the UI spawning a second pair
@@ -102,7 +131,7 @@ export DISPLAY=:0
 MIRROR_FACE_DAEMON=0 MIRROR_GESTURES=0 "$PYTHON" -u smart_mirror_pro.py > "$APP_DIR/mirror.log" 2>&1 &
 
 # ── Launch Log Forwarder Daemon ──────────────────────────────────────────────
-PYTHONUNBUFFERED=1 nice -n 15 "$PYTHON" -u log_forwarder.py > "$APP_DIR/log_forwarder.log" 2>&1 &
+PYTHONUNBUFFERED=1 $CORE0 nice -n 15 "$PYTHON" -u log_forwarder.py > "$APP_DIR/log_forwarder.log" 2>&1 &
 echo "[START] log_forwarder.py started."
 
 echo "[START] Smart Mirror is running."

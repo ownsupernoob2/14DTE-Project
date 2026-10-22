@@ -149,13 +149,14 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self.mirror._last_state = 'user'
         self.mirror._timetable_slid_away = False
         self.mirror._update_arrow_indicator()
-        # Arrow is hidden when timetable is visible
-        self.assertTrue(self.mirror.edge_arrow_label.isHidden())
+        # Timetable showing: the arrow points down, back to King's Week
+        self.assertEqual(self.mirror.edge_arrow_label.text(), "\u25bc")
 
-        # Arrow is shown when timetable has slid away
+        # Timetable slid away: the arrow points up to it
         self.mirror._timetable_slid_away = True
         self.mirror._update_arrow_indicator()
         self.assertFalse(self.mirror.edge_arrow_label.isHidden())
+        self.assertEqual(self.mirror.edge_arrow_label.text(), "\u25b2")
 
         self.mirror._handle_gesture({
             'present': True,
@@ -179,7 +180,8 @@ class TestBarcodeKeyboardInput(unittest.TestCase):
         self.mirror._on_barcode_verified("STU12345", [], {}, True, "12345")
         self.assertEqual(self.mirror._last_state, 'guest')
         self.assertIsNone(self.mirror.current_user_id)
-        self.assertIn("Signed out", self.mirror.toast_lbl.text())
+        self.assertTrue(self.mirror.message_veil.isVisible())
+        self.assertEqual(self.mirror.message_veil.text, "SUCCESSFULLY LOGGED OUT")
 
     def test_barcode_5min_session_timeout(self):
         """Verify 5-minute barcode session timeout automatically logs out user."""

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -17,6 +18,7 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+	logToFile()
 	if err := openDatabase(dataPath("smartmirror.db")); err != nil {
 		log.Fatalf("Could not open the database: %v", err)
 	}
@@ -32,6 +34,25 @@ func main() {
 	}
 	e.Logger.Fatal(e.Start(":" + port))
 }
+
+// logToFile copies the server's log lines (not every request) to
+// data/server.log, which admins can read on the Logs page. Kept under ~2 MB.
+func logToFile() {
+	os.MkdirAll("data", 0700)
+	path := serverLogPath()
+	if info, err := os.Stat(path); err == nil && info.Size() > 2<<20 {
+		os.Rename(path, path+".1")
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Printf("Could not open %s: %v", path, err)
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.Printf("Smart Mirror API %s starting", AppVersion)
+}
+
+func serverLogPath() string { return dataPath("server.log") }
 
 func newServer() *echo.Echo {
 	e := echo.New()
