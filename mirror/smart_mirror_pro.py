@@ -824,10 +824,9 @@ class PracticePanel(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self.update)
+        # Nothing here animates on its own: it repaints only when something
+        # changes (the hand moving onto the dot, a pinch, the list scrolling).
+        # A 60 fps timer used to repaint it, and the tutorial beneath, nonstop.
         self._fade = 0.0
         self.reset()
         self.hide()
@@ -843,15 +842,9 @@ class PracticePanel(QWidget):
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
+        # Fully in, it paints every pixel, so nothing behind it is repainted.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, self._fade >= 1.0)
         self.update()
-
-    def showEvent(self, event):
-        self._timer.start()
-        super().showEvent(event)
-
-    def hideEvent(self, event):
-        self._timer.stop()
-        super().hideEvent(event)
 
     # ── geometry ──
     def play_rect(self):
@@ -868,20 +861,26 @@ class PracticePanel(QWidget):
 
     # ── input (hand position in this widget's coordinates) ──
     def handle(self, point, event, delta=0):
+        changed = False
         if self.step == 0:
             c = self.dot_center()
-            self._hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= self.DOT_HIT
+            hover = math.hypot(point.x() - c.x(), point.y() - c.y()) <= self.DOT_HIT
+            changed = hover != self._hover
+            self._hover = hover
             if event == "tap" and self._hover:
                 self._taps += 1
                 self._flash_at = time.monotonic()
                 QTimer.singleShot(260, self.update)    # clear the flash
+                changed = True
                 if self._taps >= self.TAPS:
                     self._advance()
         elif self.step == 1 and event in ("scroll", "fling") and delta:
             self._scroll = max(0.0, min(self.scroll_max(), self._scroll + delta))
+            changed = True
             if self._scroll >= self.scroll_max() - 1:
                 self._advance()
-        self.update()
+        if changed:
+            self.update()
 
     def _advance(self):
         self.step += 1
@@ -898,6 +897,8 @@ class PracticePanel(QWidget):
         now = time.monotonic()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if f >= 1.0:
+            painter.fillRect(self.rect(), QColor(0, 0, 0))     # opaque once fully in
         w = self.width()
 
         def text(t, rect, px, weight, color, alpha=1.0, spacing=0, align=Qt.AlignmentFlag.AlignLeft):
@@ -926,9 +927,8 @@ class PracticePanel(QWidget):
 
         if self.step == 0:
             c = self.dot_center()
-            pulse = 0.5 + 0.5 * math.sin(now * math.pi * 1.6)
-            flash = max(0.0, 1.0 - (now - self._flash_at) / 0.4)
-            halo = self.DOT_R + 26 * pulse + 34 * flash
+            flash = 1.0 if now - self._flash_at < 0.25 else 0.0     # a pinch landed
+            halo = self.DOT_R + 18 + 26 * flash
             painter.setBrush(QColor(255, 255, 255, int((26 + 40 * flash) * f)))
             painter.drawEllipse(c, halo, halo)
             r = self.DOT_R + 8 if self._hover else self.DOT_R
@@ -962,7 +962,7 @@ class PracticePanel(QWidget):
             painter.drawRoundedRect(QRectF(track.left(), track.top(), 3, done), 1.5, 1.5)
         else:
             c = QPointF(area.center())
-            pop = min(1.0, (now - self._flash_at) / 0.25)
+            pop = 1.0
             painter.setBrush(QColor(255, 255, 255, int(255 * f)))
             painter.drawEllipse(c, 48 * pop, 48 * pop)
             pen = QPen(QColor(0, 0, 0, int(255 * f)), 8)
@@ -1343,7 +1343,7 @@ class SmartMirrorPro(QMainWindow):
 
         # Hand cursor (dot + trail), drawn above everything else
         self.gesture_trail = GestureTrailOverlay(
-            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW') == '1')
+            self, own_window=os.environ.get('MIRROR_TRAIL_WINDOW', '1') != '0')
         self.gesture_trail.setObjectName("GestureTrailOverlay")
 
     def _set_arrow_hover(self, hover):
