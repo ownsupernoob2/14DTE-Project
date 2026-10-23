@@ -55,7 +55,9 @@ while true; do
         fi
 
         # Pull updates
-        if git pull --ff-only origin "$BRANCH" >> "$LOG_FILE" 2>&1; then
+        # safe_pull.sh gets past local edits and stray files (keeping a copy),
+        # which used to stop this Pi updating for good.
+        if /bin/bash "$APP_DIR/safe_pull.sh" "$BRANCH" >> "$LOG_FILE" 2>&1; then
             log "Successfully pulled updates from GitHub."
 
             if [ "$REQ_CHANGED" = true ] && [ -x "$PYTHON" ]; then
@@ -67,7 +69,7 @@ while true; do
             /bin/bash "$APP_DIR/start_smart_mirror.sh"
             exit 0
         else
-            log "[WARN] git pull --ff-only failed. Will retry next cycle."
+            log "[WARN] Update failed (see above). Will retry next cycle."
         fi
     fi
 done

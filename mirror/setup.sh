@@ -153,7 +153,7 @@ ensure_loopback_at_boot() {
 }
 
 ensure_files() {
-    chmod +x start_smart_mirror.sh setup.sh auto_updater.sh 2>/dev/null || true
+    chmod +x start_smart_mirror.sh setup.sh auto_updater.sh safe_pull.sh 2>/dev/null || true
     if [ ! -f gesture_recognizer.task ]; then
         say "Downloading the hand tracking model..."
         wget -O gesture_recognizer.task -q \

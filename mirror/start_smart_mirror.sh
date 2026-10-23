@@ -16,7 +16,9 @@ export MIRROR_GESTURE_DEV="$GESTURE_DEV"
 if [ "$1" != "--pulled" ]; then
     echo "[START] Checking for updates from GitHub..."
     BEFORE="$(git rev-parse HEAD 2>/dev/null)"
-    git pull --ff-only || echo "[WARN] Failed to pull updates."
+    # Gets past local edits and stray files (keeping a copy) instead of
+    # leaving the Pi stuck on an old version.
+    /bin/bash "$APP_DIR/safe_pull.sh" || echo "[WARN] Failed to pull updates."
     if [ "$(git rev-parse HEAD 2>/dev/null)" != "$BEFORE" ]; then
         # bash reads this file as it runs; start again on the version just pulled.
         exec /bin/bash "$APP_DIR/start_smart_mirror.sh" --pulled
