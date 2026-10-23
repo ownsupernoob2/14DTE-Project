@@ -105,8 +105,12 @@ func facePython() *pythonCmd {
 		}
 		seen[key] = true
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		err := cand.command(ctx, "-c", "import face_recognition, numpy").Run()
+		out, err := cand.command(ctx, "-c", "import face_recognition, numpy").CombinedOutput()
 		cancel()
+		if err != nil {
+			log.Printf("[FACE] %s %s can't import face_recognition: %v %s", cand.exe, strings.Join(cand.args, " "),
+				err, lastLine(string(out)))
+		}
 		if err == nil {
 			found := cand
 			pythonFound = &found
@@ -115,5 +119,68 @@ func facePython() *pythonCmd {
 		}
 	}
 	log.Println("[FACE] No Python with face_recognition found — face scans are unavailable. Run setup-face-python.ps1 (Windows) or install requirements.txt.")
+	installFacePython()
 	return nil
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	l := strings.TrimSpace(lines[len(lines)-1])
+	if len(l) > 300 {
+		l = l[:300]
+	}
+	return l
+}
+
+var (
+	setupMu      sync.Mutex
+	setupRunning bool
+	setupLastRun time.Time
+)
+
+// installFacePython runs setup-face-python.ps1 in the background (Windows) when
+// no usable Python was found, writing its output to this server's log (Admin
+// > Logs > Server). The auto-updater runs the same script after each update;
+// this covers a server where that didn't work, with no one at the machine.
+// At most once every 30 minutes.
+func installFacePython() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	if _, err := os.Stat("setup-face-python.ps1"); err != nil {
+		return
+	}
+	setupMu.Lock()
+	if setupRunning || time.Since(setupLastRun) < 30*time.Minute {
+		setupMu.Unlock()
+		return
+	}
+	setupRunning, setupLastRun = true, time.Now()
+	setupMu.Unlock()
+
+	go func() {
+		defer func() {
+			setupMu.Lock()
+			setupRunning = false
+			setupMu.Unlock()
+		}()
+		log.Println("[FACE] Setting up face-scanning Python (setup-face-python.ps1); this can take several minutes...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+			"-File", "setup-face-python.ps1").CombinedOutput()
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if l := strings.TrimSpace(line); l != "" {
+				log.Printf("[FACE] setup: %s", l)
+			}
+		}
+		if err != nil {
+			log.Printf("[FACE] Face-scanning Python setup failed: %v", err)
+			return
+		}
+		pythonMu.Lock()
+		pythonChecked = time.Time{} // look again straight away
+		pythonMu.Unlock()
+		facePython()
+	}()
 }

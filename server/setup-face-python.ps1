@@ -79,23 +79,29 @@ function Get-PrivatePython {
     return @($privatePython)
 }
 
+# Native tools (venv, pip) write warnings to stderr. When this script's output
+# is captured (the updater and the server both do), Windows PowerShell turns
+# those into errors and "Stop" would abort: these steps check exit codes instead.
 function New-FaceVenv($base) {
+    $ErrorActionPreference = "Continue"
     if (Test-Path $venvDir) { Remove-Item -Recurse -Force $venvDir }
     Write-Host "Creating .venv with $($base -join ' ')..."
     $base = @($base)
     $exe  = $base[0]
     $rest = @($base | Select-Object -Skip 1)
-    & $exe @rest -m venv $venvDir
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) { Write-Error "Could not create .venv" }
+    & $exe @rest -m venv $venvDir 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) { throw "Could not create .venv" }
 }
 
 function Install-FacePackages {
+    $ErrorActionPreference = "Continue"
     Write-Host "Installing face scanning packages..."
-    & $venvPython -m pip install --quiet --upgrade pip wheel
-    & $venvPython -m pip install --quiet -r requirements.txt
-    if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed" }
+    & $venvPython -m pip install --quiet --disable-pip-version-check --upgrade pip wheel 2>&1 | ForEach-Object { "$_" }
+    & $venvPython -m pip install --quiet --disable-pip-version-check -r requirements.txt 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
     # face_recognition pins a dlib that must be compiled; dlib-bin (in requirements.txt) is prebuilt.
-    & $venvPython -m pip install --quiet --no-deps face_recognition
+    & $venvPython -m pip install --quiet --disable-pip-version-check --no-deps face_recognition 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "pip install face_recognition failed" }
 }
 
 # 1. Build (or repair) the .venv from whatever Python this machine has.
