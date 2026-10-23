@@ -167,6 +167,32 @@ class OneEuroFilter:
         return self._x
 
 
+# ── Reach: the part of the camera image that covers the whole screen ─────────
+# Only this box of the camera picture is stretched to the full screen, so a
+# small hand movement crosses it and the arm can stay low and relaxed (testers'
+# arms tired from reaching across the whole camera view). It sits low in the
+# picture because the camera looks down from above the screen: the hand reaches
+# the top of the screen at shoulder height. Override with
+# GESTURE_REACH="x0,x1,y0,y1" (fractions of the camera image).
+def _reach_box():
+    try:
+        x0, x1, y0, y1 = (float(v) for v in os.environ["GESTURE_REACH"].split(","))
+        if 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1:
+            return x0, x1, y0, y1
+    except (KeyError, ValueError):
+        pass
+    return 0.22, 0.78, 0.25, 0.75
+
+REACH_X0, REACH_X1, REACH_Y0, REACH_Y1 = _reach_box()
+
+
+def to_screen(x, y):
+    """A camera position (0-1) to a screen position (0-1), through the reach box."""
+    sx = (x - REACH_X0) / (REACH_X1 - REACH_X0)
+    sy = (y - REACH_Y0) / (REACH_Y1 - REACH_Y0)
+    return min(1.0, max(0.0, sx)), min(1.0, max(0.0, sy))
+
+
 def classify_region(x):
     if x < REGION_LEFT_EDGE:
         return REGION_LEFT
@@ -460,7 +486,7 @@ class GestureEngine:
             if self.is_backhand(lm, h_name, h_score):
                 continue
 
-            cx, cy = self._palm_center(lm)
+            cx, cy = to_screen(*self._palm_center(lm))
             if cy > 0.88:
                 continue
 
@@ -512,9 +538,11 @@ class GestureEngine:
 
     def process_landmarks(self, lm, now):
         self.scroll_delta = 0
-        x, y = self._palm_center(lm)
-        # The published cursor is filtered; region, dwell and drag use the raw
-        # palm so a gesture is judged on where the hand really is.
+        raw_x, raw_y = self._palm_center(lm)
+        x, y = to_screen(raw_x, raw_y)
+        # The published cursor is filtered; region and dwell use the unfiltered
+        # position so a gesture is judged on where the hand really is. Drags use
+        # the camera position, so pinch wobble and scroll speed are unchanged.
         self.hand_x = self._filter_x(x, now)
         self.hand_y = self._filter_y(y, now)
         self.present = True
@@ -558,7 +586,7 @@ class GestureEngine:
         # silently thrown away. The raw palm position is used, not the smoothed
         # cursor, so scrolling starts on the frame the hand moves; the mirror
         # smooths the scroll itself.
-        sy = y
+        sy = raw_y
         if pinched:
             if self.pinch_start is None:
                 self.pinch_start = now

@@ -20,7 +20,7 @@ from gesture_engine import (
     RIGHT_DWELL_SEC, TAP_MAX_SEC, HAND_LOST_SEC,
     DRAG_DEADZONE, HEARTBEAT_SEC, POSITION_QUANTUM,
     PINCH_ENTER_RATIO, PINCH_EXIT_RATIO, MIN_PALM_SIZE,
-    classify_region, default_flip,
+    DRAG_TAP_THRESHOLD, classify_region, default_flip,
 )
 
 
@@ -84,6 +84,17 @@ def make_hand(px, py, closed=False, pinch=False, scale=DEFAULT_SCALE):
     cx, cy = _CENTER
     return [_P(px + (pts[i][0] - cx) * scale, py + (pts[i][1] - cy) * scale)
             for i in range(21)]
+
+
+def full_frame_reach(test):
+    """Map the whole camera image to the screen, so positions read back as given."""
+    saved = (gesture_engine.REACH_X0, gesture_engine.REACH_X1, gesture_engine.REACH_Y0, gesture_engine.REACH_Y1)
+    gesture_engine.REACH_X0, gesture_engine.REACH_X1, gesture_engine.REACH_Y0, gesture_engine.REACH_Y1 = 0.0, 1.0, 0.0, 1.0
+
+    def restore():
+        (gesture_engine.REACH_X0, gesture_engine.REACH_X1,
+         gesture_engine.REACH_Y0, gesture_engine.REACH_Y1) = saved
+    test.addCleanup(restore)
 
 
 class StubEngine(GestureEngine):
@@ -394,6 +405,7 @@ class TestAbsence(unittest.TestCase):
 
 class TestStatusFile(unittest.TestCase):
     def setUp(self):
+        full_frame_reach(self)
         self.tmp = tempfile.mkdtemp()
         self.path = os.path.join(self.tmp, 'gesture_status.json')
         self._orig = gesture_engine.GESTURE_STATUS_FILE
@@ -803,6 +815,9 @@ class TestHandSelection(unittest.TestCase):
 
 
 class TestCursorSmoothing(unittest.TestCase):
+    def setUp(self):
+        full_frame_reach(self)
+
     def test_a_resting_hand_is_steady(self):
         e = StubEngine()
         t = 1000.0
@@ -932,3 +947,39 @@ class TestTapPosition(unittest.TestCase):
         e.process_landmarks(make_hand(0.31, 0.51, pinch=True), t + 0.15)   # a small drift
         self.assertEqual(e.process_landmarks(make_hand(0.33, 0.52), t + 0.25), "tap")
         self.assertEqual(e.tap_at, start)
+
+
+class TestReach(unittest.TestCase):
+    """A small, low box of the camera image covers the whole screen."""
+
+    def test_the_box_corners_reach_the_screen_corners(self):
+        x0, x1, y0, y1 = (gesture_engine.REACH_X0, gesture_engine.REACH_X1,
+                          gesture_engine.REACH_Y0, gesture_engine.REACH_Y1)
+        self.assertEqual(gesture_engine.to_screen(x0, y0), (0.0, 0.0))
+        self.assertEqual(gesture_engine.to_screen(x1, y1), (1.0, 1.0))
+
+    def test_outside_the_box_stays_on_screen(self):
+        self.assertEqual(gesture_engine.to_screen(0.0, 0.0), (0.0, 0.0))
+        self.assertEqual(gesture_engine.to_screen(1.0, 1.0), (1.0, 1.0))
+
+    def test_a_small_movement_moves_the_cursor_further(self):
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.45, 0.5), 1000.0)
+        a = e.hand_x
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.55, 0.5), 1000.0)
+        self.assertGreater(e.hand_x - a, 0.15)      # 10% of the camera, over 15% of the screen
+
+    def test_a_drag_scrolls_as_far_as_before(self):
+        # Scrolling is judged on the camera position, so it is not sped up.
+        e = StubEngine()
+        e.process_landmarks(make_hand(0.5, 0.5, pinch=True), 1000.0)
+        e.process_landmarks(make_hand(0.5, 0.5 + DRAG_TAP_THRESHOLD * 0.8, pinch=True), 1000.05)
+        self.assertEqual(e.scroll_delta, 0)
+
+    def test_the_box_can_be_set_from_the_environment(self):
+        os.environ["GESTURE_REACH"] = "0.1,0.9,0.2,0.8"
+        self.addCleanup(os.environ.pop, "GESTURE_REACH")
+        self.assertEqual(gesture_engine._reach_box(), (0.1, 0.9, 0.2, 0.8))
+        os.environ["GESTURE_REACH"] = "nonsense"
+        self.assertEqual(gesture_engine._reach_box(), (0.22, 0.78, 0.25, 0.75))
