@@ -93,10 +93,13 @@ class TimetableWidget(QFrame):
         self.tick_timer.timeout.connect(self.update_ui)
         self.tick_timer.start(5000)
 
+    TIGHT_H = 360   # below this (the compact view at 720p) drop the room/ends/left row
+
     def _build_ui(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 40, 0, 20)
         lay.setSpacing(24)
+        self._lay = lay
 
         # ── PREVIOUS COMPLETED PERIODS BLOCK (Full mode) ─────────────────
         self.prev_box = QWidget(self)
@@ -239,6 +242,7 @@ class TimetableWidget(QFrame):
             self.prev_box.hide()
             self.next_box.show()
             self.schedule_box.hide()
+        self._apply_tightness()
         self.update_ui()
 
     def set_layout_mode(self, mode):
@@ -295,7 +299,24 @@ class TimetableWidget(QFrame):
             self._retry.start(self.RETRY_MS)
         self.update_ui()
 
+    def _tight(self):
+        return self.mode == 'compact' and 0 < self.height() < self.TIGHT_H
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_tightness()
+        self.update_ui()
+
+    def _apply_tightness(self):
+        # At 1280x720 the compact view is ~240 px tall but its contents need
+        # ~360: Qt squeezed the class name to nothing. When short, use tight
+        # spacing and keep just the class name and what's next.
+        tight = self._tight()
+        self._lay.setContentsMargins(0, 8 if tight else 40, 0, 4 if tight else 20)
+        self._lay.setSpacing(8 if tight else 24)
+
     def _show_details(self, shown):
+        shown = shown and not self._tight()
         for w in self._detail_keys + [self.room_v, self.ends_v, self.left_v]:
             w.setVisible(shown)
 

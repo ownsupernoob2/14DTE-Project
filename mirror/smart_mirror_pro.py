@@ -2607,6 +2607,8 @@ class SmartMirrorPro(QMainWindow):
         cap.move(arrow_x + aw // 2 - cap.width() // 2, arrow_y - cap.height() + 6)
         cap.show()
         cap.raise_()
+        if self.message_veil.isVisible():
+            self.message_veil.raise_()      # e.g. "SUCCESSFULLY LOGGED OUT" stays on top
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture tutorial: pinch-and-hold to dismiss
