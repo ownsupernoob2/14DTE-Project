@@ -7,7 +7,7 @@ This connects the school's KAMAR to the Smart Mirror server using KAMAR **Direct
 It is read-only by design. KAMAR *pushes* data to our server; our server never logs in to KAMAR and has no way to change anything in it. We ask KAMAR for **student timetables only**, nothing else: no names, addresses, caregivers, photos, attendance or results.
 
 Official reference: <https://directoryservices.kamar.nz/>
-
+                  
 ---
 
 ## Part A — Instructions for the school's KAMAR administrator

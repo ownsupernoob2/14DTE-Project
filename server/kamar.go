@@ -8,7 +8,7 @@ package main
 // through /api/timetable when that student scans their card.
 //
 // Protocol: https://directoryservices.kamar.nz/?listening-service
-// Setup for the school: docs/kamar-directory-services-setup.md
+// Setup for the school: kamar-directory-services-setup.md
 
 import (
 	"bytes"

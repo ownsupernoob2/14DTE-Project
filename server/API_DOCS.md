@@ -27,7 +27,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/screensaver` | `{mode: demo\|slideshow\|logo, slide_seconds, slides: [img], logo: img\|null}` |
 | GET | `/api/screensaver/files/<sha256>.<ext>` | An uploaded screensaver image (immutable) |
 | GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. Uses the timetable KAMAR sent for the student ID when there is one, otherwise the student's calendar link. |
-| POST | `/api/kamar` | KAMAR Directory Services listener. Its own Basic auth (`KAMAR_DS_USERNAME` / `KAMAR_DS_PASSWORD`); refuses everything while those are unset. Answers KAMAR's `check` asking for student timetables (ICS) only, and saves `studenttimetables` by student ID. See `docs/kamar-directory-services-setup.md`. |
+| POST | `/api/kamar` | KAMAR Directory Services listener. Its own Basic auth (`KAMAR_DS_USERNAME` / `KAMAR_DS_PASSWORD`); refuses everything while those are unset. Answers KAMAR's `check` asking for student timetables (ICS) only, and saves `studenttimetables` by student ID. See `kamar-directory-services-setup.md`. |
 
 ## Mirror
 
