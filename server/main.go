@@ -83,6 +83,8 @@ func newServer() *echo.Echo {
 	e.GET("/api/screensaver/files/:name", getScreensaverFile)
 	// Signed-in users read their own; mirrors (with their key) any user's.
 	e.GET("/api/timetable", getTimetable)
+	// The school's KAMAR pushes timetables here, with its own Basic auth.
+	e.POST("/api/kamar", kamarListener)
 
 	// ── Mirrors (X-Mirror-Key) ───────────────────────────────────────────
 	mirror := e.Group("/api", RequireMirror())

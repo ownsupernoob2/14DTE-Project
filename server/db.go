@@ -3,8 +3,8 @@ package main
 // db.go — the server's single SQLite database.
 //
 // Everything that belongs to a user (profile, student ID, face encodings,
-// dashboard layout, language, timetable link), every mirror session, and all
-// admin settings live here. Users authenticate with Auth0; the database only
+// dashboard layout, language, timetable link), every mirror session, the
+// timetables KAMAR sends, and all admin settings live here. Users authenticate with Auth0; the database only
 // keys rows by the Auth0 subject ("google-oauth2|…", "auth0|…") and never holds
 // a password.
 //
@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS screensaver_images (
 	size         INTEGER NOT NULL,
 	position     INTEGER NOT NULL DEFAULT 0,
 	created_at   INTEGER NOT NULL
+);
+
+-- Timetables KAMAR pushes to /api/kamar, one ICS calendar per student.
+-- Keyed by the normalised KAMAR ID, which is the number on the student ID card.
+CREATE TABLE IF NOT EXISTS kamar_timetables (
+	student_id TEXT PRIMARY KEY,
+	ics        TEXT NOT NULL,
+	grid       TEXT NOT NULL DEFAULT '',          -- timetable year, e.g. 2026TT
+	updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admin_audit (

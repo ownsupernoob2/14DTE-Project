@@ -1,0 +1,200 @@
+package main
+
+import (
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+func setKamarLogin(t *testing.T) {
+	t.Helper()
+	os.Setenv("KAMAR_DS_USERNAME", "kamar-user")
+	os.Setenv("KAMAR_DS_PASSWORD", "kamar-pass")
+	t.Cleanup(func() {
+		os.Unsetenv("KAMAR_DS_USERNAME")
+		os.Unsetenv("KAMAR_DS_PASSWORD")
+	})
+}
+
+// postKamar sends body to /api/kamar through the real router, as KAMAR would.
+func postKamar(t *testing.T, user, pass, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/kamar", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if user != "" || pass != "" {
+		req.SetBasicAuth(user, pass)
+	}
+	rec := httptest.NewRecorder()
+	newServer().ServeHTTP(rec, req)
+	return rec
+}
+
+// lessonToday is a one-lesson ICS calendar for 10:00–11:00 today, NZ time.
+func lessonToday(subject string) string {
+	day := time.Now().In(nzLocation()).Format("20060102")
+	return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+		"DTSTART;TZID=Pacific/Auckland:" + day + "T100000\r\n" +
+		"DTEND;TZID=Pacific/Auckland:" + day + "T110000\r\n" +
+		"SUMMARY:" + subject + "\r\nLOCATION:B12\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+}
+
+func timetablesMessage(entries ...string) string {
+	return `{"SMSDirectoryData":{"datetime":20261027020000,"sync":"studenttimetables","sms":"KAMAR",
+		"schools":[{"index":1,"moeCode":"0123","name":"Kings High"}],
+		"timetables":{"count":` + fmt.Sprint(len(entries)) + `,"data":[` + strings.Join(entries, ",") + `]}}}`
+}
+
+func timetableEntry(id, ics string) string {
+	return fmt.Sprintf(`{"id":%s,"uuid":"u","grid":"2026TT","timetable":%q}`, id, ics)
+}
+
+func TestKamarRefusesWrongOrMissingLogins(t *testing.T) {
+	newTestDB(t)
+	check := `{"SMSDirectoryData":{"sync":"check","sms":"KAMAR"}}`
+
+	// Not configured: nobody gets in, not even with "empty" credentials.
+	if rec := postKamar(t, "", "", check); rec.Code != 403 {
+		t.Errorf("unconfigured = %d, want 403", rec.Code)
+	}
+	setKamarLogin(t)
+	for _, login := range [][2]string{{"", ""}, {"kamar-user", "wrong"}, {"wrong", "kamar-pass"}} {
+		rec := postKamar(t, login[0], login[1], check)
+		if rec.Code != 403 || !strings.Contains(rec.Body.String(), "Authentication Failed") {
+			t.Errorf("login %v = %d %s, want 403", login, rec.Code, rec.Body)
+		}
+	}
+	// Refused before the body is read, so junk gets the same answer.
+	if rec := postKamar(t, "kamar-user", "wrong", "not json"); rec.Code != 403 {
+		t.Errorf("bad login with junk body = %d, want 403", rec.Code)
+	}
+}
+
+func TestKamarCheckAsksForStudentTimetablesOnly(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	rec := postKamar(t, "kamar-user", "kamar-pass", `{"SMSDirectoryData":{"sync":"check","sms":"KAMAR"}}`)
+	if rec.Code != 200 {
+		t.Fatalf("check = %d %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		D struct {
+			Error   int    `json:"error"`
+			Result  string `json:"result"`
+			Country string `json:"countryDataStored"`
+			Options map[string]interface{}
+		} `json:"SMSDirectoryData"`
+	}
+	decode(t, rec, &out)
+	if out.D.Error != 0 || out.D.Result != "OK" || out.D.Country != "New Zealand" {
+		t.Errorf("check reply = %+v", out.D)
+	}
+	students, _ := out.D.Options["students"].(map[string]interface{})
+	if out.D.Options["ics"] != true || students["timetables"] != true || students["details"] != false {
+		t.Errorf("options = %v", out.D.Options)
+	}
+	if len(out.D.Options) != 2 || len(students) != 2 {
+		t.Errorf("asks for more than timetables: %v", out.D.Options)
+	}
+}
+
+func TestKamarTimetablesAreSavedByStudentID(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	msg := timetablesMessage(
+		timetableEntry(`18234`, lessonToday("MATH")),    // KAMAR sends numbers…
+		timetableEntry(`" kh-55 "`, lessonToday("ENG")), // …or strings
+		timetableEntry(`"19999"`, "not a calendar"),     // skipped
+	)
+	rec := postKamar(t, "kamar-user", "kamar-pass", msg)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"result":"OK"`) {
+		t.Fatalf("timetables = %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(kamarICS("18234"), "MATH") || !strings.Contains(kamarICS("KH-55"), "ENG") {
+		t.Error("timetables not saved under their normalised IDs")
+	}
+	if hasKamarTimetable("19999") {
+		t.Error("saved something that isn't a calendar")
+	}
+
+	// The next push replaces, rather than adds to, a student's timetable.
+	postKamar(t, "kamar-user", "kamar-pass", timetablesMessage(timetableEntry(`18234`, lessonToday("PHYS"))))
+	if ics := kamarICS("18234"); !strings.Contains(ics, "PHYS") || strings.Contains(ics, "MATH") {
+		t.Errorf("timetable not replaced: %q", ics)
+	}
+}
+
+func TestKamarDropsTimetablesItStopsSending(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	old := time.Now().Add(-kamarRetention - time.Hour).Unix()
+	db.Exec(`INSERT INTO kamar_timetables(student_id, ics, updated_at) VALUES('LEFT1', 'BEGIN:VCALENDAR', ?)`, old)
+	postKamar(t, "kamar-user", "kamar-pass", timetablesMessage(timetableEntry(`18234`, lessonToday("MATH"))))
+	if hasKamarTimetable("LEFT1") {
+		t.Error("a timetable KAMAR stopped sending was kept past the retention period")
+	}
+}
+
+func TestKamarIgnoresMessagesWeDidNotAskFor(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	rec := postKamar(t, "kamar-user", "kamar-pass", `{"SMSDirectoryData":{"sync":"full","students":{"count":1,"data":[{"id":1}]}}}`)
+	if rec.Code != 200 {
+		t.Errorf("unrequested message = %d, want 200 so KAMAR doesn't disable us", rec.Code)
+	}
+}
+
+func TestUnlinkedStudentSeesTheirKamarTimetable(t *testing.T) {
+	newTestDB(t)
+	db.Exec(`INSERT INTO kamar_timetables(student_id, ics, updated_at) VALUES('18234', ?, ?)`, lessonToday("MATH"), time.Now().Unix())
+
+	rec := call(t, verifyBarcode, "POST", "/", `{"barcode":"18234"}`, "")
+	var who map[string]interface{}
+	decode(t, rec, &who)
+	if rec.Code != 200 || who["user_id"] != "kamar|18234" || who["user_name"] != "" {
+		t.Fatalf("scan = %d %v", rec.Code, who)
+	}
+
+	var tt struct {
+		Periods []TimetableEvent `json:"periods"`
+	}
+	decode(t, call(t, getTimetable, "GET", "/api/timetable?user_id=kamar%7C18234", "", ""), &tt)
+	if len(tt.Periods) != 1 || tt.Periods[0].Summary != "MATH" || tt.Periods[0].StartTime != "10:00" {
+		t.Errorf("periods = %+v", tt.Periods)
+	}
+
+	// Still unknown to both the accounts and KAMAR.
+	if rec := call(t, verifyBarcode, "POST", "/", `{"barcode":"77777"}`, ""); rec.Code != 404 {
+		t.Errorf("unknown ID = %d, want 404", rec.Code)
+	}
+}
+
+func TestLinkedStudentGetsKamarTimetableWithoutACalendarLink(t *testing.T) {
+	newTestDB(t)
+	addUser(t, studentID, "kid@kingshigh.school.nz")
+	db.Exec(`UPDATE users SET barcode = '18234' WHERE id = ?`, studentID)
+
+	// No KAMAR timetable and no calendar link: nothing to show.
+	if rec := call(t, getTimetable, "GET", "/api/timetable?user_id="+studentID, "", ""); rec.Code != 404 {
+		t.Errorf("no timetable = %d, want 404", rec.Code)
+	}
+
+	db.Exec(`INSERT INTO kamar_timetables(student_id, ics, updated_at) VALUES('18234', ?, ?)`, lessonToday("MATH"), time.Now().Unix())
+	rec := call(t, verifyBarcode, "POST", "/", `{"barcode":"18234"}`, "")
+	var who map[string]interface{}
+	decode(t, rec, &who)
+	if who["user_id"] != studentID {
+		t.Errorf("a linked account should still sign in as itself, got %v", who["user_id"])
+	}
+	var tt struct {
+		Periods []TimetableEvent `json:"periods"`
+	}
+	decode(t, call(t, getTimetable, "GET", "/api/timetable?user_id="+studentID, "", ""), &tt)
+	if len(tt.Periods) != 1 || tt.Periods[0].Summary != "MATH" {
+		t.Errorf("periods = %+v", tt.Periods)
+	}
+}

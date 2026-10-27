@@ -26,7 +26,8 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/analytics/config` | `{mode, active_variant}` — A/B variant to serve |
 | GET | `/api/screensaver` | `{mode: demo\|slideshow\|logo, slide_seconds, slides: [img], logo: img\|null}` |
 | GET | `/api/screensaver/files/<sha256>.<ext>` | An uploaded screensaver image (immutable) |
-| GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. |
+| GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. Uses the timetable KAMAR sent for the student ID when there is one, otherwise the student's calendar link. |
+| POST | `/api/kamar` | KAMAR Directory Services listener. Its own Basic auth (`KAMAR_DS_USERNAME` / `KAMAR_DS_PASSWORD`); refuses everything while those are unset. Answers KAMAR's `check` asking for student timetables (ICS) only, and saves `studenttimetables` by student ID. See `docs/kamar-directory-services-setup.md`. |
 
 ## Mirror
 
@@ -34,7 +35,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 |---|---|---|
 | GET | `/api/download-index` | `{vectors: [[128 floats]], user_map: [user_id]}` — every enrolled face |
 | POST | `/api/verify-face` | `{user_id}` (matched locally) → `{user_id, user_name, language, widgets, config}` |
-| POST | `/api/verify-barcode` | `{barcode}` → same as verify-face. Rate limited per IP. |
+| POST | `/api/verify-barcode` | `{barcode}` → same as verify-face. A student ID with no account but a KAMAR timetable signs in as `user_id: "kamar\|<ID>"` with no name and the default layout, so the mirror shows just their timetable. Rate limited per IP. |
 | POST | `/api/analytics/events` | One visit (see `SessionAnalyticsEvent` in handlers_analytics.go), or `session_type: "passerby"` for someone who got the brief-encounter hint and walked on (counted only in the hint's conversion rate) |
 | GET | `/api/users/language?user_id=\|barcode=` | `{language}` |
 | POST | `/api/logs` | `{logs: {name: content}}` or `{name, content}` → `{status: "ok", saved: [filenames]}` |
