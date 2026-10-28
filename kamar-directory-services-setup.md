@@ -82,7 +82,10 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
     "infourl": "https://smartmirror.me/privacy",
     "privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|Student records KAMAR sends with it (ID number only) are discarded unread, never stored.|Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
     "countryDataStored": "New Zealand",
-    "options": {"ics": true, "students": {"details": true, "minLevel": 1, "maxLevel": 13, "fields": {"required": "uniqueid", "optional": ""}, "timetables": true}}
+    "options": {"ics": true,
+      "students": {"details": true, "minLevel": 1, "maxLevel": 13, "timetables": true, "photos": false, "groups": false, "awards": false, "attendance": false, "assessments": false, "pastoral": false, "recognitions": false, "classefforts": false, "learningsupport": false, "fields": {"required": "uniqueid", "optional": ""}},
+      "staff": {"details": false, "photos": false, "timetables": false},
+      "common": {"subjects": false, "notices": false, "calendar": false, "bookings": false}}
   }}
   ```
 

@@ -103,8 +103,26 @@ func TestKamarCheckAsksForStudentTimetablesOnly(t *testing.T) {
 	if fields["required"] != "uniqueid" || fields["optional"] != "" {
 		t.Errorf("student fields = %v, want only uniqueid", fields)
 	}
-	if len(out.D.Options) != 2 || len(students) != 5 {
-		t.Errorf("asks for more than timetables and the ID: %v", out.D.Options)
+	// Every option is listed, but only ICS, student details and timetables are on.
+	wanted := map[string]bool{"ics": true, "students.details": true, "students.timetables": true}
+	for group, v := range out.D.Options {
+		sub, isGroup := v.(map[string]interface{})
+		if !isGroup {
+			if v != wanted[group] {
+				t.Errorf("option %s = %v", group, v)
+			}
+			continue
+		}
+		for name, val := range sub {
+			if b, isBool := val.(bool); isBool && b != wanted[group+"."+name] {
+				t.Errorf("option %s.%s = %v, want %v", group, name, b, !b)
+			}
+		}
+	}
+	for _, key := range []string{"staff", "common"} {
+		if _, ok := out.D.Options[key].(map[string]interface{}); !ok {
+			t.Errorf("options.%s missing: KAMAR's screen wants every option listed", key)
+		}
 	}
 	if students["minLevel"] != float64(1) || students["maxLevel"] != float64(13) {
 		t.Errorf("year levels = %v-%v, want 1-13", students["minLevel"], students["maxLevel"])

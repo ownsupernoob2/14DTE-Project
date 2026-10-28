@@ -128,20 +128,43 @@ func kamarCheckResponse() map[string]interface{} {
 			"Student records KAMAR sends with it (ID number only) are discarded unread, never stored.|" +
 			"Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
 		"countryDataStored": "New Zealand",
+		// Every option KAMAR defines is listed, false for the ones we don't
+		// want, the way its own example and working listeners do: its screen
+		// kept the data boxes locked when the unwanted ones were left out.
 		"options": map[string]interface{}{
 			"ics": true,
 			"students": map[string]interface{}{
-				// KAMAR's Students options stayed greyed out while details were
-				// off. We ask for details with the shortest field list, just the
-				// school's own ID number, and drop those records in kamarListener.
-				"details":  true,
-				"minLevel": 1, // every year level, as in KAMAR's own example
-				"maxLevel": 13,
+				// Details are on only because KAMAR wants them alongside
+				// timetables: the shortest field list, just the school's own ID
+				// number, and kamarListener drops those records unread.
+				"details":         true,
+				"minLevel":        1, // every year level
+				"maxLevel":        13,
+				"photos":          false,
+				"groups":          false,
+				"awards":          false,
+				"timetables":      true,
+				"attendance":      false,
+				"assessments":     false,
+				"pastoral":        false,
+				"recognitions":    false,
+				"classefforts":    false,
+				"learningsupport": false,
 				"fields": map[string]interface{}{
 					"required": "uniqueid",
 					"optional": "",
 				},
-				"timetables": true,
+			},
+			"staff": map[string]interface{}{
+				"details":    false,
+				"photos":     false,
+				"timetables": false,
+			},
+			"common": map[string]interface{}{
+				"subjects": false,
+				"notices":  false,
+				"calendar": false,
+				"bookings": false,
 			},
 		},
 	}
