@@ -117,6 +117,9 @@ func verifyBarcode(c echo.Context) error {
 			log.Printf("Barcode sign-in: KAMAR student without an account")
 			return c.JSON(200, kamarStudentPayload(code))
 		}
+		var kamarCount int
+		db.QueryRow(`SELECT COUNT(*) FROM kamar_timetables`).Scan(&kamarCount)
+		log.Printf("Barcode not recognised: no account has it, and KAMAR has sent %d timetables (none for this ID)", kamarCount)
 		return c.JSON(404, map[string]string{"error": "Student ID not recognised"})
 	}
 	log.Printf("Barcode sign-in: %s", matched)
