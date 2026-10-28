@@ -97,7 +97,9 @@ type kamarMessage struct {
 		Sync       string `json:"sync"`
 		Timetables struct {
 			Data []struct {
+				// KAMAR's docs say "id"; the real messages use "student".
 				ID        kamarID `json:"id"`
+				Student   kamarID `json:"student"`
 				Grid      string  `json:"grid"`
 				Timetable string  `json:"timetable"`
 			} `json:"data"`
@@ -236,7 +238,11 @@ func saveKamarTimetables(msg kamarMessage) (kamarSaveStats, error) {
 	now := time.Now()
 	for _, t := range msg.Data.Timetables.Data {
 		stats.received++
-		id := normalizeBarcode(string(t.ID))
+		raw := t.Student
+		if raw == "" {
+			raw = t.ID
+		}
+		id := normalizeBarcode(string(raw))
 		if validateBarcode(id) != nil {
 			stats.badID++
 			continue
