@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -140,11 +141,20 @@ func kamarCheckResponse() map[string]interface{} {
 func kamarListener(c echo.Context) error {
 	// KAMAR deliberately tries wrong passwords to make sure we refuse them.
 	if !kamarAuthorised(c) {
+		log.Printf("[KAMAR] Refused a post with a wrong or missing login (KAMAR does this on purpose during a check)")
 		return kamarReply(c, http.StatusForbidden, map[string]interface{}{"error": 403, "result": "Authentication Failed"})
 	}
+	raw, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return kamarReply(c, http.StatusBadRequest, map[string]interface{}{"error": 400, "result": "Could not read the post"})
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("<")) {
+		log.Printf("[KAMAR] Got XML. In KAMAR, set this service's Format to JSON.")
+		return kamarReply(c, http.StatusBadRequest, map[string]interface{}{"error": 400, "result": "Expected JSON, got XML. Set the service Format to JSON."})
+	}
 	var msg kamarMessage
-	if err := json.NewDecoder(c.Request().Body).Decode(&msg); err != nil {
-		log.Printf("[KAMAR] Unreadable post (is the service set to JSON?): %v", err)
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		log.Printf("[KAMAR] Unreadable post: %v", err)
 		return kamarReply(c, http.StatusBadRequest, map[string]interface{}{"error": 400, "result": "Expected JSON"})
 	}
 
