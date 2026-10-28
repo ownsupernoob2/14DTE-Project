@@ -30,18 +30,25 @@ Log into KAMAR and go to **Setup > Server**, then **Directory Services**, then c
 
 ### Step 3: Check and Enable
 
-Click **Check and Enable**. KAMAR will contact the server, which replies with exactly what it is asking for. You should see:
+Click **Check and Enable** at the top of the page. KAMAR contacts the server and reports whether the connection worked. The Privacy Statement and More Information buttons next to it should become clickable. If it reports an error, stop and contact us.
 
-- **Timetables** (students) available and ticked
-- **Details** (students) available and ticked, with only the **uniqueid** field listed (KAMAR needs this ticked before it unlocks the other options; we discard what it sends)
-- **Calendars as ICS** ticked
-- Everything else (photos, groups, attendance, assessments, pastoral, staff, notices, etc.) **unavailable**
+### Step 4: Select the data to send
 
-Leave the defaults as they are. If anything other than student timetables, student details and the one `uniqueid` field shows as available, stop and contact us.
+The data boxes under **Students** and **Staff** stay empty until you pick what to send (Kindo's guide has the same step). Select:
 
-### Step 4: Confirm data has arrived
+- **Students > Timetables**: all
+- **Students > Details**: all (KAMAR makes us ask for this alongside timetables; the server discards those records and keeps only timetables)
+- **Schools**: select **King's High School**
 
-After the next full update (overnight), let us know and we'll confirm timetables are showing on the mirror.
+Leave everything else (photos, subjects, attendance, awards, pastoral, assessments, staff, notices, etc.) empty. The tick boxes at the top of the page (ICS) are already set by the check.
+
+### Step 5: Run the first sync
+
+Press **Run Now** to send everything straight away instead of waiting for the overnight update. Let us know when it finishes and we'll confirm the timetables are showing on the mirror.
+
+### Step 6: Check Data Sharing (optional)
+
+In the left menu, open **Data Sharing Service**. If "Can Opt Out of Sharing Personal Details" is ticked, any student who opts out won't be sent, so they won't get a KAMAR timetable on the mirror (they can still use their own calendar link). Whether to untick it is the school's decision.
 
 ### To turn it off
 
