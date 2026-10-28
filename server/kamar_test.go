@@ -97,8 +97,11 @@ func TestKamarCheckAsksForStudentTimetablesOnly(t *testing.T) {
 	if out.D.Options["ics"] != true || students["timetables"] != true || students["details"] != false {
 		t.Errorf("options = %v", out.D.Options)
 	}
-	if len(out.D.Options) != 2 || len(students) != 2 {
+	if len(out.D.Options) != 2 || len(students) != 4 {
 		t.Errorf("asks for more than timetables: %v", out.D.Options)
+	}
+	if students["minLevel"] != float64(1) || students["maxLevel"] != float64(13) {
+		t.Errorf("year levels = %v-%v, want 1-13", students["minLevel"], students["maxLevel"])
 	}
 }
 

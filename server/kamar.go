@@ -131,6 +131,8 @@ func kamarCheckResponse() map[string]interface{} {
 			"ics": true,
 			"students": map[string]interface{}{
 				"details":    false,
+				"minLevel":   1, // every year level, as in KAMAR's own example
+				"maxLevel":   13,
 				"timetables": true,
 			},
 		},
