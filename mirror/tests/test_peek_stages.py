@@ -1015,3 +1015,28 @@ class TestTeaserABTest(unittest.TestCase):
         self.assertEqual(s['variant'], 'B')
         self.assertTrue(s['after_teaser'])
         self.assertEqual(self.sent, [])
+
+
+class TestTimetableAt720p(unittest.TestCase):
+    """At 1280x720 the compact timetable is short; the class name must still show."""
+
+    def test_a_short_compact_timetable_keeps_the_class_name(self):
+        import datetime as _dt
+        from unittest import mock
+        from widgets.timetable_widget import TimetableWidget
+        tt = TimetableWidget(api_url='http://test')
+        tt.set_mode('compact')
+        tt.resize(580, 240)
+        tt.show()
+        noon = _dt.datetime(2026, 10, 21, 10, 15)
+        with mock.patch('widgets.timetable_widget.datetime') as fake:
+            fake.now.return_value = noon
+            tt.periods = [{'summary': '13DTE (4)', 'startTime': '10:00', 'endTime': '11:00',
+                           'location': 'T5', 'date': '2026-10-21'}]
+            tt.status = 'ok'
+            tt.update_ui()
+            app.processEvents()
+        self.assertEqual(tt.subject_lbl.text(), '13DTE (4)')
+        self.assertGreater(tt.subject_lbl.height(), 40)          # not squeezed away
+        self.assertFalse(tt.room_v.isVisibleTo(tt))               # details dropped to make room
+        tt.deleteLater()

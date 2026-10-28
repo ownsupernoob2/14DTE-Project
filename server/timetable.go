@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -196,9 +197,12 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseICSWeek(body, time.Now()), nil
+}
 
-	loc := nzLocation()
-	now := time.Now().In(loc)
+// parseICSWeek returns the events in body that fall in the week containing now.
+func parseICSWeek(body string, now time.Time) []TimetableEvent {
+	now = now.In(nzLocation())
 	startOfWeek, endOfWeek := currentWeekBoundaries(now)
 
 	var events []TimetableEvent
@@ -284,7 +288,7 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 		return events[i].StartTime < events[j].StartTime
 	})
 
-	return events, nil
+	return events
 }
 
 // unfoldICSLines splits body into lines and unfolds continuation lines
@@ -308,6 +312,17 @@ func unfoldICSLines(body string) []string {
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
+
+// studentIDOf is the student ID to look up in KAMAR's timetables: the one in a
+// "kamar|…" ID, or the one a user linked to their account.
+func studentIDOf(userID string) string {
+	if id, ok := kamarStudentID(userID); ok {
+		return id
+	}
+	var code sql.NullString
+	db.QueryRow(`SELECT barcode FROM users WHERE id = ?`, userID).Scan(&code)
+	return code.String
+}
 
 func icsURLOf(userID string) string {
 	var u string
@@ -334,13 +349,23 @@ func getTimetable(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id required"})
 	}
 
-	icsURL := icsURLOf(userID)
-	if icsURL == "" {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "No timetable URL configured"})
+	// The timetable KAMAR sent for the student's ID wins; their own calendar
+	// link is the fallback for anyone KAMAR doesn't cover.
+	var events []TimetableEvent
+	if ics := kamarICS(studentIDOf(userID)); ics != "" {
+		events = parseICSWeek(ics, time.Now())
+	} else {
+		icsURL := icsURLOf(userID)
+		if icsURL == "" {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "No timetable URL configured"})
+		}
+		var err error
+		if events, err = parseTimetable(icsURL); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch timetable: " + err.Error()})
+		}
 	}
-	events, err := parseTimetable(icsURL)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch timetable: " + err.Error()})
+	if events == nil {
+		events = []TimetableEvent{}
 	}
 
 	viewMode := "today"

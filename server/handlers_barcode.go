@@ -112,8 +112,26 @@ func verifyBarcode(c echo.Context) error {
 	}
 	matched := findUserByBarcode(code)
 	if matched == "" {
+		// No account, but KAMAR knows this student: show their timetable.
+		if hasKamarTimetable(code) {
+			log.Printf("Barcode sign-in: KAMAR student without an account")
+			return c.JSON(200, kamarStudentPayload(code))
+		}
 		return c.JSON(404, map[string]string{"error": "Student ID not recognised"})
 	}
 	log.Printf("Barcode sign-in: %s", matched)
 	return c.JSON(200, mirrorUserPayload(matched, "barcode"))
+}
+
+// kamarStudentPayload signs in a student who has no account: the default
+// dashboard and their KAMAR timetable, nothing personal.
+func kamarStudentPayload(code string) map[string]interface{} {
+	return map[string]interface{}{
+		"user_id":     kamarUserPrefix + code,
+		"user_name":   "",
+		"language":    "en-NZ",
+		"widgets":     []Widget{},
+		"config":      defaultDashboardConfig(),
+		"auth_method": "barcode",
+	}
 }

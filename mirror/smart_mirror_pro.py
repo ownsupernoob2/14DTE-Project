@@ -852,12 +852,14 @@ class GuestScanCallout(QWidget):
 
         steady = alpha
         if self.show_or:
-            line("OR", 0, 28, 22, QFont.Weight.Bold, 6, int(steady * 0.7))
-        line("STUDENT ID SCAN", 28, 50, 40, QFont.Weight.Black, 7, alpha)
-        line("SCAN AGAIN TO SIGN OUT", 78, 24, 16, QFont.Weight.DemiBold, 3, int(steady * 0.6))
+            # As big as the line under it: people still thought a student ID
+            # was the only way in, so "OR" has to be read first.
+            line("OR", 0, 48, 40, QFont.Weight.Black, 8, alpha)
+        line("STUDENT ID SCAN", 48, 50, 40, QFont.Weight.Black, 7, alpha)
+        line("SCAN AGAIN TO SIGN OUT", 98, 24, 16, QFont.Weight.DemiBold, 3, int(steady * 0.6))
 
         # Arrow below, pointing at the scanner
-        line("▼", 104, 56, 44, QFont.Weight.Black, 0, alpha)
+        line("▼", 124, 56, 44, QFont.Weight.Black, 0, alpha)
         painter.end()
 
 
@@ -1468,7 +1470,7 @@ class SmartMirrorPro(QMainWindow):
         # Sign out with a pinch (scanning the ID again does the same).
         self.sign_out_btn = QLabel("SIGN OUT", self.central_widget)
         self.sign_out_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sign_out_btn.setFixedSize(240, 64)
+        self.sign_out_btn.setFixedSize(320, 88)
         self.sign_out_btn.hide()
         self._sign_out_hover = None
         self._set_sign_out_hover(False)
@@ -1512,9 +1514,9 @@ class SmartMirrorPro(QMainWindow):
         if hover == self._sign_out_hover:
             return
         self._sign_out_hover = hover
-        fg, bg = ('#000000', '#ffffff') if hover else ('#ffffff', '#1e1e1e')
+        fg, bg = ('#ffffff', '#ff4a3d') if hover else ('#ffffff', '#d92d20')
         self.sign_out_btn.setStyleSheet(
-            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 900; "
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 900; "
             f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
 
     def _position_sign_out(self):
@@ -1597,7 +1599,7 @@ class SmartMirrorPro(QMainWindow):
         cy = sh - ch - 4
         self.guest_scan_callout.setGeometry(0, cy, sw, ch)
 
-    SCAN_CALLOUT_H = 165
+    SCAN_CALLOUT_H = 185
 
     def _layout_demo_overlay(self, with_callout):
         """Centre the video, bar and hint in the space the callout leaves free."""
@@ -2607,6 +2609,8 @@ class SmartMirrorPro(QMainWindow):
         cap.move(arrow_x + aw // 2 - cap.width() // 2, arrow_y - cap.height() + 6)
         cap.show()
         cap.raise_()
+        if self.message_veil.isVisible():
+            self.message_veil.raise_()      # e.g. "SUCCESSFULLY LOGGED OUT" stays on top
 
     # ─────────────────────────────────────────────────────────────────────
     # Gesture tutorial: pinch-and-hold to dismiss
