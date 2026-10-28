@@ -4,7 +4,7 @@
 
 This connects the school's KAMAR to the Smart Mirror server using KAMAR **Directory Services**, so the mirror can show a student's timetable from their student ID without each student pasting in their calendar link.
 
-It is read-only by design. KAMAR *pushes* data to our server; our server never logs in to KAMAR and has no way to change anything in it. We ask KAMAR for **student timetables only**, nothing else: no names, addresses, caregivers, photos, attendance or results.
+It is read-only by design. KAMAR *pushes* data to our server; our server never logs in to KAMAR and has no way to change anything in it. We ask KAMAR for **student timetables**, plus the bare minimum of student details KAMAR makes us ask for (just the student's ID numbers, no names, addresses, caregivers, photos, attendance or results). The server throws those records away unread; only timetables are stored.
 
 Official reference: <https://directoryservices.kamar.nz/>
                   
@@ -33,10 +33,11 @@ Log into KAMAR and go to **Setup > Server**, then **Directory Services**, then c
 Click **Check and Enable**. KAMAR will contact the server, which replies with exactly what it is asking for. You should see:
 
 - **Timetables** (students) available and ticked
+- **Details** (students) available and ticked, with only the **uniqueid** field listed (KAMAR needs this ticked before it unlocks the other options; we discard what it sends)
 - **Calendars as ICS** ticked
-- Everything else (details, photos, groups, attendance, assessments, pastoral, staff, notices, etc.) **unavailable**
+- Everything else (photos, groups, attendance, assessments, pastoral, staff, notices, etc.) **unavailable**
 
-Leave the defaults as they are. If anything other than student timetables shows as available, stop and contact us.
+Leave the defaults as they are. If anything other than student timetables, student details and the one `uniqueid` field shows as available, stop and contact us.
 
 ### Step 4: Confirm data has arrived
 
@@ -65,16 +66,16 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
 
 **Messages**, by their `sync` value:
 
-- **`check`**: sent on *Check and Enable* and every day between 4am and 5am. The reply is what limits the access. It asks for student timetables as ICS calendars and nothing else:
+- **`check`**: sent on *Check and Enable* and every day between 4am and 5am. The reply is what limits the access. It asks for student timetables as ICS calendars, plus student details with only the `uniqueid` field (KAMAR kept the other options greyed out without details):
 
   ```json
   {"SMSDirectoryData": {
     "error": 0, "result": "OK",
     "service": "Smart Mirror", "version": 1.0, "status": "Ready",
     "infourl": "https://smartmirror.me/privacy",
-    "privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
+    "privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|Student records KAMAR sends with it (ID number only) are discarded unread, never stored.|Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
     "countryDataStored": "New Zealand",
-    "options": {"ics": true, "students": {"details": false, "timetables": true}}
+    "options": {"ics": true, "students": {"details": true, "minLevel": 1, "maxLevel": 13, "fields": {"required": "uniqueid", "optional": ""}, "timetables": true}}
   }}
   ```
 
@@ -82,7 +83,7 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
 
 - **`studenttimetables`**: the data. Each entry is `{"id": …, "grid": "2026TT", "timetable": "BEGIN:VCALENDAR…"}`. The server saves each calendar in the `kamar_timetables` table under the student ID, normalised the same way as a scanned card (upper case, no spaces). A student's new timetable replaces their old one.
 
-- **Anything else**: answered "OK" and thrown away. An error reply would make KAMAR retry and eventually disable the service.
+- **Anything else** (including the `full` and `part` student records): answered "OK" and thrown away, never stored. An error reply would make KAMAR retry and eventually disable the service.
 
 **Retention.** KAMAR re-sends every timetable each night, so any timetable not refreshed for 30 days (the student left, or the service was turned off) is deleted on the next push.
 

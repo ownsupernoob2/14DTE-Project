@@ -94,11 +94,17 @@ func TestKamarCheckAsksForStudentTimetablesOnly(t *testing.T) {
 		t.Errorf("check reply = %+v", out.D)
 	}
 	students, _ := out.D.Options["students"].(map[string]interface{})
-	if out.D.Options["ics"] != true || students["timetables"] != true || students["details"] != false {
+	if out.D.Options["ics"] != true || students["timetables"] != true || students["details"] != true {
 		t.Errorf("options = %v", out.D.Options)
 	}
-	if len(out.D.Options) != 2 || len(students) != 4 {
-		t.Errorf("asks for more than timetables: %v", out.D.Options)
+	// Details are asked for only so KAMAR unlocks the options: the school's own
+	// ID number and nothing optional.
+	fields, _ := students["fields"].(map[string]interface{})
+	if fields["required"] != "uniqueid" || fields["optional"] != "" {
+		t.Errorf("student fields = %v, want only uniqueid", fields)
+	}
+	if len(out.D.Options) != 2 || len(students) != 5 {
+		t.Errorf("asks for more than timetables and the ID: %v", out.D.Options)
 	}
 	if students["minLevel"] != float64(1) || students["maxLevel"] != float64(13) {
 		t.Errorf("year levels = %v-%v, want 1-13", students["minLevel"], students["maxLevel"])
@@ -148,6 +154,11 @@ func TestKamarIgnoresMessagesWeDidNotAskFor(t *testing.T) {
 	rec := postKamar(t, "kamar-user", "kamar-pass", `{"SMSDirectoryData":{"sync":"full","students":{"count":1,"data":[{"id":1}]}}}`)
 	if rec.Code != 200 {
 		t.Errorf("unrequested message = %d, want 200 so KAMAR doesn't disable us", rec.Code)
+	}
+	var stored int
+	db.QueryRow(`SELECT COUNT(*) FROM kamar_timetables`).Scan(&stored)
+	if stored != 0 {
+		t.Errorf("student records were stored: %d rows", stored)
 	}
 }
 
