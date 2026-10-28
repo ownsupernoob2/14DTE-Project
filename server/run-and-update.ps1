@@ -81,6 +81,17 @@ function Write-Log($msg) {
     $line = "[$timestamp] $msg"
     Write-Host $line
     $line | Out-File -FilePath $logFile -Append -Encoding utf8
+
+    # Also put it in the server's own log, so update steps show up between its
+    # lines (and on the admin Logs page's "server" tab) in the same style.
+    try {
+        $serverLog = Join-Path $RepoPath "data\server.log"
+        if (Test-Path (Split-Path $serverLog)) {
+            "$(Get-Date -Format 'yyyy/MM/dd HH:mm:ss') [UPDATER] $msg" | Out-File -FilePath $serverLog -Append -Encoding utf8
+        }
+    } catch {
+        # The server may have the log busy for a moment; updater.log has it anyway.
+    }
 }
 
 function Send-DiscordNotification($message) {

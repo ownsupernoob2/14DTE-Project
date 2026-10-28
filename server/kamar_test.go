@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -152,6 +154,38 @@ func TestKamarTimetablesAreSavedByStudentID(t *testing.T) {
 	postKamar(t, "kamar-user", "kamar-pass", timetablesMessage(timetableEntry(`18234`, lessonToday("PHYS"))))
 	if ics := kamarICS("18234"); !strings.Contains(ics, "PHYS") || strings.Contains(ics, "MATH") {
 		t.Errorf("timetable not replaced: %q", ics)
+	}
+}
+
+func TestKamarLogSaysWhyNothingWasSaved(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// One entry with an ID too short to be a student ID, one that isn't a calendar.
+	msg := timetablesMessage(
+		timetableEntry(`"ab"`, lessonToday("MATH")),
+		timetableEntry(`"18234"`, "NOT-A-CALENDAR-SECRET"),
+	)
+	if rec := postKamar(t, "kamar-user", "kamar-pass", msg); rec.Code != 200 {
+		t.Fatalf("post = %d %s", rec.Code, rec.Body)
+	}
+	out := logged.String()
+	for _, want := range []string{
+		"2 entries, 0 saved, 1 with an unusable student ID, 1 not a calendar",
+		"Nothing saved. Message shape:",
+		"firstEntry{grid=text", "timetable=text",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log is missing %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range []string{"NOT-A-CALENDAR-SECRET", "18234", "MATH"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("log leaks the value %q:\n%s", secret, out)
+		}
 	}
 }
 

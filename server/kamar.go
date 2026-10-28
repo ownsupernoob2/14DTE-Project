@@ -14,10 +14,12 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -197,13 +199,19 @@ func kamarListener(c echo.Context) error {
 		return kamarReply(c, http.StatusOK, kamarCheckResponse())
 
 	case "studenttimetables":
-		saved, err := saveKamarTimetables(msg)
+		stats, err := saveKamarTimetables(msg)
 		if err != nil {
 			log.Printf("[KAMAR] Saving timetables failed: %v", err)
 			// KAMAR resends after a delay, so a failure here isn't lost.
 			return kamarReply(c, http.StatusInternalServerError, map[string]interface{}{"error": 500, "result": "Could not save timetables"})
 		}
-		log.Printf("[KAMAR] Saved %d student timetables", saved)
+		log.Printf("[KAMAR] Timetables message: %d entries, %d saved, %d with an unusable student ID, %d not a calendar",
+			stats.received, stats.saved, stats.badID, stats.notICS)
+		if stats.saved == 0 {
+			// Say what the message looked like (names and sizes only, never the
+			// values) so a format we don't expect can be seen from the log.
+			log.Printf("[KAMAR] Nothing saved. Message shape: %s", kamarShape(raw))
+		}
 		return kamarOK(c)
 
 	default:
@@ -215,29 +223,87 @@ func kamarListener(c echo.Context) error {
 	}
 }
 
-func saveKamarTimetables(msg kamarMessage) (int, error) {
+type kamarSaveStats struct{ received, saved, badID, notICS int }
+
+func saveKamarTimetables(msg kamarMessage) (kamarSaveStats, error) {
+	var stats kamarSaveStats
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
 	defer tx.Rollback()
 
 	now := time.Now()
-	saved := 0
 	for _, t := range msg.Data.Timetables.Data {
+		stats.received++
 		id := normalizeBarcode(string(t.ID))
-		if validateBarcode(id) != nil || !strings.Contains(t.Timetable, "BEGIN:VCALENDAR") {
+		if validateBarcode(id) != nil {
+			stats.badID++
+			continue
+		}
+		if !strings.Contains(t.Timetable, "BEGIN:VCALENDAR") {
+			stats.notICS++
 			continue
 		}
 		if _, err := tx.Exec(`INSERT INTO kamar_timetables(student_id, ics, grid, updated_at) VALUES(?, ?, ?, ?)
 			ON CONFLICT(student_id) DO UPDATE SET ics = excluded.ics, grid = excluded.grid, updated_at = excluded.updated_at`,
 			id, t.Timetable, t.Grid, now.Unix()); err != nil {
-			return 0, err
+			return stats, err
 		}
-		saved++
+		stats.saved++
 	}
 	if _, err := tx.Exec(`DELETE FROM kamar_timetables WHERE updated_at < ?`, now.Add(-kamarRetention).Unix()); err != nil {
-		return 0, err
+		return stats, err
 	}
-	return saved, tx.Commit()
+	return stats, tx.Commit()
+}
+
+// kamarShape describes a timetables post for the log: which fields it has and
+// how big each is, for the message itself and its first entry. No values.
+func kamarShape(raw []byte) string {
+	describe := func(m map[string]json.RawMessage) string {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			kind := "other"
+			if v := bytes.TrimSpace(m[k]); len(v) > 0 {
+				switch {
+				case v[0] == '"':
+					kind = "text"
+				case v[0] == '[':
+					kind = "list"
+				case v[0] == '{':
+					kind = "object"
+				case v[0] == '-' || (v[0] >= '0' && v[0] <= '9'):
+					kind = "number"
+				case string(v) == "null":
+					kind = "null"
+				}
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s(%d bytes)", k, kind, len(m[k])))
+		}
+		return strings.Join(parts, " ")
+	}
+	var top struct {
+		D map[string]json.RawMessage `json:"SMSDirectoryData"`
+	}
+	if json.Unmarshal(raw, &top) != nil {
+		return "unreadable"
+	}
+	out := "message{" + describe(top.D) + "}"
+	var tt struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	var ttFields map[string]json.RawMessage
+	if json.Unmarshal(top.D["timetables"], &ttFields) == nil {
+		out += " timetables{" + describe(ttFields) + "}"
+		if json.Unmarshal(top.D["timetables"], &tt) == nil && len(tt.Data) > 0 {
+			out += " firstEntry{" + describe(tt.Data[0]) + "}"
+		}
+	}
+	return out
 }
