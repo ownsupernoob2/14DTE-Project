@@ -4,7 +4,7 @@
 
 This connects the school's KAMAR to the Smart Mirror server using KAMAR **Directory Services**, so the mirror can show a student's timetable from their student ID without each student pasting in their calendar link.
 
-It is read-only by design. KAMAR *pushes* data to our server; our server never logs in to KAMAR and has no way to change anything in it. We ask KAMAR for **student timetables only**, nothing else: no names, addresses, caregivers, photos, attendance or results.
+It is read-only by design. KAMAR *pushes* data to our server; our server never logs in to KAMAR and has no way to change anything in it. We ask KAMAR for **student timetables**, plus the bare minimum of student details KAMAR makes us ask for (just the student's ID numbers, no names, addresses, caregivers, photos, attendance or results). The server throws those records away unread; only timetables are stored.
 
 Official reference: <https://directoryservices.kamar.nz/>
                   
@@ -30,17 +30,25 @@ Log into KAMAR and go to **Setup > Server**, then **Directory Services**, then c
 
 ### Step 3: Check and Enable
 
-Click **Check and Enable**. KAMAR will contact the server, which replies with exactly what it is asking for. You should see:
+Click **Check and Enable** at the top of the page. KAMAR contacts the server and reports whether the connection worked. The Privacy Statement and More Information buttons next to it should become clickable. If it reports an error, stop and contact us.
 
-- **Timetables** (students) available and ticked
-- **Calendars as ICS** ticked
-- Everything else (details, photos, groups, attendance, assessments, pastoral, staff, notices, etc.) **unavailable**
+### Step 4: Select the data to send
 
-Leave the defaults as they are. If anything other than student timetables shows as available, stop and contact us.
+The data boxes under **Students** and **Staff** stay empty until you pick what to send (Kindo's guide has the same step). Select:
 
-### Step 4: Confirm data has arrived
+- **Students > Timetables**: all
+- **Students > Details**: all (KAMAR makes us ask for this alongside timetables; the server discards those records and keeps only timetables)
+- **Schools**: select **King's High School**
 
-After the next full update (overnight), let us know and we'll confirm timetables are showing on the mirror.
+Leave everything else (photos, subjects, attendance, awards, pastoral, assessments, staff, notices, etc.) empty. The tick boxes at the top of the page (ICS) are already set by the check.
+
+### Step 5: Run the first sync
+
+Press **Run Now** to send everything straight away instead of waiting for the overnight update. Let us know when it finishes and we'll confirm the timetables are showing on the mirror.
+
+### Step 6: Check Data Sharing (optional)
+
+In the left menu, open **Data Sharing Service**. If "Can Opt Out of Sharing Personal Details" is ticked, any student who opts out won't be sent, so they won't get a KAMAR timetable on the mirror (they can still use their own calendar link). Whether to untick it is the school's decision.
 
 ### To turn it off
 
@@ -65,16 +73,19 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
 
 **Messages**, by their `sync` value:
 
-- **`check`**: sent on *Check and Enable* and every day between 4am and 5am. The reply is what limits the access. It asks for student timetables as ICS calendars and nothing else:
+- **`check`**: sent on *Check and Enable* and every day between 4am and 5am. The reply is what limits the access. It asks for student timetables as ICS calendars, plus student details with only the `uniqueid` field (KAMAR kept the other options greyed out without details):
 
   ```json
   {"SMSDirectoryData": {
     "error": 0, "result": "OK",
     "service": "Smart Mirror", "version": 1.0, "status": "Ready",
     "infourl": "https://smartmirror.me/privacy",
-    "privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
+    "privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|Student records KAMAR sends with it (ID number only) are discarded unread, never stored.|Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
     "countryDataStored": "New Zealand",
-    "options": {"ics": true, "students": {"details": false, "timetables": true}}
+    "options": {"ics": true,
+      "students": {"details": true, "minLevel": 1, "maxLevel": 13, "timetables": true, "photos": false, "groups": false, "awards": false, "attendance": false, "assessments": false, "pastoral": false, "recognitions": false, "classefforts": false, "learningsupport": false, "fields": {"required": "uniqueid", "optional": ""}},
+      "staff": {"details": false, "photos": false, "timetables": false},
+      "common": {"subjects": false, "notices": false, "calendar": false, "bookings": false}}
   }}
   ```
 
@@ -82,7 +93,7 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
 
 - **`studenttimetables`**: the data. Each entry is `{"id": …, "grid": "2026TT", "timetable": "BEGIN:VCALENDAR…"}`. The server saves each calendar in the `kamar_timetables` table under the student ID, normalised the same way as a scanned card (upper case, no spaces). A student's new timetable replaces their old one.
 
-- **Anything else**: answered "OK" and thrown away. An error reply would make KAMAR retry and eventually disable the service.
+- **Anything else** (including the `full` and `part` student records): answered "OK" and thrown away, never stored. An error reply would make KAMAR retry and eventually disable the service.
 
 **Retention.** KAMAR re-sends every timetable each night, so any timetable not refreshed for 30 days (the student left, or the service was turned off) is deleted on the next push.
 

@@ -125,15 +125,46 @@ func kamarCheckResponse() map[string]interface{} {
 		"infourl": "https://smartmirror.me/privacy",
 		"privacystatement": "Stores each student's timetable only, keyed by their student ID, on a server in New Zealand.|" +
 			"Used only to show a student their own timetable on the Smart Mirror after they scan their ID card.|" +
+			"Student records KAMAR sends with it (ID number only) are discarded unread, never stored.|" +
 			"Deleted 30 days after KAMAR stops sending it (the student leaves or the service is turned off).",
 		"countryDataStored": "New Zealand",
+		// Every option KAMAR defines is listed, false for the ones we don't
+		// want, the way its own example and working listeners do: its screen
+		// kept the data boxes locked when the unwanted ones were left out.
 		"options": map[string]interface{}{
 			"ics": true,
 			"students": map[string]interface{}{
+				// Details are on only because KAMAR wants them alongside
+				// timetables: the shortest field list, just the school's own ID
+				// number, and kamarListener drops those records unread.
+				"details":         true,
+				"minLevel":        1, // every year level
+				"maxLevel":        13,
+				"photos":          false,
+				"groups":          false,
+				"awards":          false,
+				"timetables":      true,
+				"attendance":      false,
+				"assessments":     false,
+				"pastoral":        false,
+				"recognitions":    false,
+				"classefforts":    false,
+				"learningsupport": false,
+				"fields": map[string]interface{}{
+					"required": "uniqueid",
+					"optional": "",
+				},
+			},
+			"staff": map[string]interface{}{
 				"details":    false,
-				"minLevel":   1, // every year level, as in KAMAR's own example
-				"maxLevel":   13,
-				"timetables": true,
+				"photos":     false,
+				"timetables": false,
+			},
+			"common": map[string]interface{}{
+				"subjects": false,
+				"notices":  false,
+				"calendar": false,
+				"bookings": false,
 			},
 		},
 	}
@@ -176,8 +207,9 @@ func kamarListener(c echo.Context) error {
 		return kamarOK(c)
 
 	default:
-		// We only ask for timetables. Accept anything else and drop it, since
-		// an error makes KAMAR retry and eventually disable the service.
+		// Student records ("full"/"part") come with the details KAMAR needs us
+		// to ask for, and are never stored. Accept and drop them, since an
+		// error makes KAMAR retry and eventually disable the service.
 		log.Printf("[KAMAR] Ignored %q message", msg.Data.Sync)
 		return kamarOK(c)
 	}
