@@ -51,6 +51,12 @@ func timetablesMessage(entries ...string) string {
 		"timetables":{"count":` + fmt.Sprint(len(entries)) + `,"data":[` + strings.Join(entries, ",") + `]}}}`
 }
 
+// realTimetableEntry is shaped like KAMAR's actual messages: the student number
+// is in "student", not the "id" its documentation names.
+func realTimetableEntry(student, ics string) string {
+	return fmt.Sprintf(`{"student":%s,"uuid":"u","grid":"2026TT","timetable":%q}`, student, ics)
+}
+
 func timetableEntry(id, ics string) string {
 	return fmt.Sprintf(`{"id":%s,"uuid":"u","grid":"2026TT","timetable":%q}`, id, ics)
 }
@@ -154,6 +160,15 @@ func TestKamarTimetablesAreSavedByStudentID(t *testing.T) {
 	postKamar(t, "kamar-user", "kamar-pass", timetablesMessage(timetableEntry(`18234`, lessonToday("PHYS"))))
 	if ics := kamarICS("18234"); !strings.Contains(ics, "PHYS") || strings.Contains(ics, "MATH") {
 		t.Errorf("timetable not replaced: %q", ics)
+	}
+}
+
+func TestKamarSavesTimetablesSentAsStudent(t *testing.T) {
+	newTestDB(t)
+	setKamarLogin(t)
+	postKamar(t, "kamar-user", "kamar-pass", timetablesMessage(realTimetableEntry(`18234`, lessonToday("MATH"))))
+	if !strings.Contains(kamarICS("18234"), "MATH") {
+		t.Error("a timetable sent under \"student\" was not saved")
 	}
 }
 

@@ -91,7 +91,7 @@ KAMAR deliberately tries wrong passwords during setup and in its daily check, an
 
   Changing these options later disables the service at the school until they accept the change.
 
-- **`studenttimetables`**: the data. Each entry is `{"id": …, "grid": "2026TT", "timetable": "BEGIN:VCALENDAR…"}`. The server saves each calendar in the `kamar_timetables` table under the student ID, normalised the same way as a scanned card (upper case, no spaces). A student's new timetable replaces their old one.
+- **`studenttimetables`**: the data. Each entry is `{"student": 12345, "uuid": …, "grid": "2026TT", "timetable": "BEGIN:VCALENDAR…"}` (KAMAR's docs call the number `id`, but its real messages use `student`; the server accepts either). The server saves each calendar in the `kamar_timetables` table under the student ID, normalised the same way as a scanned card (upper case, no spaces). A student's new timetable replaces their old one.
 
 - **Anything else** (including the `full` and `part` student records): answered "OK" and thrown away, never stored. An error reply would make KAMAR retry and eventually disable the service.
 
