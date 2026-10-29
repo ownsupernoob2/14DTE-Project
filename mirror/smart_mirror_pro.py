@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGraphicsOpacityEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QRect, QRectF, QPoint, QPointF, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient, QRegion
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QImage, QKeySequence, QPainter, QColor, QPen, QPainterPath, QPixmap, QRadialGradient, QRegion
 
 from config import *
 from timing_config import (
@@ -816,6 +816,8 @@ class GuestScanCallout(QWidget):
         self._fade = 1.0
         self.show_or = False      # "OR": over the tutorial, scanning is the other way in
         self.message = None       # set: one centred line instead (variant B's hint, "step back")
+        self.submessage = None    # set with message: a smaller line under it saying what it's for
+        self.backdrop = False     # dark band behind the text, for a message over busy content
 
     def set_fade(self, f):
         self._fade = max(0.0, min(1.0, float(f)))
@@ -846,7 +848,27 @@ class GuestScanCallout(QWidget):
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
 
         if self.message:
-            line(self.message, 0, self.height(), 46, QFont.Weight.Black, 7, alpha)
+            if self.backdrop:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, int(225 * self._fade)))
+                painter.drawRoundedRect(QRectF(self.rect()).adjusted(24, 0, -24, 0), 18, 18)
+            # The big line shrinks until it fits the screen (long messages at 1280 wide).
+            px, spacing = 46, 7
+            fm_font = painter.font()
+            fm_font.setFamily("Segoe UI")
+            fm_font.setWeight(QFont.Weight.Black)
+            while px > 24:
+                fm_font.setPixelSize(px)
+                fm_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+                if QFontMetrics(fm_font).horizontalAdvance(self.message) <= w - 120:
+                    break
+                px, spacing = px - 2, max(2, spacing - 0.4)
+            if self.submessage:
+                top = max(0, (self.height() - 130) // 2)
+                line(self.message, top, 70, px, QFont.Weight.Black, spacing, alpha)
+                line(self.submessage, top + 70, 52, 30, QFont.Weight.DemiBold, 2, int(alpha * 0.8))
+            else:
+                line(self.message, 0, self.height(), px, QFont.Weight.Black, spacing, alpha)
             painter.end()
             return
 
@@ -975,7 +997,7 @@ class PracticePanel(QWidget):
 
     # ── geometry ──
     def play_rect(self):
-        top = int(104 * self.scale)
+        top = int(132 * self.scale)
         return QRect(0, top, self.width(), max(120, self.height() - top))
 
     def dot_center(self):
@@ -1065,8 +1087,14 @@ class PracticePanel(QWidget):
         text(step_lbl, QRect(0, 0, w, sz(24)), sz(14), QFont.Weight.Bold, '#94a3b8', spacing=3)
         title = ("PINCH THE DOT", "PINCH AND DRAG TO SCROLL", "YOU'RE READY")[self.step]
         text(title, QRect(0, sz(26), w, sz(44)), sz(32), QFont.Weight.Black, '#ffffff', spacing=1)
-        sub = (f"{self._taps} of {self.TAPS}", "Scroll to the end", "Explore the mirror")[self.step]
+        sub = (f"Quickly pinch and release to click  ({self._taps} of {self.TAPS})",
+               "Pinch, hold and drag to scroll. Let go to stop.",
+               "Explore the mirror")[self.step]
         text(sub, QRect(0, sz(70), w, sz(26)), sz(18), QFont.Weight.DemiBold, '#cbd5e1')
+        if self.step < 2:
+            # The thing most people get wrong: the hand has to stay open.
+            text("Keep your palm open and facing the screen", QRect(0, sz(98), w, sz(24)), sz(16),
+                 QFont.Weight.Bold, '#38bdf8')
 
         area = self.play_rect()
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1787,8 +1815,15 @@ class SmartMirrorPro(QMainWindow):
         self.guest_scan_callout.hide()
         # Variant B says this to someone passing by, in the middle of the screen.
         self.stand_close_hint = GuestScanCallout(self.central_widget)
-        self.stand_close_hint.message = "STAND 1m AWAY TO INTERACT"
+        self.stand_close_hint.message = "STAND BEHIND THE MARKER TO INTERACT"
+        self.stand_close_hint.submessage = "to view your timetable and school news"
         self.stand_close_hint.hide()
+        # Someone is using the mirror but not holding their hand open: say how.
+        self.palm_hint_widget = GuestScanCallout(self.central_widget)
+        self.palm_hint_widget.message = "KEEP YOUR PALM OPEN"
+        self.palm_hint_widget.submessage = "hold your hand up flat, fingers apart, palm facing the screen"
+        self.palm_hint_widget.backdrop = True
+        self.palm_hint_widget.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
@@ -2626,7 +2661,7 @@ class SmartMirrorPro(QMainWindow):
         self._teaser_last_seen = now
         if self._teaser_variant == 'B':
             hint = self.stand_close_hint
-            hint.setGeometry(0, (self.height() - 120) // 2, self.width(), 120)
+            hint.setGeometry(0, (self.height() - 170) // 2, self.width(), 170)
         else:
             hint = self.guest_scan_callout
             self._position_guest_scan_callout()
@@ -2636,6 +2671,21 @@ class SmartMirrorPro(QMainWindow):
             hint.show()
             hint.start()
         hint.raise_()
+
+    def _set_palm_hint(self, show):
+        """KEEP YOUR PALM OPEN, over everything, while the engine says the hand isn't."""
+        hint = getattr(self, 'palm_hint_widget', None)
+        if hint is None:
+            return
+        if not show:
+            if hint.isVisible():
+                hint.hide()
+            return
+        if not hint.isVisible():
+            hint.setGeometry(0, int(self.height() * 0.60), self.width(), 170)
+            hint.set_fade(1.0)
+            hint.show()
+            hint.raise_()
 
     def _hide_scan_callout(self):
         if hasattr(self, 'guest_scan_callout'):
@@ -2696,7 +2746,7 @@ class SmartMirrorPro(QMainWindow):
             return
         # grab() renders the whole widget tree: leave our own layers out of it.
         layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
-                              self.debug_overlay)
+                              self.palm_hint_widget, self.debug_overlay)
                   if w is not None and w.isVisible()]
         if not self.gesture_trail.own_window and self.gesture_trail.isVisible():
             layers.append(self.gesture_trail)
@@ -3098,6 +3148,9 @@ class SmartMirrorPro(QMainWindow):
             self._last_presence_time = time.time()   # a hand is someone, even at idle
             self._last_presence_source = 'hand'
             self._update_idle_demo()
+
+        # How to hold the hand, said whenever one is in view but not open.
+        self._set_palm_hint(bool(data.get("palm_hint")) and self._last_state in ('guest', 'user'))
 
         # Don't turn on gestures until it's either in guest or recognized
         if self._last_state not in ('guest', 'user'):

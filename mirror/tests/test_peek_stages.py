@@ -616,9 +616,47 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m.telemetry.peek_variant = lambda: 'B'
         m._show_scan_callout()
         self.assertTrue(m.stand_close_hint.isVisible())
-        self.assertEqual(m.stand_close_hint.message, "STAND 1m AWAY TO INTERACT")
+        self.assertEqual(m.stand_close_hint.message, "STAND BEHIND THE MARKER TO INTERACT")
+        self.assertEqual(m.stand_close_hint.submessage, "to view your timetable and school news")
         self._arrive_as_guest()
         self.assertFalse(m.stand_close_hint.isVisible())
+
+    def test_the_passer_by_hint_fits_a_small_screen(self):
+        m = self.mirror
+        m.resize(1280, 720)
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        app.processEvents()
+        pixmap = m.stand_close_hint.grab().toImage()
+        # nothing is drawn right at the left or right edge, so no line is cut off
+        for x in (0, 1, pixmap.width() - 2, pixmap.width() - 1):
+            for y in range(0, pixmap.height(), 4):
+                self.assertEqual(pixmap.pixelColor(x, y).alpha() > 0 and pixmap.pixelColor(x, y).lightness() > 200, False)
+
+    def test_an_open_palm_hint_shows_while_the_engine_asks_for_it(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3, present=False), palm_hint=True))
+        self.assertTrue(m.palm_hint_widget.isVisible())
+        self.assertIn("PALM", m.palm_hint_widget.message)
+        m._handle_gesture(dict(gesture(x=0.3), palm_hint=False))
+        self.assertFalse(m.palm_hint_widget.isVisible())
+
+    def test_no_open_palm_hint_when_nobody_is_at_the_mirror(self):
+        m = self.mirror
+        m._last_state = 'idle'
+        m._handle_gesture(dict(gesture(x=0.3, present=False), palm_hint=True))
+        self.assertFalse(m.palm_hint_widget.isVisible())
+
+    def test_the_practice_says_how_to_pinch_and_to_keep_the_palm_open(self):
+        m = self.mirror
+        panel = m.practice_panel
+        panel.resize(600, 480)
+        panel.set_fade(1.0)
+        panel.reset()
+        self.assertFalse(panel.grab().isNull())          # paints both steps without error
+        panel.step = 1
+        self.assertFalse(panel.grab().isNull())
 
     def test_no_step_back_message_on_the_guest_screen(self):
         m = self.mirror

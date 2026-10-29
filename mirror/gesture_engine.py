@@ -132,6 +132,23 @@ ENGAGE_MIN_FINGERS  = 3
 TOO_CLOSE_PALM      = 0.24    # wrist→knuckle span as a share of the frame height
 TOO_CLOSE_SEC       = 0.5
 
+# Palm hint: a hand in view that isn't held up open (fingers curled, back to the
+# camera, or a pinch with the other fingers folded down) for this long makes the
+# mirror say how to hold it. It stays up a moment, so it doesn't flicker.
+PALM_HINT_SEC       = 0.6
+PALM_HINT_HOLD_SEC  = 1.2
+
+# The reach box follows the hand (see GestureEngine.follow_box). The cursor sits
+# on the screen edge while the hand is up to this far (a fraction of the camera
+# picture) past the box edge; further than that, the box is dragged along.
+BOX_FOLLOW_MARGIN   = 0.04
+# GESTURE_FIXED_BOX=1 puts the box back where it was: the same place for every hand.
+FIXED_BOX           = os.environ.get("GESTURE_FIXED_BOX", "") not in ("", "0", "false", "False", "no", "off")
+
+# A hand lower than this in the camera picture (hanging by a side, or scanning a
+# card at the bottom) is not one trying to use the mirror.
+IGNORE_BELOW_Y      = 0.80
+
 STATUS_FILE_EVERY   = 0.5     # the JSON file is only a fallback for UDP: rarely
 
 
@@ -184,6 +201,10 @@ def _reach_box():
     return 0.22, 0.78, 0.25, 0.75
 
 REACH_X0, REACH_X1, REACH_Y0, REACH_Y1 = _reach_box()
+
+# The box is a size, not a place: when a hand takes control the box is centred on
+# it, then follows it (GestureEngine.follow_box). REACH_X0.. are where it sits
+# until then, and what to_screen() uses.
 
 
 def to_screen(x, y):
@@ -282,6 +303,7 @@ class GestureEngine:
     def __init__(self, camera_id=0, flip=None):
         self.camera_id = camera_id
         self.flip = default_flip() if flip is None else flip
+        self.fixed_box = FIXED_BOX
         self.running = False
         self.tracker = None
         self._init_tracker()
@@ -330,6 +352,12 @@ class GestureEngine:
         self._last_engage_log = 0.0
         self.too_close = False
         self._close_since = None
+
+        self.box = None              # (x0, y0) of the reach box in the camera picture, once a hand has one
+        self.palm_hint = False       # a hand is in view but not held up open
+        self._palm_bad_since = None
+        self._palm_hint_until = 0.0
+        self._saw_backhand = False
 
     def _init_tracker(self):
         """Build the MediaPipe hand tracker."""
@@ -464,6 +492,73 @@ class GestureEngine:
         inside = sum(1 for p in lm if -margin <= p.x <= 1 + margin and -margin <= p.y <= 1 + margin)
         return inside / len(lm) if lm else 0.0
 
+    # ── The reach box that follows the hand ──────────────────────────────────
+
+    @staticmethod
+    def _box_size():
+        return REACH_X1 - REACH_X0, REACH_Y1 - REACH_Y0
+
+    def follow_box(self, x, y):
+        """Keep the reach box where this hand can use all of it.
+
+        The first time a hand is in control the box is centred on it (kept inside
+        the picture, so a hand at the edge gets a box whose edge is at the
+        picture's edge). After that the box stays put while the hand roams in it;
+        a hand pushed well past an edge (BOX_FOLLOW_MARGIN) drags that edge along.
+        """
+        if self.fixed_box:
+            return
+        w, h = self._box_size()
+        if self.box is None:
+            x0, y0 = x - w / 2, y - h / 2
+        else:
+            x0, y0 = self.box
+            if x < x0 - BOX_FOLLOW_MARGIN:
+                x0 = x + BOX_FOLLOW_MARGIN
+            elif x > x0 + w + BOX_FOLLOW_MARGIN:
+                x0 = x - w - BOX_FOLLOW_MARGIN
+            if y < y0 - BOX_FOLLOW_MARGIN:
+                y0 = y + BOX_FOLLOW_MARGIN
+            elif y > y0 + h + BOX_FOLLOW_MARGIN:
+                y0 = y - h - BOX_FOLLOW_MARGIN
+        self.box = (min(max(x0, 0.0), 1.0 - w), min(max(y0, 0.0), 1.0 - h))
+
+    def to_screen(self, x, y):
+        """A camera position to a screen position, through this hand's box."""
+        if self.box is None:
+            return to_screen(x, y)
+        w, h = self._box_size()
+        sx = (x - self.box[0]) / w
+        sy = (y - self.box[1]) / h
+        return min(1.0, max(0.0, sx)), min(1.0, max(0.0, sy))
+
+    # ── Telling people how to hold their hand ────────────────────────────────
+
+    def update_palm_hint(self, lm, handedness, now):
+        """Flag a hand that isn't open: fingers down, back to the camera, or a lone pinch.
+
+        Before control, that is a hand that isn't presented. In control, it is
+        one with fewer than three fingers out (a real pinch leaves three).
+        lm None means no usable hand; only a back-of-hand sighting still counts.
+        """
+        bad = False
+        if lm is not None:
+            if self._palm_size(lm) >= MIN_PALM_SIZE:
+                if self.engaged:
+                    bad = self.fingers_out(lm) < ENGAGE_MIN_FINGERS
+                else:
+                    bad = not self.is_presented(lm, handedness)
+        elif self._saw_backhand:
+            bad = True
+        if bad:
+            if self._palm_bad_since is None:
+                self._palm_bad_since = now
+            if now - self._palm_bad_since >= PALM_HINT_SEC:
+                self._palm_hint_until = now + PALM_HINT_HOLD_SEC
+        else:
+            self._palm_bad_since = None
+        self.palm_hint = now < self._palm_hint_until
+
     def select_best_hand(self, hand_landmarks_list, handedness_list=None):
         """The clearest palm in view: big (close), facing the camera, fully in frame.
 
@@ -471,6 +566,7 @@ class GestureEngine:
         unless another is clearly better, so control doesn't flicker between two
         similar hands.
         """
+        self._saw_backhand = False
         if not hand_landmarks_list:
             return None, None
 
@@ -484,10 +580,12 @@ class GestureEngine:
                 h_score = getattr(cat, 'score', 1.0)
 
             if self.is_backhand(lm, h_name, h_score):
+                self._saw_backhand = True
                 continue
 
-            cx, cy = to_screen(*self._palm_center(lm))
-            if cy > 0.88:
+            raw_x, raw_y = self._palm_center(lm)
+            cx, cy = self.to_screen(raw_x, raw_y)
+            if raw_y > IGNORE_BELOW_Y:
                 continue
 
             size = self._palm_size(lm)
@@ -509,6 +607,7 @@ class GestureEngine:
 
         if not candidates:
             return None, None
+        self._saw_backhand = False      # a usable hand is in view: no need to ask for the palm
 
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1], candidates[0][2]
@@ -539,7 +638,8 @@ class GestureEngine:
     def process_landmarks(self, lm, now):
         self.scroll_delta = 0
         raw_x, raw_y = self._palm_center(lm)
-        x, y = to_screen(raw_x, raw_y)
+        self.follow_box(raw_x, raw_y)
+        x, y = self.to_screen(raw_x, raw_y)
         # The published cursor is filtered; region and dwell use the unfiltered
         # position so a gesture is judged on where the hand really is. Drags use
         # the camera position, so pinch wobble and scroll speed are unchanged.
@@ -648,6 +748,7 @@ class GestureEngine:
 
     def step(self, lm, handedness, now):
         """One camera frame: the chosen hand (or None). Publishes, returns the event."""
+        self.update_palm_hint(lm, handedness, now)
         if lm is not None:
             self._hand_seen_at = now
             if self.update_engagement(lm, handedness, now):
@@ -677,6 +778,7 @@ class GestureEngine:
             return False
         self.present = False
         self.engaged = False
+        self.box = None
         self._engage_since = None
         self.too_close = False
         self._close_since = None
@@ -720,7 +822,7 @@ class GestureEngine:
             self._last_event_hold = None
 
         payload = (self.present, self.region, event, self._quantised_position(), self.pinched,
-                   round(self.right_dwell_progress, 2), self.too_close)
+                   round(self.right_dwell_progress, 2), self.too_close, self.palm_hint)
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -738,6 +840,7 @@ class GestureEngine:
                         "right_dwell_progress": round(self.right_dwell_progress, 3),
                         "dwell_side":           getattr(self, 'dwell_side', None),
                         "too_close":            self.too_close,
+                        "palm_hint":            self.palm_hint,
                         "event":                None,
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
@@ -763,6 +866,7 @@ class GestureEngine:
             "right_dwell_progress": round(self.right_dwell_progress, 3),
             "dwell_side":           getattr(self, 'dwell_side', None),
             "too_close":            self.too_close,
+            "palm_hint":            self.palm_hint,
             "event":                event,
             # A tap acts where its pinch began, not where the hand drifted to.
             "tap_x":                round(self.tap_at[0], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,

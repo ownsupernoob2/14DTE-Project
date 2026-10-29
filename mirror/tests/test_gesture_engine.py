@@ -99,7 +99,14 @@ def full_frame_reach(test):
 
 class StubEngine(GestureEngine):
     def _init_tracker(self):
+        self.fixed_box = True       # most tests read positions back through the one fixed box
         pass  # no mediapipe, no camera
+
+
+class FloatingStub(StubEngine):
+    """As the mirror runs: the reach box is centred on the hand, then follows it."""
+    def _init_tracker(self):
+        self.fixed_box = False
 
 
 class TestRegions(unittest.TestCase):
