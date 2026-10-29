@@ -829,6 +829,55 @@ class GuestScanCallout(QWidget):
     def stop(self):
         pass
 
+    def _message_pixmap(self):
+        """The message (and sub-message, and backdrop) drawn fully opaque, kept until it changes."""
+        w, h = self.width(), self.height()
+        dpr = self.devicePixelRatioF()
+        key = (self.message, self.submessage, self.backdrop, w, h, dpr)
+        if getattr(self, '_pm_key', None) == key:
+            return self._pm
+        pm = QPixmap(max(1, int(w * dpr)), max(1, int(h * dpr)))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        def line(text, top, height, px, weight, spacing, a):
+            font = painter.font()
+            font.setFamily("Segoe UI")
+            font.setPixelSize(px)
+            font.setWeight(weight)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+            painter.setFont(font)
+            painter.setPen(QColor(255, 255, 255, a))
+            painter.drawText(QRect(0, int(top), w, height),
+                             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
+
+        if self.backdrop:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 225))
+            painter.drawRoundedRect(QRectF(0, 0, w, h).adjusted(24, 0, -24, 0), 18, 18)
+        # The big line shrinks until it fits the screen (long messages at 1280 wide).
+        px, spacing = 46, 7
+        fm_font = painter.font()
+        fm_font.setFamily("Segoe UI")
+        fm_font.setWeight(QFont.Weight.Black)
+        while px > 24:
+            fm_font.setPixelSize(px)
+            fm_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+            if QFontMetrics(fm_font).horizontalAdvance(self.message) <= w - 120:
+                break
+            px, spacing = px - 2, max(2, spacing - 0.4)
+        if self.submessage:
+            top = max(0, (h - 130) // 2)
+            line(self.message, top, 70, px, QFont.Weight.Black, spacing, 255)
+            line(self.submessage, top + 70, 52, 30, QFont.Weight.DemiBold, 2, 204)
+        else:
+            line(self.message, 0, h, px, QFont.Weight.Black, spacing, 255)
+        painter.end()
+        self._pm_key, self._pm = key, pm
+        return pm
+
     def paintEvent(self, event):
         alpha = int(255 * self._fade)
         w = self.width()
@@ -848,27 +897,10 @@ class GuestScanCallout(QWidget):
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
 
         if self.message:
-            if self.backdrop:
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(0, 0, 0, int(225 * self._fade)))
-                painter.drawRoundedRect(QRectF(self.rect()).adjusted(24, 0, -24, 0), 18, 18)
-            # The big line shrinks until it fits the screen (long messages at 1280 wide).
-            px, spacing = 46, 7
-            fm_font = painter.font()
-            fm_font.setFamily("Segoe UI")
-            fm_font.setWeight(QFont.Weight.Black)
-            while px > 24:
-                fm_font.setPixelSize(px)
-                fm_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
-                if QFontMetrics(fm_font).horizontalAdvance(self.message) <= w - 120:
-                    break
-                px, spacing = px - 2, max(2, spacing - 0.4)
-            if self.submessage:
-                top = max(0, (self.height() - 130) // 2)
-                line(self.message, top, 70, px, QFont.Weight.Black, spacing, alpha)
-                line(self.submessage, top + 70, 52, 30, QFont.Weight.DemiBold, 2, int(alpha * 0.8))
-            else:
-                line(self.message, 0, self.height(), px, QFont.Weight.Black, spacing, alpha)
+            # Painted once into a pixmap and blitted: the cursor repaints this
+            # region every frame, and laying the text out each time was slow on the Pi.
+            painter.setOpacity(self._fade)
+            painter.drawPixmap(0, 0, self._message_pixmap())
             painter.end()
             return
 
@@ -2688,6 +2720,8 @@ class SmartMirrorPro(QMainWindow):
         """A message over everything about how to hold the hand, shown while it's true."""
         if hint is None:
             return
+        if os.environ.get('MIRROR_HAND_HINTS') == '0':      # to rule these out when hunting lag
+            show = False
         if not show:
             if hint.isVisible():
                 hint.hide()

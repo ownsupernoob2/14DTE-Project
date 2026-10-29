@@ -633,6 +633,23 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
             for y in range(0, pixmap.height(), 4):
                 self.assertEqual(pixmap.pixelColor(x, y).alpha() > 0 and pixmap.pixelColor(x, y).lightness() > 200, False)
 
+    def test_a_hint_is_laid_out_once_not_on_every_repaint(self):
+        w = self.mirror.stand_close_hint
+        w.resize(1000, 170)
+        first = w._message_pixmap()
+        self.assertIs(first, w._message_pixmap())
+        w.resize(900, 170)
+        self.assertIsNot(first, w._message_pixmap())
+
+    def test_the_hints_can_be_switched_off(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        os.environ['MIRROR_HAND_HINTS'] = '0'
+        self.addCleanup(os.environ.pop, 'MIRROR_HAND_HINTS')
+        m._handle_gesture(dict(gesture(x=0.3), too_close=True, raise_hint=True, palm_hint=True))
+        for hint in (m.too_close_widget, m.raise_hand_widget, m.palm_hint_widget):
+            self.assertFalse(hint.isVisible())
+
     def test_an_open_palm_hint_shows_while_the_engine_asks_for_it(self):
         m = self.mirror
         self._arrive_as_guest()
