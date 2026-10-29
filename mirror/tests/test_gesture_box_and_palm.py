@@ -189,5 +189,98 @@ class TestPalmHint(unittest.TestCase):
         self.assertFalse(sent[-1]['palm_hint'])
 
 
+class TestTooCloseBeforeControl(unittest.TestCase):
+    """A hand pushed out towards the camera is flagged whether or not it is in control."""
+
+    def setUp(self):
+        self.e = StubEngine()
+        self.e.write_status = lambda *a, **k: None
+
+    def run_frames(self, lm, t0, secs, step=0.05):
+        t = t0
+        while t < t0 + secs:
+            self.e.step(lm, None, t)
+            t += step
+        return t
+
+    def test_a_big_hand_that_has_not_taken_control_is_still_flagged(self):
+        fist = make_hand(0.5, 0.5, closed=True, scale=0.32)          # not held up open, and much too big
+        self.run_frames(fist, 1000.0, gesture_engine.TOO_CLOSE_SEC + 0.3)
+        self.assertFalse(self.e.engaged)
+        self.assertTrue(self.e.too_close)
+
+    def test_an_open_hand_at_a_normal_distance_is_not(self):
+        t = self.run_frames(make_hand(0.5, 0.5), 1000.0, 2.0)
+        self.assertTrue(self.e.engaged)
+        self.assertFalse(self.e.too_close)
+
+    def test_the_flag_clears_when_the_hand_goes(self):
+        t = self.run_frames(make_hand(0.5, 0.5, scale=0.32), 1000.0, 1.0)
+        self.assertTrue(self.e.too_close)
+        self.run_frames(None, t + HAND_LOST_SEC + 0.1, 0.2)
+        self.assertFalse(self.e.too_close)
+
+
+class TestRaiseHint(unittest.TestCase):
+    """A hand held so low it is cut off by the bottom of the camera picture."""
+
+    def setUp(self):
+        self.e = StubEngine()
+        self.cut = make_hand(0.5, 0.80, scale=0.3)       # low, fingers off the bottom edge
+        self.ok = make_hand(0.5, 0.4)
+
+    def feed(self, lm, t0, secs, step=0.05):
+        t = t0
+        while t < t0 + secs:
+            self.e.update_raise_hint(lm, t)
+            t += step
+        return t
+
+    def test_a_cut_off_low_hand_gets_the_hint_after_a_moment(self):
+        self.e.update_raise_hint(self.cut, 1000.0)
+        self.assertFalse(self.e.raise_hint)
+        self.feed(self.cut, 1000.0, gesture_engine.RAISE_HINT_SEC + 0.2)
+        self.assertTrue(self.e.raise_hint)
+
+    def test_a_hand_held_up_in_view_does_not(self):
+        self.feed(self.ok, 1000.0, 2.0)
+        self.assertFalse(self.e.raise_hint)
+
+    def test_it_clears_once_the_hand_is_raised(self):
+        t = self.feed(self.cut, 1000.0, 1.0)
+        self.assertTrue(self.e.raise_hint)
+        self.feed(self.ok, t, gesture_engine.RAISE_HINT_HOLD_SEC + 0.4)
+        self.assertFalse(self.e.raise_hint)
+
+    def test_a_hand_too_low_to_be_followed_still_asks_to_be_raised(self):
+        low = make_hand(0.5, gesture_engine.IGNORE_BELOW_Y + 0.05)
+        self.assertEqual(self.e.select_best_hand([low]), (None, None))
+        t = 1000.0
+        while t < 1000.0 + gesture_engine.RAISE_HINT_SEC + 0.2:
+            self.e.update_raise_hint(None, t)
+            t += 0.05
+        self.assertTrue(self.e.raise_hint)
+        self.e.select_best_hand([make_hand(0.5, 0.4)])
+        self.e.update_raise_hint(None, 1010.0)
+        self.assertFalse(self.e.raise_hint)
+
+    def test_it_is_published(self):
+        sent = []
+
+        class Sock:
+            def sendto(self, data, addr):
+                sent.append(json.loads(data))
+
+        folder = tempfile.mkdtemp()
+        self.e._udp_sock = Sock()
+        self.e._tmp_file = os.path.join(folder, 'g.tmp')
+        saved = gesture_engine.GESTURE_STATUS_FILE
+        gesture_engine.GESTURE_STATUS_FILE = os.path.join(folder, 'g.json')
+        self.addCleanup(setattr, gesture_engine, 'GESTURE_STATUS_FILE', saved)
+        self.e.raise_hint = True
+        self.e.write_status(force=True)
+        self.assertTrue(sent[-1]['raise_hint'])
+
+
 if __name__ == '__main__':
     unittest.main()

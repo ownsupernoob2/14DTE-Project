@@ -129,7 +129,7 @@ ENGAGE_MIN_FACING   = 0.15    # palm at least this square to the camera
 ENGAGE_MIN_FINGERS  = 3
 
 # Too close: past roughly half a metre the hand fills the frame and tracks badly.
-TOO_CLOSE_PALM      = 0.24    # wrist→knuckle span as a share of the frame height
+TOO_CLOSE_PALM      = float(os.environ.get("GESTURE_TOO_CLOSE", "0.24"))   # wrist→knuckle span as a share of the frame height
 TOO_CLOSE_SEC       = 0.5
 
 # Palm hint: a hand in view that isn't held up open (fingers curled, back to the
@@ -137,6 +137,16 @@ TOO_CLOSE_SEC       = 0.5
 # mirror say how to hold it. It stays up a moment, so it doesn't flicker.
 PALM_HINT_SEC       = 0.6
 PALM_HINT_HOLD_SEC  = 1.2
+
+# Raise hint: the camera looks down from above the screen, so a hand held at
+# chest height is often below, or half out of, the picture. A hand seen low or
+# cut off at the bottom (or lower than IGNORE_BELOW_Y) for this long makes the
+# mirror say to raise it.
+RAISE_HINT_SEC      = 0.5
+RAISE_HINT_HOLD_SEC = 1.2
+LOW_HAND_Y          = 0.62     # palm centre below this, with fingers cut off, counts as "too low"
+LOW_WRIST_Y         = 0.97     # ...or the wrist is at the bottom edge (only the fingers are in view)
+LOW_HAND_IN_FRAME   = 0.85     # share of landmarks inside the picture below which a hand is cut off
 
 # The reach box follows the hand (see GestureEngine.follow_box). The cursor sits
 # on the screen edge while the hand is up to this far (a fraction of the camera
@@ -358,6 +368,10 @@ class GestureEngine:
         self._palm_bad_since = None
         self._palm_hint_until = 0.0
         self._saw_backhand = False
+        self.raise_hint = False      # a hand is seen too low or cut off at the bottom of the picture
+        self._saw_low_hand = False
+        self._raise_bad_since = None
+        self._raise_hint_until = 0.0
 
     def _init_tracker(self):
         """Build the MediaPipe hand tracker."""
@@ -534,6 +548,27 @@ class GestureEngine:
 
     # ── Telling people how to hold their hand ────────────────────────────────
 
+    def update_raise_hint(self, lm, now):
+        """Flag a hand that is low in the picture or cut off at the bottom of it.
+
+        A hand the camera can't see at all can't be noticed from here, so this only
+        covers the half-seen one (fingertips are what goes first).
+        """
+        low = False
+        if lm is not None:
+            _x, y = self._palm_center(lm)
+            low = y > LOW_HAND_Y and (self._in_frame(lm) < LOW_HAND_IN_FRAME or lm[0].y > LOW_WRIST_Y)
+        elif self._saw_low_hand:
+            low = True
+        if low:
+            if self._raise_bad_since is None:
+                self._raise_bad_since = now
+            if now - self._raise_bad_since >= RAISE_HINT_SEC:
+                self._raise_hint_until = now + RAISE_HINT_HOLD_SEC
+        else:
+            self._raise_bad_since = None
+        self.raise_hint = now < self._raise_hint_until
+
     def update_palm_hint(self, lm, handedness, now):
         """Flag a hand that isn't open: fingers down, back to the camera, or a lone pinch.
 
@@ -567,6 +602,7 @@ class GestureEngine:
         similar hands.
         """
         self._saw_backhand = False
+        self._saw_low_hand = False
         if not hand_landmarks_list:
             return None, None
 
@@ -586,6 +622,7 @@ class GestureEngine:
             raw_x, raw_y = self._palm_center(lm)
             cx, cy = self.to_screen(raw_x, raw_y)
             if raw_y > IGNORE_BELOW_Y:
+                self._saw_low_hand = True
                 continue
 
             size = self._palm_size(lm)
@@ -608,6 +645,7 @@ class GestureEngine:
         if not candidates:
             return None, None
         self._saw_backhand = False      # a usable hand is in view: no need to ask for the palm
+        self._saw_low_hand = False
 
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1], candidates[0][2]
@@ -749,10 +787,11 @@ class GestureEngine:
     def step(self, lm, handedness, now):
         """One camera frame: the chosen hand (or None). Publishes, returns the event."""
         self.update_palm_hint(lm, handedness, now)
+        self.update_raise_hint(lm, now)
         if lm is not None:
             self._hand_seen_at = now
+            self.update_too_close(lm, now)       # judged for any hand held up, in control or not
             if self.update_engagement(lm, handedness, now):
-                self.update_too_close(lm, now)
                 event = self.process_landmarks(lm, now)
                 self.write_status(event, self.scroll_delta)
                 return event
@@ -761,6 +800,8 @@ class GestureEngine:
                 facing = self.palm_facing(lm, handedness) if handedness in ('Left', 'Right') else None
                 print(f"[GESTURE] Hand seen, not in control yet: fingers out {self.fingers_out(lm)}, "
                       f"palm facing {facing if facing is None else round(facing, 2)} ({handedness})", flush=True)
+        if lm is None and now - self._hand_seen_at >= HAND_LOST_SEC:
+            self.too_close, self._close_since = False, None
         became_absent = self.mark_absent(now)
         self.write_status(force=became_absent)
         return None
@@ -822,7 +863,7 @@ class GestureEngine:
             self._last_event_hold = None
 
         payload = (self.present, self.region, event, self._quantised_position(), self.pinched,
-                   round(self.right_dwell_progress, 2), self.too_close, self.palm_hint)
+                   round(self.right_dwell_progress, 2), self.too_close, self.palm_hint, self.raise_hint)
         if (not force and event is None
                 and payload == self.last_payload
                 and now - self.last_write < HEARTBEAT_SEC):
@@ -841,6 +882,7 @@ class GestureEngine:
                         "dwell_side":           getattr(self, 'dwell_side', None),
                         "too_close":            self.too_close,
                         "palm_hint":            self.palm_hint,
+                        "raise_hint":           self.raise_hint,
                         "event":                None,
                         "event_id":             getattr(self, '_event_id', 0),
                         "scroll_delta":         0,
@@ -867,6 +909,7 @@ class GestureEngine:
             "dwell_side":           getattr(self, 'dwell_side', None),
             "too_close":            self.too_close,
             "palm_hint":            self.palm_hint,
+            "raise_hint":           self.raise_hint,
             "event":                event,
             # A tap acts where its pinch began, not where the hand drifted to.
             "tap_x":                round(self.tap_at[0], 4) if event == "tap" and getattr(self, 'tap_at', None) else None,

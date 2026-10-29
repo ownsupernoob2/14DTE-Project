@@ -1093,7 +1093,7 @@ class PracticePanel(QWidget):
         text(sub, QRect(0, sz(70), w, sz(26)), sz(18), QFont.Weight.DemiBold, '#cbd5e1')
         if self.step < 2:
             # The thing most people get wrong: the hand has to stay open.
-            text("Keep your palm open and facing the screen", QRect(0, sz(98), w, sz(24)), sz(16),
+            text("Raise your hand, palm open and facing the screen", QRect(0, sz(98), w, sz(24)), sz(16),
                  QFont.Weight.Bold, '#38bdf8')
 
         area = self.play_rect()
@@ -1824,6 +1824,18 @@ class SmartMirrorPro(QMainWindow):
         self.palm_hint_widget.submessage = "hold your hand up flat, fingers apart, palm facing the screen"
         self.palm_hint_widget.backdrop = True
         self.palm_hint_widget.hide()
+        # Hands pushed out towards the mirror track badly: say to bring them back.
+        self.too_close_widget = GuestScanCallout(self.central_widget)
+        self.too_close_widget.message = "PULL YOUR HAND BACK"
+        self.too_close_widget.submessage = "it's too close to the camera: bend your arm and stay behind the marker"
+        self.too_close_widget.backdrop = True
+        self.too_close_widget.hide()
+        # The camera looks down from above the screen: hands held low are half out of its picture.
+        self.raise_hand_widget = GuestScanCallout(self.central_widget)
+        self.raise_hand_widget.message = "RAISE YOUR HAND"
+        self.raise_hand_widget.submessage = "hold it up in front of you so the camera can see your fingers"
+        self.raise_hand_widget.backdrop = True
+        self.raise_hand_widget.hide()
 
     # ─────────────────────────────────────────────────────────────────────
     # Build: user layout (matching web screenshot: 50% notices, 50% right stack)
@@ -2672,9 +2684,8 @@ class SmartMirrorPro(QMainWindow):
             hint.start()
         hint.raise_()
 
-    def _set_palm_hint(self, show):
-        """KEEP YOUR PALM OPEN, over everything, while the engine says the hand isn't."""
-        hint = getattr(self, 'palm_hint_widget', None)
+    def _set_hand_hint(self, hint, show):
+        """A message over everything about how to hold the hand, shown while it's true."""
         if hint is None:
             return
         if not show:
@@ -2746,7 +2757,8 @@ class SmartMirrorPro(QMainWindow):
             return
         # grab() renders the whole widget tree: leave our own layers out of it.
         layers = [w for w in (overlay, self.guest_scan_callout, self.stand_close_hint,
-                              self.palm_hint_widget, self.debug_overlay)
+                              self.palm_hint_widget, self.too_close_widget, self.raise_hand_widget,
+                              self.debug_overlay)
                   if w is not None and w.isVisible()]
         if not self.gesture_trail.own_window and self.gesture_trail.isVisible():
             layers.append(self.gesture_trail)
@@ -3150,7 +3162,13 @@ class SmartMirrorPro(QMainWindow):
             self._update_idle_demo()
 
         # How to hold the hand, said whenever one is in view but not open.
-        self._set_palm_hint(bool(data.get("palm_hint")) and self._last_state in ('guest', 'user'))
+        in_use = self._last_state in ('guest', 'user')
+        too_close = bool(data.get("too_close")) and in_use
+        self._set_hand_hint(self.too_close_widget, too_close)
+        raise_hand = bool(data.get("raise_hint")) and in_use and not too_close
+        self._set_hand_hint(self.raise_hand_widget, raise_hand)
+        self._set_hand_hint(self.palm_hint_widget,
+                            bool(data.get("palm_hint")) and in_use and not too_close and not raise_hand)
 
         # Don't turn on gestures until it's either in guest or recognized
         if self._last_state not in ('guest', 'user'):

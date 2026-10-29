@@ -658,11 +658,32 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         panel.step = 1
         self.assertFalse(panel.grab().isNull())
 
-    def test_no_step_back_message_on_the_guest_screen(self):
+    def test_a_hand_too_close_is_told_to_pull_back(self):
         m = self.mirror
         self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3), too_close=True, palm_hint=True))
+        self.assertTrue(m.too_close_widget.isVisible())
+        self.assertFalse(m.palm_hint_widget.isVisible())          # one message at a time
+        m._handle_gesture(dict(gesture(x=0.3), too_close=False))
+        self.assertFalse(m.too_close_widget.isVisible())
+
+    def test_a_low_hand_is_told_to_raise_it(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3, present=False), raise_hint=True, palm_hint=True))
+        self.assertTrue(m.raise_hand_widget.isVisible())
+        self.assertFalse(m.palm_hint_widget.isVisible())          # the raise message comes first
+        m._handle_gesture(dict(gesture(x=0.3), raise_hint=False))
+        self.assertFalse(m.raise_hand_widget.isVisible())
+        m._handle_gesture(dict(gesture(x=0.3), raise_hint=True, too_close=True))
+        self.assertFalse(m.raise_hand_widget.isVisible())          # too close beats it
+        self.assertTrue(m.too_close_widget.isVisible())
+
+    def test_no_pull_back_message_when_nobody_is_at_the_mirror(self):
+        m = self.mirror
+        m._last_state = 'idle'
         m._handle_gesture(dict(gesture(x=0.3), too_close=True))
-        self.assertFalse(hasattr(m, 'too_close_hint') and m.too_close_hint.isVisible())
+        self.assertFalse(m.too_close_widget.isVisible())
 
     def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
         m = self.mirror
