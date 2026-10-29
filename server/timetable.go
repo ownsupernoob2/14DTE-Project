@@ -187,7 +187,7 @@ func downloadICS(icsURL string) (string, error) {
 	return string(raw), nil
 }
 
-// parseTimetable fetches an ICS file from icsURL and returns the current week's events sorted by date and start time.
+// parseTimetable fetches an ICS file from icsURL and returns this and next week's events sorted by date and start time.
 func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	if !isValidKingsHighICS(icsURL) {
 		return nil, fmt.Errorf("invalid calendar URL: only kingshigh.school.kiwi ICS feeds are permitted")
@@ -200,10 +200,14 @@ func parseTimetable(icsURL string) ([]TimetableEvent, error) {
 	return parseICSWeek(body, time.Now()), nil
 }
 
-// parseICSWeek returns the events in body that fall in the week containing now.
+// parseICSWeek returns the events in body from the start of the week containing
+// now to the end of the following week. Next week is included so the mirror can
+// say what's on after school on a Friday; the website and the mirror both only
+// show today's lessons from it.
 func parseICSWeek(body string, now time.Time) []TimetableEvent {
 	now = now.In(nzLocation())
 	startOfWeek, endOfWeek := currentWeekBoundaries(now)
+	endOfWeek = endOfWeek.AddDate(0, 0, 7)
 
 	var events []TimetableEvent
 
@@ -382,7 +386,9 @@ func getTimetable(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"viewMode": viewMode, "periods": events})
 }
 
-// setTimetableURL saves the user's ICS calendar URL.
+// setTimetableURL saves the user's ICS calendar URL. Archived fallback: timetables
+// now come from KAMAR, and this is only reached from Settings > Troubleshooting
+// (docs/archive/ics-timetable-link.md).
 func setTimetableURL(c echo.Context) error {
 	var body struct {
 		ICSURL string `json:"ics_url"`

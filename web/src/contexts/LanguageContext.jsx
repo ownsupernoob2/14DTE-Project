@@ -82,6 +82,13 @@ export const TRANSLATIONS = {
     calendar_feed: 'CALENDAR FEED SOURCE',
     reconfigure_link: 'CHANGE .ICS LINK',
     unlink_timetable: 'UNLINK TIMETABLE',
+    // The timetable comes from KAMAR through the student ID (not a calendar link).
+    // Only English so far: Māori falls back to these until they are translated.
+    no_timetable_yet: 'NO TIMETABLE YET',
+    timetable_from_kamar: 'YOUR TIMETABLE COMES FROM KAMAR. LINK YOUR STUDENT ID IN SETTINGS AND IT APPEARS AUTOMATICALLY',
+    open_settings: 'OPEN SETTINGS',
+    timetable_source: 'TIMETABLE SOURCE',
+    timetable_kamar: 'KAMAR',
 
     // Onboarding Modal
     setup_guide: 'SETUP GUIDE',

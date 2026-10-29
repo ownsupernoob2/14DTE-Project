@@ -200,12 +200,12 @@ class TimetableWidget(QFrame):
         n_lay.setContentsMargins(0, 16, 0, 0)
         n_lay.setSpacing(28)
 
-        next_eyebrow = QLabel("NEXT", self.next_box)
-        next_eyebrow.setStyleSheet(
+        self.next_eyebrow = QLabel("NEXT", self.next_box)
+        self.next_eyebrow.setStyleSheet(
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
             "letter-spacing: 2px; color: #cbd5e1; text-transform: uppercase;"
         )
-        n_lay.addWidget(next_eyebrow)
+        n_lay.addWidget(self.next_eyebrow)
 
         self.next_subj_lbl = QLabel("13DVC (5)", self.next_box)
         self.next_subj_lbl.setWordWrap(True)
@@ -315,6 +315,11 @@ class TimetableWidget(QFrame):
         self._lay.setContentsMargins(0, 8 if tight else 40, 0, 4 if tight else 20)
         self._lay.setSpacing(8 if tight else 24)
 
+    def _set_detail_labels(self, room, ends, left):
+        """Rename the three small headings (ROOM / ENDS / LEFT, or STARTS / IN in a break)."""
+        for w, text in zip(self._detail_keys, (room, ends, left)):
+            w.setText(text)
+
     def _show_details(self, shown):
         shown = shown and not self._tight()
         for w in self._detail_keys + [self.room_v, self.ends_v, self.left_v]:
@@ -324,6 +329,7 @@ class TimetableWidget(QFrame):
         with self._lock:
             periods = list(self.periods)
 
+        all_periods = periods             # this week and next, for what's coming after today
         now = datetime.now()
         today_str = now.strftime('%Y-%m-%d')
         now_minutes = now.hour * 60 + now.minute
@@ -389,8 +395,78 @@ class TimetableWidget(QFrame):
         is_interval = (self.INTERVAL_START <= now_minutes < self.INTERVAL_END)
         is_lunch    = (self.LUNCH_START    <= now_minutes < self.LUNCH_END)
 
+        # In a break the student knows it's a break: lead with what's on next and
+        # then what's after that, and only mention the break in the small label.
+        # Only on a day with lessons, so a weekend isn't "after school".
+        break_kind = None
+        if processed:
+            if is_interval:
+                break_kind = "INTERVAL"
+            elif is_lunch:
+                break_kind = "LUNCH"
+            elif school_over:
+                break_kind = "AFTER SCHOOL"
+
+        def _coming(p, start_formatted, day):
+            return {
+                'subj':  p.get('subject') or p.get('summary') or '--',
+                'room':  p.get('room') or p.get('location') or '--',
+                'start': start_formatted if start_formatted != '--' else '',
+                'day':   day,
+                'start_m': (lambda t: t[0] * 60 + t[1] if t else None)(
+                    _parse_time(p.get('startTime') or p.get('start') or p.get('dtstart'))),
+            }
+
+        def _day_label(date_str):
+            try:
+                day = datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                return ''
+            if (day.date() - now.date()).days == 1:
+                return "Tomorrow"
+            return day.strftime('%A')
+
+        coming = []
+        if break_kind:
+            # What's left today, then the following school days (the server sends
+            # this week and next, so a Friday afternoon still has a Monday).
+            for pi in processed:
+                if not pi['is_done']:
+                    coming.append(_coming(pi['raw'], pi['start_formatted'], ''))
+            later = sorted((p for p in all_periods if _get_period_date(p) > today_str),
+                           key=lambda p: (_get_period_date(p), str(p.get('startTime') or '')))
+            for p in later:
+                coming.append(_coming(p, _format_time_12h(p.get('startTime') or p.get('start')),
+                                      _day_label(_get_period_date(p))))
+            coming = coming[:2]
+        break_view = bool(break_kind and coming)
+
         # ── Populate hero block ──────────────────────────────────────────
-        if school_over and not is_interval and not is_lunch:
+        if not break_view:
+            self._set_detail_labels("ROOM", "ENDS", "LEFT")
+        if break_view:
+            up = coming[0]
+            amber = "#4ade80" if break_kind == "AFTER SCHOOL" else "#f59e0b"
+            self.eyebrow_lbl.setText(f"{break_kind} · UP NEXT")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                f"letter-spacing: 2px; color: {amber}; text-transform: uppercase;"
+            )
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
+            self.subject_lbl.setText(up['subj'])
+            self.room_v.setText(up['room'])
+            self.ends_v.setText(up['start'] or '--')
+            if up['day'] or up['start_m'] is None:
+                third_key, third = "DAY", up['day'] or '--'
+            else:
+                third_key, third = "IN", f"{max(1, up['start_m'] - now_minutes)}m"
+            self._set_detail_labels("ROOM", "STARTS", third_key)
+            self.left_v.setText(third)
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
+        elif school_over and not is_interval and not is_lunch:
             # All of today's classes are done
             self.eyebrow_lbl.setText("SCHOOL DAY COMPLETE")
             self.eyebrow_lbl.setStyleSheet(
@@ -480,11 +556,22 @@ class TimetableWidget(QFrame):
                 'not_linked': "Not linked yet",
                 'error': "Can't load right now",
             }.get(self.status, "No classes today"))
-        self._show_details(is_interval or is_lunch or (bool(current_info) and not school_over))
+        self._show_details(break_view or is_interval or is_lunch or (bool(current_info) and not school_over))
 
         # ── Next class (Compact Mode) ────────────────────────────────────
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
-        if next_info:
+        self.next_eyebrow.setText("THEN" if break_view else "NEXT")
+        if break_view:
+            # The hero already shows what's next, so this row is the one after it.
+            then = coming[1] if len(coming) > 1 else None
+            if then:
+                where = " · ".join(x for x in (then['day'], then['room'], then['start']) if x)
+                self.next_subj_lbl.setText(then['subj'])
+                self.next_meta_lbl.setText(where)
+            else:
+                self.next_subj_lbl.setText("")
+                self.next_meta_lbl.setText("")
+        elif next_info:
             np = next_info['raw']
             n_subj = np.get('subject') or np.get('summary') or '--'
             n_room = np.get('room') or np.get('location') or '--'
@@ -496,7 +583,7 @@ class TimetableWidget(QFrame):
             self.next_meta_lbl.setText("")
         else:
             self.next_subj_lbl.setText({
-                'not_linked': "Add it at smartmirror.me",
+                'not_linked': "Link your student ID at smartmirror.me",
                 'error': "Trying again shortly",
             }.get(self.status, ""))
             self.next_meta_lbl.setText("")
@@ -574,7 +661,8 @@ class TimetableWidget(QFrame):
 
                 for idx, pi in enumerate(sched_periods):
                     raw    = pi['raw']
-                    p_label = "NEXT" if idx == 0 else (raw.get('period') or pi['start_formatted'])
+                    first_label = "THEN" if break_view else "NEXT"   # the hero is already "up next" in a break
+                    p_label = first_label if idx == 0 else (raw.get('period') or pi['start_formatted'])
                     subj   = raw.get('subject') or raw.get('summary') or f"Period {idx + 1}"
                     room   = raw.get('room') or raw.get('location') or "--"
                     t_str  = pi['start_formatted'] if pi['start_formatted'] != '--' else ""

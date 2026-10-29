@@ -254,6 +254,32 @@ func TestUnlinkedStudentSeesTheirKamarTimetable(t *testing.T) {
 	}
 }
 
+func TestTimetableIncludesNextWeekButNotTheWeekAfter(t *testing.T) {
+	nz := nzLocation()
+	now := time.Date(2026, 10, 29, 16, 0, 0, 0, nz) // Thursday after school
+	lesson := func(day time.Time, subject string) string {
+		d := day.Format("20060102")
+		return "BEGIN:VEVENT\r\nDTSTART;TZID=Pacific/Auckland:" + d + "T090000\r\n" +
+			"DTEND;TZID=Pacific/Auckland:" + d + "T100000\r\nSUMMARY:" + subject + "\r\nEND:VEVENT\r\n"
+	}
+	ics := "BEGIN:VCALENDAR\r\n" +
+		lesson(now.AddDate(0, 0, -3), "LASTWEEK") + // Monday, this week
+		lesson(now.AddDate(0, 0, 1), "FRIDAY") +
+		lesson(now.AddDate(0, 0, 4), "NEXTMON") +
+		lesson(now.AddDate(0, 0, 8), "NEXTFRI") +
+		lesson(now.AddDate(0, 0, 11), "TOOFAR") + // the Monday after next
+		"END:VCALENDAR\r\n"
+
+	var got []string
+	for _, e := range parseICSWeek(ics, now) {
+		got = append(got, e.Summary)
+	}
+	want := "LASTWEEK FRIDAY NEXTMON NEXTFRI"
+	if strings.Join(got, " ") != want {
+		t.Errorf("events = %v, want %s", got, want)
+	}
+}
+
 func TestLinkedStudentGetsKamarTimetableWithoutACalendarLink(t *testing.T) {
 	newTestDB(t)
 	addUser(t, studentID, "kid@kingshigh.school.nz")
