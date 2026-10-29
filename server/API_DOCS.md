@@ -52,7 +52,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | DELETE | `/api/faces/me` | Delete your face scan |
 | GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
 | GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |
-| GET / POST / DELETE | `/api/timetable/ics` | `{ics_url}` — must be a King's High calendar link |
+| GET / POST / DELETE | `/api/timetable/ics` | **Archived fallback.** `{ics_url}` — must be a King's High calendar link. Timetables now come from KAMAR; this is only reachable from Settings > Troubleshooting. See `docs/archive/ics-timetable-link.md`. |
 | GET | `/api/dashboard`, `/api/dashboard/widgets` | Your mirror layout |
 | POST / PUT / DELETE | `/api/dashboard/widgets[/:id]`, PUT `/api/dashboard/widgets/bulk` | Edit it |
 

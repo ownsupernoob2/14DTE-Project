@@ -14,7 +14,7 @@ import { useLanguage } from '../contexts/LanguageContext'
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me'
 
 // ─── Onboarding Modal ────────────────────────────────────────────────────────
-function OnboardingModal({ isOpen, onClose, onOpenBarcode, onOpenFace, onOpenTimetable }) {
+function OnboardingModal({ isOpen, onClose, onOpenBarcode, onOpenFace }) {
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const { t } = useLanguage()
 
@@ -61,7 +61,7 @@ function OnboardingModal({ isOpen, onClose, onOpenBarcode, onOpenFace, onOpenTim
               <span className="text-xs font-bold text-white block">
                 {t('barcode_step')}
               </span>
-              <span className="text-[10px] text-[#888888]">Required identity anchor</span>
+              <span className="text-[10px] text-[#888888]">Signs you in at the mirror and brings in your KAMAR timetable</span>
             </div>
             <button
               onClick={() => {
@@ -90,25 +90,6 @@ function OnboardingModal({ isOpen, onClose, onOpenBarcode, onOpenFace, onOpenTim
               className="px-4 py-1.5 bg-[#222222] text-white text-xs font-bold uppercase rounded-none hover:bg-[#333333] cursor-pointer"
             >
               {t('enroll_btn')}
-            </button>
-          </div>
-
-          {/* Step 3: Timetable with ACTIVE button */}
-          <div className="bg-[#121212] p-3.5 flex items-center justify-between border border-[#1a1a1a]">
-            <div>
-              <span className="text-xs font-bold text-white block">
-                {t('timetable_step')}
-              </span>
-              <span className="text-[10px] text-[#888888]">KAMAR calendar feed link</span>
-            </div>
-            <button
-              onClick={() => {
-                handleClose()
-                if (onOpenTimetable) onOpenTimetable()
-              }}
-              className="px-4 py-1.5 bg-white text-black text-xs font-bold uppercase rounded-none hover:bg-[#e0e0e0] cursor-pointer"
-            >
-              {t('connect_btn')}
             </button>
           </div>
         </div>
@@ -142,7 +123,6 @@ export default function Dashboard() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showFaceModal, setShowFaceModal] = useState(false)
-  const [externalOpenTimetable, setExternalOpenTimetable] = useState(false)
   const { getAccessTokenSilently, user } = useAuth0()
   const { t, syncWithServer } = useLanguage()
 
@@ -210,11 +190,7 @@ export default function Dashboard() {
           {/* RIGHT: TIMETABLE, WITH KING'S WEEK UNDERNEATH (as on the mirror) */}
           <section className="flex flex-col p-6 md:p-8 h-full min-h-0 bg-[#000000] overflow-y-auto">
             <div className="flex flex-col shrink-0 py-2">
-              <TimetableWidget
-                widget={{ data: { viewMode: 'today' } }}
-                externalOpenSetup={externalOpenTimetable}
-                onExternalCloseSetup={() => setExternalOpenTimetable(false)}
-              />
+              <TimetableWidget widget={{ data: { viewMode: 'today' } }} />
             </div>
 
             <div className="flex-1 pt-6 pb-4">
@@ -246,7 +222,6 @@ export default function Dashboard() {
         onClose={() => setShowOnboarding(false)}
         onOpenBarcode={() => setShowBarcodeModal(true)}
         onOpenFace={() => setShowFaceModal(true)}
-        onOpenTimetable={() => setExternalOpenTimetable(true)}
       />
 
       {/* Modals triggerable from Onboarding */}

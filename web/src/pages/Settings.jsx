@@ -4,6 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import Navbar from '../components/Navbar'
 import FaceCaptureModal from '../components/FaceCaptureModal'
 import BarcodeCaptureModal from '../components/BarcodeCaptureModal'
+import LegacyCalendarLink from '../legacy/IcsTimetableLink'
 import { useServerStatus } from '../contexts/ServerStatusContext'
 import { useMe } from '../contexts/MeContext'
 
@@ -379,6 +380,9 @@ export default function Settings() {
             </button>
           </div>
         </section>
+
+        {/* Archived fallback: the old calendar-link timetable, kept out of the way */}
+        <LegacyCalendarLink disabled={!isServerUp} />
       </main>
 
       {/* Face & Barcode Capture Modals */}
