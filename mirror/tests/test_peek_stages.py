@@ -616,15 +616,91 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m.telemetry.peek_variant = lambda: 'B'
         m._show_scan_callout()
         self.assertTrue(m.stand_close_hint.isVisible())
-        self.assertEqual(m.stand_close_hint.message, "STAND 1m AWAY TO INTERACT")
+        self.assertEqual(m.stand_close_hint.message, "STAND BEHIND THE MARKER TO INTERACT")
+        self.assertEqual(m.stand_close_hint.submessage, "to view your timetable and school news")
         self._arrive_as_guest()
         self.assertFalse(m.stand_close_hint.isVisible())
 
-    def test_no_step_back_message_on_the_guest_screen(self):
+    def test_the_passer_by_hint_fits_a_small_screen(self):
+        m = self.mirror
+        m.resize(1280, 720)
+        m.telemetry.peek_variant = lambda: 'B'
+        m._show_scan_callout()
+        app.processEvents()
+        pixmap = m.stand_close_hint.grab().toImage()
+        # nothing is drawn right at the left or right edge, so no line is cut off
+        for x in (0, 1, pixmap.width() - 2, pixmap.width() - 1):
+            for y in range(0, pixmap.height(), 4):
+                self.assertEqual(pixmap.pixelColor(x, y).alpha() > 0 and pixmap.pixelColor(x, y).lightness() > 200, False)
+
+    def test_a_hint_is_laid_out_once_not_on_every_repaint(self):
+        w = self.mirror.stand_close_hint
+        w.resize(1000, 170)
+        first = w._message_pixmap()
+        self.assertIs(first, w._message_pixmap())
+        w.resize(900, 170)
+        self.assertIsNot(first, w._message_pixmap())
+
+    def test_the_hints_can_be_switched_off(self):
         m = self.mirror
         self._arrive_as_guest()
+        os.environ['MIRROR_HAND_HINTS'] = '0'
+        self.addCleanup(os.environ.pop, 'MIRROR_HAND_HINTS')
+        m._handle_gesture(dict(gesture(x=0.3), too_close=True, raise_hint=True, palm_hint=True))
+        for hint in (m.too_close_widget, m.raise_hand_widget, m.palm_hint_widget):
+            self.assertFalse(hint.isVisible())
+
+    def test_an_open_palm_hint_shows_while_the_engine_asks_for_it(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3, present=False), palm_hint=True))
+        self.assertTrue(m.palm_hint_widget.isVisible())
+        self.assertIn("PALM", m.palm_hint_widget.message)
+        m._handle_gesture(dict(gesture(x=0.3), palm_hint=False))
+        self.assertFalse(m.palm_hint_widget.isVisible())
+
+    def test_no_open_palm_hint_when_nobody_is_at_the_mirror(self):
+        m = self.mirror
+        m._last_state = 'idle'
+        m._handle_gesture(dict(gesture(x=0.3, present=False), palm_hint=True))
+        self.assertFalse(m.palm_hint_widget.isVisible())
+
+    def test_the_practice_says_how_to_pinch_and_to_keep_the_palm_open(self):
+        m = self.mirror
+        panel = m.practice_panel
+        panel.resize(600, 480)
+        panel.set_fade(1.0)
+        panel.reset()
+        self.assertFalse(panel.grab().isNull())          # paints both steps without error
+        panel.step = 1
+        self.assertFalse(panel.grab().isNull())
+
+    def test_a_hand_too_close_is_told_to_pull_back(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3), too_close=True, palm_hint=True))
+        self.assertTrue(m.too_close_widget.isVisible())
+        self.assertFalse(m.palm_hint_widget.isVisible())          # one message at a time
+        m._handle_gesture(dict(gesture(x=0.3), too_close=False))
+        self.assertFalse(m.too_close_widget.isVisible())
+
+    def test_a_low_hand_is_told_to_raise_it(self):
+        m = self.mirror
+        self._arrive_as_guest()
+        m._handle_gesture(dict(gesture(x=0.3, present=False), raise_hint=True, palm_hint=True))
+        self.assertTrue(m.raise_hand_widget.isVisible())
+        self.assertFalse(m.palm_hint_widget.isVisible())          # the raise message comes first
+        m._handle_gesture(dict(gesture(x=0.3), raise_hint=False))
+        self.assertFalse(m.raise_hand_widget.isVisible())
+        m._handle_gesture(dict(gesture(x=0.3), raise_hint=True, too_close=True))
+        self.assertFalse(m.raise_hand_widget.isVisible())          # too close beats it
+        self.assertTrue(m.too_close_widget.isVisible())
+
+    def test_no_pull_back_message_when_nobody_is_at_the_mirror(self):
+        m = self.mirror
+        m._last_state = 'idle'
         m._handle_gesture(dict(gesture(x=0.3), too_close=True))
-        self.assertFalse(hasattr(m, 'too_close_hint') and m.too_close_hint.isVisible())
+        self.assertFalse(m.too_close_widget.isVisible())
 
     def test_scanning_drops_the_demo_and_it_returns_without_the_scanner(self):
         m = self.mirror
