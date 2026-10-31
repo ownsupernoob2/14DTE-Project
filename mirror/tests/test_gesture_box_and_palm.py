@@ -105,6 +105,32 @@ class TestFloatingBox(unittest.TestCase):
         self.assertIs(self.e.select_best_hand([ok])[0], ok)
 
 
+class TestReachingTheBottom(unittest.TestCase):
+    """Wherever the hand starts, the bottom of the screen can be reached."""
+
+    def test_the_bottom_of_the_screen_is_reachable_from_a_low_start(self):
+        for start in (0.4, 0.6, 0.78):
+            e = FloatingStub()
+            e.process_landmarks(make_hand(0.5, start), 1000.0)
+            low = gesture_engine.IGNORE_BELOW_Y - 0.01          # lowest a new hand is accepted
+            for i in range(30):
+                e.process_landmarks(make_hand(0.5, low), 1000.1 + 0.05 * i)
+            self.assertGreater(e.hand_y, 0.97, start)
+
+    def test_the_box_stops_short_of_the_bottom_of_the_picture(self):
+        e = FloatingStub()
+        e.process_landmarks(make_hand(0.5, 0.95), 1000.0)
+        h = gesture_engine.REACH_Y1 - gesture_engine.REACH_Y0
+        self.assertLessEqual(e.box[1] + h, gesture_engine.BOX_MAX_BOTTOM + 1e-9)
+
+    def test_a_hand_in_control_is_kept_lower_than_a_new_one_would_be(self):
+        e = FloatingStub()
+        low = make_hand(0.5, gesture_engine.IGNORE_BELOW_Y + 0.04)
+        self.assertEqual(e.select_best_hand([low]), (None, None))     # a new hand this low isn't taken
+        e.present = True
+        self.assertIs(e.select_best_hand([low])[0], low)              # but one already in control is kept
+
+
 class TestPalmHint(unittest.TestCase):
     """Say how to hold the hand when it is in view but not open."""
 
