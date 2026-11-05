@@ -27,6 +27,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/screensaver` | `{mode: demo\|slideshow\|logo, slide_seconds, slides: [img], logo: img\|null}` |
 | GET | `/api/screensaver/files/<sha256>.<ext>` | An uploaded screensaver image (immutable) |
 | GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. Uses the timetable KAMAR sent for the student ID when there is one, otherwise the student's calendar link. |
+| GET | `/api/exams` | User token: your exams. Mirror key + `?user_id=`: that student's. `{exams: [{id, subject, date, startTime, durationMin, room}]}`, soonest first. Exams are deleted a week after their day. |
 | POST | `/api/kamar` | KAMAR Directory Services listener. Its own Basic auth (`KAMAR_DS_USERNAME` / `KAMAR_DS_PASSWORD`); refuses everything while those are unset. Answers KAMAR's `check` asking for student timetables (ICS) only, and saves `studenttimetables` by student ID. See `kamar-directory-services-setup.md`. |
 
 ## Mirror
@@ -46,12 +47,14 @@ Errors are JSON: `{"error": "message a person can read"}`.
 |---|---|---|
 | GET | `/api/users/me` | `{id, email, name, provider, has_face, has_barcode, is_admin, messages, contact_email}` |
 | POST | `/api/users/me/messages/seen` | Dismiss removal notices |
-| DELETE | `/api/users/me/data` | Delete your face scan, student ID, timetable link, layout and language |
+| DELETE | `/api/users/me/data` | Delete your face scan, student ID, timetable link, exams, layout and language |
 | POST | `/api/faces/train` | `{images: [base64 JPEG/PNG, ≤15]}` → 202 `{status: "processing", job_id}`. Training runs in the background because it can outlast Cloudflare's wait. 400 if no photo is readable, 429 within 24 h of the last scan. |
 | GET | `/api/faces/train/:job_id` | `{status: "processing"}` until done, then the result with its own status: 200 `{status: "trained", frames_used}`, 409 face belongs to another account, 422 no face found, 503 no face Python on the server. |
 | DELETE | `/api/faces/me` | Delete your face scan |
 | GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
 | GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |
+| POST | `/api/exams` | `{subject, date (YYYY-MM-DD), startTime? (HH:MM), durationMin? (0-600), room?}`. Typed in by the student. The date must be 1 November to 9 December (this year); at most 40 each. |
+| DELETE | `/api/exams/:id` | Delete one of your exams. |
 | GET / POST / DELETE | `/api/timetable/ics` | **Archived fallback.** `{ics_url}` — must be a King's High calendar link. Timetables now come from KAMAR; this is only reachable from Settings > Troubleshooting. See `docs/archive/ics-timetable-link.md`. |
 | GET | `/api/dashboard`, `/api/dashboard/widgets` | Your mirror layout |
 | POST / PUT / DELETE | `/api/dashboard/widgets[/:id]`, PUT `/api/dashboard/widgets/bulk` | Edit it |

@@ -35,6 +35,7 @@ from widgets.notices_widget import NoticesWidget
 from widgets.timetable_widget import TimetableWidget
 from widgets.clock_widget import ClockWidget
 from widgets.kings_week_widget import KingsWeekWidget
+from widgets.exam_pdf_viewer import ExamPdfViewer
 from telemetry import TelemetryTracker
 from screensaver import ScreensaverClient, SlideshowView
 from debug_overlay import DebugOverlay, TripleClickWatcher, read_system_stats
@@ -1535,6 +1536,16 @@ class SmartMirrorPro(QMainWindow):
         self._sign_out_hover = None
         self._set_sign_out_hover(False)
 
+        # The school's exam timetable: a button (bottom right) and the full-screen page it opens.
+        self.exam_pdf_btn = QLabel("EXAM TIMETABLE", self.central_widget)
+        self.exam_pdf_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.exam_pdf_btn.setFixedSize(320, 88)
+        self.exam_pdf_btn.hide()
+        self._exam_pdf_hover = None
+        self._set_exam_pdf_hover(False)
+        self.exam_viewer = ExamPdfViewer(self.central_widget)
+        self.exam_viewer.closed.connect(self._position_sign_out)
+
         # Variant B proactive dwell hint pill in header
         self.dwell_hint_pill = QLabel("Hold hand in top-right for Timetable", self.central_widget)
         self.dwell_hint_pill.setObjectName("DwellHintPill")
@@ -1579,21 +1590,62 @@ class SmartMirrorPro(QMainWindow):
             "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 900; "
             f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
 
+    def _set_exam_pdf_hover(self, hover):
+        if hover == self._exam_pdf_hover:
+            return
+        self._exam_pdf_hover = hover
+        fg, bg = ('#000000', '#ffffff') if hover else ('#e2e8f0', '#1e293b')
+        self.exam_pdf_btn.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 26px; font-weight: 900; "
+            f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
+
     def _position_sign_out(self):
-        """Bottom-left, under the notices: out of the way, easy to reach."""
+        """Sign out bottom-left, under the notices; EXAM TIMETABLE bottom-right: out of the way, easy to reach."""
         if not hasattr(self, 'sign_out_btn'):
             return
         if self._last_state == 'user' and not self._transitioning:
+            if self.exam_viewer.isVisible():
+                self.exam_viewer.setGeometry(0, 0, self.width(), self.height())   # the window may have changed size
+                self.sign_out_btn.hide()
+                return
             self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
             self.sign_out_btn.show()
             self.sign_out_btn.raise_()
+            if not self.exam_viewer.isVisible():
+                self.exam_pdf_btn.move(self.width() - self.exam_pdf_btn.width() - 24,
+                                       self.height() - self.exam_pdf_btn.height() - 28)
+                self.exam_pdf_btn.show()
+                self.exam_pdf_btn.raise_()
         else:
             self.sign_out_btn.hide()
             self._set_sign_out_hover(False)
+            self.exam_pdf_btn.hide()
+            self._set_exam_pdf_hover(False)
+            if self.exam_viewer.isVisible():
+                self.exam_viewer.hide()          # whoever was reading it has gone
+
+    def _open_exam_pdf(self):
+        self._last_activity_time = time.time()
+        self.exam_viewer.setGeometry(0, 0, self.width(), self.height())
+        self.exam_pdf_btn.hide()
+        self.sign_out_btn.hide()
+        self.exam_viewer.open()
+        self.gesture_trail.raise_()               # the hand's cursor stays on top of it
+
+    def _exam_pdf_rect(self):
+        if self.exam_pdf_btn.isHidden() or self.exam_viewer.isVisible():
+            return QRect()
+        return self.exam_pdf_btn.geometry().adjusted(-24, -24, 24, 24)
+
+    def _exam_viewer_close_rect(self):
+        if not self.exam_viewer.isVisible():
+            return QRect()
+        return self.exam_viewer.close_rect().translated(self.exam_viewer.pos()).adjusted(-24, -24, 24, 24)
 
     def _magnet_targets(self):
         """Window rects of what the hand can press right now."""
-        targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect()]
+        targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect(),
+                   self._timetable_view_rect(), self._exam_pdf_rect(), self._exam_viewer_close_rect()]
         pp = self.practice_panel
         if self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 0:
             c = pp.mapTo(self.central_widget, pp.dot_center().toPoint())
@@ -1642,6 +1694,17 @@ class SmartMirrorPro(QMainWindow):
         if self.sign_out_btn.isHidden():
             return QRect()
         return self.sign_out_btn.geometry().adjusted(-24, -24, 24, 24)   # a hand is not a mouse
+
+    def _timetable_view_rect(self):
+        """The CLASSES / EXAMS switch on the timetable, in window coordinates."""
+        tw = getattr(self, 'timetable_widget', None)
+        if tw is None or not self._on_user_screen():
+            return QRect()
+        return tw.view_switch_rect(self)
+
+    def _on_user_screen(self):
+        uc = getattr(self, 'user_container', None)
+        return uc is not None and uc.isVisible()
 
     def _timetable_button_rect(self):
         if self.edge_arrow_label.isHidden():
@@ -3279,12 +3342,36 @@ class SmartMirrorPro(QMainWindow):
                     self.demo_movie.set_paused(True)
             return
 
+        # The exam timetable open: it takes the hand (scroll it, or pinch CLOSE).
+        if self.exam_viewer.isVisible():
+            if present:
+                self._last_activity_time = time.time()
+                self.exam_viewer.handle(QPoint(int(data.get("hand_x", 0.0) * self.width()),
+                                               int(data.get("hand_y", 0.0) * self.height())) - self.exam_viewer.pos(),
+                                        event, delta)
+            return
+        on_exam_pdf = present and self._hand_near(self._exam_pdf_rect(), data)
+        if hasattr(self, 'exam_pdf_btn') and self._exam_pdf_hover != on_exam_pdf:
+            self._set_exam_pdf_hover(on_exam_pdf)
+        if on_exam_pdf:
+            if event == "tap":
+                self._open_exam_pdf()
+            return
+
         # Buttons the hand can pinch: SIGN OUT, and the TIMETABLE arrow.
         on_sign_out = present and self._hand_near(self._sign_out_rect(), data)
         self._set_sign_out_hover(on_sign_out)
         if on_sign_out:
             if event == "tap":
                 self.sign_out(reason="button")
+            return                       # nothing underneath reacts to it
+        on_view = present and self._hand_near(self._timetable_view_rect(), data)
+        if hasattr(self, 'timetable_widget') and self.timetable_widget._view_hover != on_view:
+            self.timetable_widget.set_view_hover(on_view)
+        if on_view:
+            if event == "tap":
+                self._last_activity_time = time.time()
+                self.timetable_widget.toggle_view()
             return                       # nothing underneath reacts to it
         on_timetable = present and self._hand_near(self._timetable_button_rect(), data)
         self._set_arrow_hover(on_timetable)

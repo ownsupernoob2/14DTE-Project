@@ -739,6 +739,78 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         self.assertTrue(m.message_veil.isVisible())
         self.assertEqual(m.message_veil.text, "SUCCESSFULLY LOGGED OUT")
 
+    def test_pinching_the_exams_switch_flips_the_timetable(self):
+        m = self.mirror
+        self._sign_in()
+        tt = m.timetable_widget
+        tt.exams = [{"id": 1, "subject": "Calculus", "date": "2099-11-10", "startTime": "13:00",
+                     "durationMin": 120, "room": "Gym"}]
+        tt.status = 'ok'
+        tt.update_ui()
+        app.processEvents()
+        r = m._timetable_view_rect()
+        self.assertFalse(r.isEmpty())
+        at = dict(x=r.center().x() / m.width(), y=r.center().y() / m.height(), region='left')
+        before = tt.view_pref
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(tt._view_hover)
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=11))
+        self.assertNotEqual(tt.view_pref, before)
+        self.assertEqual(m._last_state, 'user')                 # a pinch on it does nothing else
+        m._handle_gesture(gesture(x=0.05, y=0.05, region='left'))
+        self.assertFalse(tt._view_hover)
+
+    def test_the_exam_timetable_opens_scrolls_and_closes_with_the_hand(self):
+        m = self.mirror
+        self._sign_in()
+        self.assertTrue(m.exam_pdf_btn.isVisible())
+        c = m.exam_pdf_btn.geometry().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height(), region='left')
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(m._exam_pdf_hover)
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=21))
+        v = m.exam_viewer
+        self.assertTrue(v.isVisible())
+        self.assertEqual(v.size(), m.size())
+        self.assertFalse(m.exam_pdf_btn.isVisible())
+        self.assertFalse(m.sign_out_btn.isVisible())
+        self.assertGreater(v.scroll_max(), 0)                       # taller than the screen: there is scrolling to do
+        self.assertGreater(v._page().width(), m.width() * 0.9)      # and drawn big, not shrunk to fit
+
+        m._handle_gesture(dict(gesture(event='scroll', delta=120, x=0.5, y=0.5), event_id=22))
+        self.assertEqual(v._scroll, 120)
+        m._handle_gesture(dict(gesture(event='scroll', delta=-500, x=0.5, y=0.5), event_id=23))
+        self.assertEqual(v._scroll, 0)                              # never past the top
+        m._handle_gesture(dict(gesture(event='scroll', delta=300, x=0.5, y=0.5), event_id=24))
+        m._handle_gesture(dict(gesture(event='tap', x=0.5, y=0.5), event_id=25))
+        self.assertTrue(v.isVisible())                              # a tap on the page does nothing
+
+        close = v.close_rect().center()
+        at = dict(x=close.x() / m.width(), y=close.y() / m.height(), region='left')
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=26))
+        self.assertFalse(v.isVisible())
+        self.assertTrue(m.sign_out_btn.isVisible())                 # the buttons come back
+        self.assertTrue(m.exam_pdf_btn.isVisible())
+
+    def test_the_exam_timetable_closes_when_the_student_signs_out(self):
+        m = self.mirror
+        self._sign_in()
+        m._open_exam_pdf()
+        self.assertTrue(m.exam_viewer.isVisible())
+        m.sign_out(reason="button")
+        settle(m)
+        self.assertFalse(m.exam_viewer.isVisible())
+        self.assertFalse(m.exam_pdf_btn.isVisible())
+
+    def test_no_exam_timetable_button_for_a_guest(self):
+        m = self.mirror
+        m._last_state = 'guest'
+        m._position_sign_out()
+        self.assertFalse(m.exam_pdf_btn.isVisible())
+
     def test_scanning_the_same_id_again_signs_out(self):
         m = self.mirror
         self._sign_in()

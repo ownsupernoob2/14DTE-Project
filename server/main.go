@@ -83,6 +83,7 @@ func newServer() *echo.Echo {
 	e.GET("/api/screensaver/files/:name", getScreensaverFile)
 	// Signed-in users read their own; mirrors (with their key) any user's.
 	e.GET("/api/timetable", getTimetable)
+	e.GET("/api/exams", listExams)
 	// The school's KAMAR pushes timetables here, with its own Basic auth.
 	e.POST("/api/kamar", kamarListener)
 
@@ -123,6 +124,8 @@ func newServer() *echo.Echo {
 	user.POST("/timetable/ics", setTimetableURL)
 	user.GET("/timetable/ics", getMyTimetableURL)
 	user.DELETE("/timetable/ics", deleteMyTimetableURL)
+	user.POST("/exams", addExam)
+	user.DELETE("/exams/:id", deleteExam)
 
 	// ── Admins (Auth0 + verified email in ADMIN_EMAILS) ──────────────────
 	admin := e.Group("/api", EnsureValidToken(), RequireAdmin())

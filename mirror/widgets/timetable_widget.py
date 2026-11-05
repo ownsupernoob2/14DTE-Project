@@ -4,7 +4,7 @@ import time
 import requests
 from datetime import datetime
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, pyqtSignal
 
 from config import mirror_headers
 
@@ -71,6 +71,12 @@ class TimetableWidget(QFrame):
         self.api_url = api_url
         self.user_id = user_id
         self.periods = []
+        self.exams = []                   # typed in on the website, shown when there is no class
+        # Which timetable: 'auto' (exams whenever there is no class today), or what the
+        # person chose with the switch. Starts again at 'auto' for each new person.
+        self.view_pref = 'auto'
+        self._exam_view = False
+        self._view_hover = False
         # loading | ok | not_linked | error — what to say when there are no periods
         self.status = 'loading'
         self._fetch_gen = 0
@@ -231,6 +237,40 @@ class TimetableWidget(QFrame):
         lay.addStretch(1)
         self.mode = 'compact'
 
+        # CLASSES / EXAMS switch, top right (a pinch on it flips between the two)
+        self.view_btn = QLabel("EXAMS ▸", self)
+        self.view_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.view_btn.setFixedSize(190, 44)
+        self.view_btn.hide()
+        self.set_view_hover(False)
+
+    def set_view_hover(self, hover):
+        self._view_hover = hover
+        fg, bg = ('#000000', '#ffffff') if hover else ('#e2e8f0', '#1e293b')
+        self.view_btn.setStyleSheet(
+            "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 800; "
+            f"letter-spacing: 2px; color: {fg}; background: {bg}; border: none; border-radius: 22px;")
+
+    def toggle_view(self):
+        """Switch between the school's timetable and the student's exams."""
+        self.view_pref = 'classes' if self._exam_view else 'exams'
+        self.update_ui()
+        return self.view_pref
+
+    def view_switch_rect(self, window=None):
+        """Where the switch is in window coordinates (empty when it isn't showing)."""
+        if self.view_btn.isHidden() or not self.isVisible():
+            return QRect()
+        window = window or self.window()
+        r = QRect(self.view_btn.mapTo(window, QPoint(0, 0)), self.view_btn.size())
+        if not window.rect().contains(r.center()):
+            return QRect()                # slid off the screen with the timetable
+        return r.adjusted(-24, -24, 24, 24)       # a hand is not a mouse
+
+    def _place_view_btn(self):
+        self.view_btn.move(max(0, self.width() - self.view_btn.width() - 4), 4)
+        self.view_btn.raise_()
+
     def set_mode(self, mode):
         """Switch between 'compact'/'current_next' (hero + next) and 'full'/'all_today' (all periods)."""
         if mode in ('full', 'all_today'):
@@ -258,6 +298,9 @@ class TimetableWidget(QFrame):
             self.user_id = user_id
             with self._lock:
                 self.periods = []         # never show the last person's classes
+                self.exams = []
+            self.view_pref = 'auto'
+            self._exam_view = False
             self.status = 'loading'
             self.update_ui()
             self._start_fetch()
@@ -271,7 +314,15 @@ class TimetableWidget(QFrame):
                          daemon=True).start()
 
     def _fetch_data(self, user_id, gen):
-        status, periods = 'error', None
+        status, periods, exams = 'error', None, None
+        try:
+            res = requests.get(f"{self.api_url}/api/exams", params={'user_id': user_id},
+                               headers=mirror_headers(), timeout=20)
+            if res.status_code == 200:
+                data = res.json()
+                exams = data.get('exams', []) if isinstance(data, dict) else []
+        except Exception as e:
+            print(f"[TIMETABLE] Exams fetch failed for {user_id}: {e}", flush=True)
         try:
             res = requests.get(f"{self.api_url}/api/timetable", params={'user_id': user_id},
                                headers=mirror_headers(), timeout=20)
@@ -291,6 +342,8 @@ class TimetableWidget(QFrame):
         with self._lock:
             if periods is not None:
                 self.periods = periods
+            if exams is not None:
+                self.exams = exams
             self.status = status
         self.fetched.emit()
 
@@ -304,6 +357,7 @@ class TimetableWidget(QFrame):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._place_view_btn()
         self._apply_tightness()
         self.update_ui()
 
@@ -324,6 +378,38 @@ class TimetableWidget(QFrame):
         shown = shown and not self._tight()
         for w in self._detail_keys + [self.room_v, self.ends_v, self.left_v]:
             w.setVisible(shown)
+
+    EXAM_DEFAULT_MIN = 120            # how long an exam with no length is taken to last
+
+    def _upcoming_exams(self, now):
+        """The exams still to come, soonest first, ready to draw."""
+        with self._lock:
+            exams = list(self.exams)
+        now_m = now.hour * 60 + now.minute
+        out = []
+        for e in exams:
+            try:
+                day = datetime.strptime(str(e.get('date'))[:10], '%Y-%m-%d').date()
+            except ValueError:
+                continue
+            days = (day - now.date()).days
+            start = _parse_time(e.get('startTime'))
+            start_m = start[0] * 60 + start[1] if start else None
+            if days < 0:
+                continue
+            if days == 0 and start_m is not None and now_m >= start_m + (e.get('durationMin') or self.EXAM_DEFAULT_MIN):
+                continue                  # today's, and over
+            out.append({
+                'subj': e.get('subject') or 'Exam',
+                'room': e.get('room') or '--',
+                'start': _format_time_12h(e.get('startTime')) if start else 'TBC',
+                'days': days,
+                'date_long': day.strftime('%a %d %b').replace(' 0', ' '),
+                'when': "Today" if days == 0 else "Tomorrow" if days == 1 else f"In {days} days",
+                'sort': (str(day), start_m if start_m is not None else 24 * 60),
+            })
+        out.sort(key=lambda x: x['sort'])
+        return out
 
     def update_ui(self):
         with self._lock:
@@ -439,12 +525,41 @@ class TimetableWidget(QFrame):
                 coming.append(_coming(p, _format_time_12h(p.get('startTime') or p.get('start')),
                                       _day_label(_get_period_date(p))))
             coming = coming[:2]
-        break_view = bool(break_kind and coming)
+
+        # No class today (an exam period, the holidays, a weekend): the exams the
+        # student typed in on the website take the place of "no classes". On a day
+        # with classes they show only if the student switched to them.
+        exams = self._upcoming_exams(now) if self.status in ('ok', 'not_linked') else []
+        exam_view = bool(exams) and (self.view_pref == 'exams' or (self.view_pref == 'auto' and not processed))
+        self._exam_view = exam_view
+        # The switch is there whenever there are exams to switch to.
+        self.view_btn.setText("◂ CLASSES" if exam_view else "EXAMS ▸")
+        self.view_btn.setVisible(bool(exams))
+        self._place_view_btn()
+
+        break_view = bool(break_kind and coming) and not exam_view
 
         # ── Populate hero block ──────────────────────────────────────────
         if not break_view:
             self._set_detail_labels("ROOM", "ENDS", "LEFT")
-        if break_view:
+        if exam_view:
+            first = exams[0]
+            self.eyebrow_lbl.setText("EXAM TODAY" if first['days'] == 0 else "NEXT EXAM")
+            self.eyebrow_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 800; "
+                "letter-spacing: 2px; color: #f59e0b; text-transform: uppercase;"
+            )
+            self.subject_lbl.setStyleSheet(
+                "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 64px; font-weight: 800; "
+                "color: #ffffff; line-height: 1.0; margin: 0; padding: 0;"
+            )
+            self.subject_lbl.setText(first['subj'])
+            self._set_detail_labels("DATE", "STARTS", "ROOM")
+            self.room_v.setText(first['date_long'])
+            self.ends_v.setText(first['start'])
+            self.left_v.setText(first['room'])
+            self.left_v.setStyleSheet("font-family: 'Consolas', 'SFMono-Regular', monospace; font-size: 32px; font-weight: 800; color: #ffffff;")
+        elif break_view:
             up = coming[0]
             amber = "#4ade80" if break_kind == "AFTER SCHOOL" else "#f59e0b"
             self.eyebrow_lbl.setText(f"{break_kind} · UP NEXT")
@@ -556,12 +671,21 @@ class TimetableWidget(QFrame):
                 'not_linked': "Not linked yet",
                 'error': "Can't load right now",
             }.get(self.status, "No classes today"))
-        self._show_details(break_view or is_interval or is_lunch or (bool(current_info) and not school_over))
+        self._show_details(break_view or exam_view or is_interval or is_lunch or (bool(current_info) and not school_over))
 
         # ── Next class (Compact Mode) ────────────────────────────────────
         next_info = next((pi for pi in processed if pi != current_info and not pi['is_done']), None)
-        self.next_eyebrow.setText("THEN" if break_view else "NEXT")
-        if break_view:
+        self.next_eyebrow.setText("THEN" if (break_view or exam_view) else "NEXT")
+        if exam_view:
+            # The hero is the next exam, so this row is the one after it.
+            then = exams[1] if len(exams) > 1 else None
+            if then:
+                self.next_subj_lbl.setText(then['subj'])
+                self.next_meta_lbl.setText(" · ".join(x for x in (then['date_long'], then['start'], then['room']) if x and x != '--'))
+            else:
+                self.next_subj_lbl.setText("")
+                self.next_meta_lbl.setText("")
+        elif break_view:
             # The hero already shows what's next, so this row is the one after it.
             then = coming[1] if len(coming) > 1 else None
             if then:
@@ -601,7 +725,7 @@ class TimetableWidget(QFrame):
 
         if self.mode == 'full':
             # Previous periods completed earlier today
-            prev_periods = [pi for pi in processed if pi.get('is_done') and pi != current_info]
+            prev_periods = [] if exam_view else [pi for pi in processed if pi.get('is_done') and pi != current_info]
             if prev_periods:
                 hdr = QLabel("COMPLETED EARLIER TODAY", self.prev_box)
                 hdr.setStyleSheet(
@@ -651,7 +775,7 @@ class TimetableWidget(QFrame):
                 self.prev_box.hide()
 
             # Next and subsequent periods of today
-            sched_periods = [pi for pi in processed if pi != current_info and not pi.get('is_done')]
+            sched_periods = [] if exam_view else [pi for pi in processed if pi != current_info and not pi.get('is_done')]
 
             if sched_periods:
                 divider = QWidget()
@@ -693,6 +817,38 @@ class TimetableWidget(QFrame):
                     r_lay.addStretch(1)
                     self.schedule_lay.addWidget(row_widget)
 
+            elif exam_view:
+                # Every exam still to come, a row each: when, what, where.
+                if len(exams) > 1:
+                    divider = QWidget()
+                    divider.setFixedHeight(1)
+                    divider.setStyleSheet("background: #1c1c1c; margin: 4px 0;")
+                    self.schedule_lay.addWidget(divider)
+                for idx, ex in enumerate(exams[1:], start=1):
+                    row_widget = QWidget(self.schedule_box)
+                    row_widget.setStyleSheet("background: transparent;")
+                    r_lay = QHBoxLayout(row_widget)
+                    r_lay.setContentsMargins(0, 4, 0, 4)
+                    r_lay.setSpacing(24)
+
+                    lbl_tag = QLabel(ex['date_long'], row_widget)
+                    lbl_tag.setFixedWidth(130)
+                    lbl_tag.setStyleSheet(
+                        "font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 800; "
+                        "letter-spacing: 1px; color: #f59e0b; text-transform: uppercase;"
+                    )
+                    r_lay.addWidget(lbl_tag)
+
+                    lbl_subj = QLabel(ex['subj'], row_widget)
+                    lbl_subj.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #ffffff;")
+                    r_lay.addWidget(lbl_subj)
+
+                    meta = " · ".join(x for x in (ex['start'], ex['room']) if x and x != '--')
+                    lbl_meta = QLabel(meta, row_widget)
+                    lbl_meta.setStyleSheet("font-family: 'Segoe UI', system-ui, sans-serif; font-size: 18px; font-weight: 600; color: #e2e8f0;")
+                    r_lay.addWidget(lbl_meta)
+                    r_lay.addStretch(1)
+                    self.schedule_lay.addWidget(row_widget)
             elif school_over:
                 # Show "go home" in schedule pane too
                 go_lbl = QLabel("All done for today. See you tomorrow.", self.schedule_box)

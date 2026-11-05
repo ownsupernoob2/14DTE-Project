@@ -81,7 +81,7 @@ func notifyUser(userID, email, message string) {
 }
 
 // DELETE /api/users/me/data — the student wipes everything they have given us:
-// face scan, student ID, timetable link, mirror layout and language.
+// face scan, student ID, timetable link, exams, mirror layout and language.
 func deleteMyData(c echo.Context) error {
 	sub := getUserIDFromToken(c)
 	tx, err := db.Begin()
@@ -90,6 +90,9 @@ func deleteMyData(c echo.Context) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`DELETE FROM faces WHERE user_id = ?`, sub); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not delete your data"})
+	}
+	if _, err := tx.Exec(`DELETE FROM exams WHERE user_id = ?`, sub); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not delete your data"})
 	}
 	if _, err := tx.Exec(`UPDATE users SET barcode = NULL, ics_url = '', dashboard = '', language = 'en-NZ' WHERE id = ?`, sub); err != nil {
