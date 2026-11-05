@@ -137,6 +137,18 @@ CREATE TABLE IF NOT EXISTS kamar_timetables (
 	updated_at INTEGER NOT NULL
 );
 
+-- Exams a student types in themselves (see exams.go).
+CREATE TABLE IF NOT EXISTS exams (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id      TEXT NOT NULL,
+	subject      TEXT NOT NULL,
+	exam_date    TEXT NOT NULL,                -- YYYY-MM-DD
+	start_time   TEXT NOT NULL DEFAULT '',     -- HH:MM, or empty
+	duration_min INTEGER NOT NULL DEFAULT 0,
+	room         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_exams_user ON exams(user_id, exam_date);
+
 CREATE TABLE IF NOT EXISTS admin_audit (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	at          INTEGER NOT NULL,

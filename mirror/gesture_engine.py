@@ -155,9 +155,16 @@ BOX_FOLLOW_MARGIN   = 0.04
 # GESTURE_FIXED_BOX=1 puts the box back where it was: the same place for every hand.
 FIXED_BOX           = os.environ.get("GESTURE_FIXED_BOX", "") not in ("", "0", "false", "False", "no", "off")
 
-# A hand lower than this in the camera picture (hanging by a side, or scanning a
-# card at the bottom) is not one trying to use the mirror.
-IGNORE_BELOW_Y      = 0.80
+# A new hand lower than this in the camera picture (hanging by a side, or
+# scanning a card at the bottom) is not one trying to use the mirror. A hand
+# already in control is kept lower than that, so reaching down for the bottom of
+# the screen doesn't drop it.
+IGNORE_BELOW_Y          = 0.86
+IGNORE_BELOW_Y_ENGAGED  = 0.96
+# The box's bottom edge never goes lower than this, so the bottom of the screen
+# is a place the hand can actually reach. (With the box pushed to the bottom of
+# the picture, reaching the screen's bottom meant a hand the camera couldn't see.)
+BOX_MAX_BOTTOM      = 0.84
 
 STATUS_FILE_EVERY   = 0.5     # the JSON file is only a fallback for UDP: rarely
 
@@ -535,7 +542,8 @@ class GestureEngine:
                 y0 = y + BOX_FOLLOW_MARGIN
             elif y > y0 + h + BOX_FOLLOW_MARGIN:
                 y0 = y - h - BOX_FOLLOW_MARGIN
-        self.box = (min(max(x0, 0.0), 1.0 - w), min(max(y0, 0.0), 1.0 - h))
+        self.box = (min(max(x0, 0.0), 1.0 - w),
+                    min(max(y0, 0.0), min(1.0 - h, BOX_MAX_BOTTOM - h)))
 
     def to_screen(self, x, y):
         """A camera position to a screen position, through this hand's box."""
@@ -621,7 +629,7 @@ class GestureEngine:
 
             raw_x, raw_y = self._palm_center(lm)
             cx, cy = self.to_screen(raw_x, raw_y)
-            if raw_y > IGNORE_BELOW_Y:
+            if raw_y > (IGNORE_BELOW_Y_ENGAGED if self.present else IGNORE_BELOW_Y):
                 self._saw_low_hand = True
                 continue
 

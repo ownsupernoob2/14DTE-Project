@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import ExamPanel from './ExamPanel';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 
@@ -102,6 +103,13 @@ export default function TimetableWidget({ widget = {} }) {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showBreaks, setShowBreaks] = useState(() => localStorage.getItem('timetable_show_breaks') !== '0');
+  // Which timetable to show: the school's (KAMAR) classes, or the exams the student
+  // typed in. Until they pick one, it is the exams whenever there is no class.
+  const [view, setView] = useState(() => localStorage.getItem('timetable_view') || 'auto');
+  const chooseView = (v) => {
+    setView(v);
+    localStorage.setItem('timetable_view', v);
+  };
   const [layoutMode, setLayoutMode] = useState(() => localStorage.getItem('timetable_layout_mode') || 'current_next');
 
   const [periods, setPeriods] = useState([]);
@@ -187,6 +195,10 @@ export default function TimetableWidget({ widget = {} }) {
   const isInterval = showBreaks && (nowTotalMins >= (10 * 60 + 30) && nowTotalMins < (10 * 60 + 55));
   const isLunch = showBreaks && (nowTotalMins >= (12 * 60 + 45) && nowTotalMins < (13 * 60 + 30));
 
+  // No class now and not a break: this is where the student can put in their exams.
+  const noActiveClass = !currentP && !isInterval && !isLunch;
+  const showExams = view === 'exams' || (view === 'auto' && (noActiveClass || noTimetable));
+
   let activeEyebrow = t('current_class');
   let activeSubject = currentP?.subject || currentP?.summary || 'NO ACTIVE CLASS';
   let activeRoom = currentP?.room || currentP?.location || '--';
@@ -215,11 +227,27 @@ export default function TimetableWidget({ widget = {} }) {
           <h2 className="text-xl font-bold text-white uppercase tracking-wider">
             {t('timetable')}
           </h2>
-          {!noTimetable && (
+          {!noTimetable && !showExams && (
             <span className="text-xs text-[#888888]">
               ({processedPeriods.length} {t('periods')})
             </span>
           )}
+          <div className="flex border border-[#333333]" role="group" aria-label="Which timetable">
+            {[['classes', 'Classes'], ['exams', 'Exams']].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { chooseView(key); setShowSettings(false); }}
+                className={`px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded-none ${
+                  (key === 'exams') === showExams && !showSettings
+                    ? 'bg-white text-black'
+                    : 'bg-[#141414] text-[#888888] hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* PROMINENT SETTINGS TOGGLE BUTTON - EXACT MATCH FOR NOTICES STYLE */}
@@ -238,7 +266,7 @@ export default function TimetableWidget({ widget = {} }) {
       </div>
 
       {/* BODY CONTENT: the server has no timetable for this student */}
-      {noTimetable && !showSettings ? (
+      {noTimetable && !showSettings && !showExams ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
           <h3 className="text-xl font-bold text-white mb-2 uppercase tracking-tight">
             {t('no_timetable_yet')}
@@ -350,6 +378,9 @@ export default function TimetableWidget({ widget = {} }) {
             </div>
           </div>
         </div>
+      ) : showExams ? (
+        /* EXAMS: the student's own exam timetable, and a way to type them in */
+        <ExamPanel noClass={noActiveClass || noTimetable} />
       ) : layoutMode === 'all_today' ? (
         /* ALL OF TODAY TIMETABLE LAYOUT */
         <div className="flex-1 flex flex-col gap-6 overflow-y-auto custom-scrollbar py-2 pr-1">

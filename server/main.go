@@ -23,6 +23,7 @@ func main() {
 		log.Fatalf("Could not open the database: %v", err)
 	}
 	go facePython() // find Python early so the first face scan isn't slow
+	go refreshExamPDFLoop() // NZQA's exam timetable, kept up to date
 
 	StartNoticeFetcher()
 	StartKingsWeekFetcher()
@@ -83,6 +84,8 @@ func newServer() *echo.Echo {
 	e.GET("/api/screensaver/files/:name", getScreensaverFile)
 	// Signed-in users read their own; mirrors (with their key) any user's.
 	e.GET("/api/timetable", getTimetable)
+	e.GET("/api/exams", listExams)
+	e.GET("/api/exam-timetable.pdf", getExamTimetablePDF)
 	// The school's KAMAR pushes timetables here, with its own Basic auth.
 	e.POST("/api/kamar", kamarListener)
 
@@ -123,6 +126,9 @@ func newServer() *echo.Echo {
 	user.POST("/timetable/ics", setTimetableURL)
 	user.GET("/timetable/ics", getMyTimetableURL)
 	user.DELETE("/timetable/ics", deleteMyTimetableURL)
+	user.POST("/exams", addExam)
+	user.POST("/exams/import", importExams)
+	user.DELETE("/exams/:id", deleteExam)
 
 	// ── Admins (Auth0 + verified email in ADMIN_EMAILS) ──────────────────
 	admin := e.Group("/api", EnsureValidToken(), RequireAdmin())

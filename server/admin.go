@@ -138,6 +138,7 @@ func adminDeleteUser(c echo.Context) error {
 		`UPDATE sessions SET user_id = NULL WHERE user_id = ?`,
 		`DELETE FROM user_messages WHERE user_id = ?`,
 		`DELETE FROM faces WHERE user_id = ?`,
+		`DELETE FROM exams WHERE user_id = ?`,
 		`DELETE FROM users WHERE id = ?`,
 	} {
 		if _, err := tx.Exec(stmt, id); err != nil {
