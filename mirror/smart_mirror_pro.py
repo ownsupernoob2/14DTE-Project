@@ -1543,7 +1543,7 @@ class SmartMirrorPro(QMainWindow):
         self.exam_pdf_btn.hide()
         self._exam_pdf_hover = None
         self._set_exam_pdf_hover(False)
-        self.exam_viewer = ExamPdfViewer(self.central_widget)
+        self.exam_viewer = ExamPdfViewer(self.central_widget, api_url=API_URL)
         self.exam_viewer.closed.connect(self._position_sign_out)
 
         # Variant B proactive dwell hint pill in header
