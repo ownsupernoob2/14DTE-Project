@@ -3,6 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.smartmirror.me';
 const TZ = 'Pacific/Auckland';
+const NZQA_URL = 'https://www2.nzqa.govt.nz/ncea/exam-timetable-and-key-assessment-dates/exam-timetable/';
 
 const inputClass =
   'w-full bg-[#0c0c0c] border border-[#333333] focus:border-white outline-none text-white text-sm font-mono px-3 py-2 rounded-none';
@@ -62,6 +63,8 @@ export default function ExamPanel({ noClass = false }) {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
 
   const authed = useCallback(async (path, options = {}) => {
     const token = await getAccessTokenSilently();
@@ -120,6 +123,32 @@ export default function ExamPanel({ noClass = false }) {
     setSaving(false);
   };
 
+  // The .ics NZQA's "Add to calendar" button makes: the server reads the exams out of it.
+  const uploadCalendar = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportMsg('');
+    setError('');
+    try {
+      const ics = await file.text();
+      const res = await authed('/api/exams/import', { method: 'POST', body: JSON.stringify({ ics }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setImportMsg(data.error || 'Could not read that file.');
+      } else {
+        const bits = [`Added ${data.added} exam${data.added === 1 ? '' : 's'}.`];
+        if (data.duplicates) bits.push(`${data.duplicates} already there.`);
+        if (data.outsideDates) bits.push(`${data.outsideDates} outside 1 Nov to 9 Dec, left out.`);
+        if (data.full) bits.push(`${data.full} didn't fit (the limit is 40).`);
+        setImportMsg(bits.join(' '));
+        await load();
+      }
+    } catch {
+      setImportMsg('Could not read that file.');
+    }
+  };
+
   const remove = async (id) => {
     setExams((list) => list.filter((x) => x.id !== id));
     try {
@@ -141,7 +170,7 @@ export default function ExamPanel({ noClass = false }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
         <a
-          href="/2026-Exam-Timetable.pdf"
+          href={`${API_URL}/api/exam-timetable.pdf`}
           target="_blank"
           rel="noopener noreferrer"
           className="px-4 py-2 border bg-[#141414] text-white border-[#333333] hover:border-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded-none"
@@ -150,7 +179,16 @@ export default function ExamPanel({ noClass = false }) {
         </a>
         <button
           type="button"
-          onClick={() => { setAdding((v) => !v); setError(''); }}
+          onClick={() => { setImporting((v) => !v); setAdding(false); setImportMsg(''); }}
+          className={`px-4 py-2 border font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded-none ${
+            importing ? 'bg-white text-black border-white' : 'bg-[#141414] text-white border-[#333333] hover:border-white'
+          }`}
+        >
+          Import from NZQA
+        </button>
+        <button
+          type="button"
+          onClick={() => { setAdding((v) => !v); setImporting(false); setError(''); }}
           className={`px-4 py-2 border font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded-none ${
             adding ? 'bg-white text-black border-white' : 'bg-[#141414] text-white border-[#333333] hover:border-white'
           }`}
@@ -159,6 +197,38 @@ export default function ExamPanel({ noClass = false }) {
         </button>
         </div>
       </div>
+
+      {importing && (
+        <div className="py-4 border-b border-[#1c1c1c] shrink-0 flex flex-col gap-3 text-xs text-[#cbd5e1] font-mono leading-relaxed">
+          <ol className="list-decimal pl-5 flex flex-col gap-1.5">
+            <li>
+              Open{' '}
+              <a href={NZQA_URL} target="_blank" rel="noopener noreferrer" className="text-[#38bdf8] underline">
+                NZQA's exam timetable
+              </a>{' '}
+              and pick your levels and subjects.
+            </li>
+            <li>Click <b className="text-white">Add to calendar</b>. NZQA gives you an <b className="text-white">.ics</b> file.</li>
+            <li>Upload that file here and your exams are added.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href={NZQA_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 border bg-[#141414] text-white border-[#333333] hover:border-white text-xs font-bold uppercase tracking-wider rounded-none"
+            >
+              Open NZQA
+            </a>
+            <label className="px-4 py-2 bg-white text-black text-xs font-bold uppercase tracking-wider rounded-none cursor-pointer">
+              Upload .ics
+              <input type="file" accept=".ics,text/calendar" className="hidden" onChange={uploadCalendar} />
+            </label>
+            <span className="text-[#888888]">Or type them in with “+ Add exam”.</span>
+          </div>
+          {importMsg && <p className="text-white">{importMsg}</p>}
+        </div>
+      )}
 
       {adding && (
         <form onSubmit={save} className="grid grid-cols-2 gap-3 py-4 border-b border-[#1c1c1c] shrink-0">
@@ -202,7 +272,7 @@ export default function ExamPanel({ noClass = false }) {
       <div className="flex-1 overflow-y-auto custom-scrollbar pt-4 pr-1 min-h-0">
         {loaded && groups.length === 0 && !adding && (
           <p className="text-xs text-[#888888] uppercase tracking-wider leading-relaxed max-w-md">
-            {noClass ? 'No classes right now. ' : ''}Type in your exam timetable (1 Nov to 9 Dec) and it shows here and on the mirror.
+            {noClass ? 'No classes right now. ' : ''}Import your exams from NZQA, or type them in (1 Nov to 9 Dec), and they show here and on the mirror.
           </p>
         )}
         {groups.map((g) => {

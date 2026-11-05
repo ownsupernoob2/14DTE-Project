@@ -27,6 +27,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET | `/api/screensaver` | `{mode: demo\|slideshow\|logo, slide_seconds, slides: [img], logo: img\|null}` |
 | GET | `/api/screensaver/files/<sha256>.<ext>` | An uploaded screensaver image (immutable) |
 | GET | `/api/timetable` | User token: your week. Mirror key + `?user_id=`: that student's. Uses the timetable KAMAR sent for the student ID when there is one, otherwise the student's calendar link. |
+| GET | `/api/exam-timetable.pdf` | Public. NZQA's exam timetable PDF: the server reads the link off NZQA's exam timetable page (it is renamed every year), keeps a copy and refreshes it daily. Supports `If-Modified-Since`. If the server can't get one it redirects to NZQA's. |
 | GET | `/api/exams` | User token: your exams. Mirror key + `?user_id=`: that student's. `{exams: [{id, subject, date, startTime, durationMin, room}]}`, soonest first. Exams are deleted a week after their day. |
 | POST | `/api/kamar` | KAMAR Directory Services listener. Its own Basic auth (`KAMAR_DS_USERNAME` / `KAMAR_DS_PASSWORD`); refuses everything while those are unset. Answers KAMAR's `check` asking for student timetables (ICS) only, and saves `studenttimetables` by student ID. See `kamar-directory-services-setup.md`. |
 
@@ -54,6 +55,7 @@ Errors are JSON: `{"error": "message a person can read"}`.
 | GET / PUT / DELETE | `/api/users/me/barcode` | `{barcode}` — your student ID (409 if another account has it) |
 | GET / PUT / POST | `/api/users/me/language` | `{language: en-NZ\|mi-NZ}` |
 | POST | `/api/exams` | `{subject, date (YYYY-MM-DD), startTime? (HH:MM), durationMin? (0-600), room?}`. Typed in by the student. The date must be 1 November to 9 December (this year); at most 40 each. |
+| POST | `/api/exams/import` | `{ics}`: the text of the .ics NZQA's exam timetable page makes with its "Add to calendar" button. Adds each exam as `Subject (L2)` with its date, start time and length; skips ones outside 1 Nov to 9 Dec and ones already there. Replies `{found, added, duplicates, outsideDates, full}`. |
 | DELETE | `/api/exams/:id` | Delete one of your exams. |
 | GET / POST / DELETE | `/api/timetable/ics` | **Archived fallback.** `{ics_url}` — must be a King's High calendar link. Timetables now come from KAMAR; this is only reachable from Settings > Troubleshooting. See `docs/archive/ics-timetable-link.md`. |
 | GET | `/api/dashboard`, `/api/dashboard/widgets` | Your mirror layout |

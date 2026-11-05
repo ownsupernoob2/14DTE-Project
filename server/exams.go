@@ -86,6 +86,55 @@ func examsOf(userID string) []examJSON {
 	return out
 }
 
+// checkExam tidies and checks one exam. The string is what to tell the student
+// when it isn't acceptable.
+func checkExam(subject, date, start string, durationMin int, room string) (examJSON, string) {
+	subject = strings.Join(strings.Fields(subject), " ")
+	room = strings.Join(strings.Fields(room), " ")
+	if n := utf8.RuneCountInString(subject); n == 0 || n > 60 {
+		return examJSON{}, "Type the exam's subject (up to 60 characters)."
+	}
+	if utf8.RuneCountInString(room) > 24 {
+		return examJSON{}, "The room is too long (up to 24 characters)."
+	}
+	day, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(date), nzLocation())
+	if err != nil {
+		return examJSON{}, "Pick the exam's date."
+	}
+	if from, to := examWindow(); day.Before(from) || day.After(to) {
+		return examJSON{}, "Exams can be entered for 1 November to 9 December."
+	}
+	start = strings.TrimSpace(start)
+	if start != "" {
+		t, err := time.Parse("15:04", start)
+		if err != nil {
+			return examJSON{}, "The start time should look like 09:30."
+		}
+		start = t.Format("15:04")
+	}
+	if durationMin < 0 || durationMin > 600 {
+		return examJSON{}, "The length should be between 0 and 600 minutes."
+	}
+	return examJSON{Subject: subject, Date: day.Format("2006-01-02"), StartTime: start, DurationMin: durationMin, Room: room}, ""
+}
+
+// saveExam stores a checked exam for a student, unless they are at the limit.
+func saveExam(userID string, e examJSON) (examJSON, error) {
+	res, err := db.Exec(`INSERT INTO exams(user_id, subject, exam_date, start_time, duration_min, room) VALUES(?, ?, ?, ?, ?, ?)`,
+		userID, e.Subject, e.Date, e.StartTime, e.DurationMin, e.Room)
+	if err != nil {
+		return e, err
+	}
+	e.ID, _ = res.LastInsertId()
+	return e, nil
+}
+
+func examCount(userID string) int {
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM exams WHERE user_id = ?`, userID).Scan(&n)
+	return n
+}
+
 // addExam saves one exam for the signed-in student.
 func addExam(c echo.Context) error {
 	var body struct {
@@ -98,48 +147,20 @@ func addExam(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
-	subject := strings.Join(strings.Fields(body.Subject), " ")
-	room := strings.Join(strings.Fields(body.Room), " ")
-	if n := utf8.RuneCountInString(subject); n == 0 || n > 60 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Type the exam's subject (up to 60 characters)."})
+	exam, problem := checkExam(body.Subject, body.Date, body.StartTime, body.DurationMin, body.Room)
+	if problem != "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": problem})
 	}
-	if utf8.RuneCountInString(room) > 24 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "The room is too long (up to 24 characters)."})
-	}
-	day, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(body.Date), nzLocation())
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Pick the exam's date."})
-	}
-	if start, end := examWindow(); day.Before(start) || day.After(end) {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Exams can be entered for 1 November to 9 December."})
-	}
-	start := strings.TrimSpace(body.StartTime)
-	if start != "" {
-		t, err := time.Parse("15:04", start)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "The start time should look like 09:30."})
-		}
-		start = t.Format("15:04")
-	}
-	if body.DurationMin < 0 || body.DurationMin > 600 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "The length should be between 0 and 600 minutes."})
-	}
-
 	userID := getUserIDFromToken(c)
 	pruneOldExams(userID)
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM exams WHERE user_id = ?`, userID).Scan(&count)
-	if count >= maxExamsPerUser {
+	if examCount(userID) >= maxExamsPerUser {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "That's the most exams you can keep (" + strconv.Itoa(maxExamsPerUser) + "). Delete one first."})
 	}
-	res, err := db.Exec(`INSERT INTO exams(user_id, subject, exam_date, start_time, duration_min, room) VALUES(?, ?, ?, ?, ?, ?)`,
-		userID, subject, day.Format("2006-01-02"), start, body.DurationMin, room)
+	saved, err := saveExam(userID, exam)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not save the exam"})
 	}
-	id, _ := res.LastInsertId()
-	return c.JSON(http.StatusOK, examJSON{ID: id, Subject: subject, Date: day.Format("2006-01-02"),
-		StartTime: start, DurationMin: body.DurationMin, Room: room})
+	return c.JSON(http.StatusOK, saved)
 }
 
 // deleteExam removes one of the signed-in student's exams.
