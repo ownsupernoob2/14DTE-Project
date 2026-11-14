@@ -99,6 +99,60 @@ class ViewerTests(unittest.TestCase):
         v._on_refreshed()
         self.assertGreater(v._page().height(), before + 1000)
 
+    # -- leaving: a big red CLOSE button --
+    def opened(self):
+        v = self.viewer()
+        closed = []
+        v.closed.connect(lambda: closed.append(1))
+        v.open()
+        return v, closed
+
+    def test_a_pinch_on_the_close_button_closes_it(self):
+        v, closed = self.opened()
+        v.handle(v.close_rect().center(), "tap")
+        self.assertFalse(v.isVisible())
+        self.assertEqual(closed, [1])
+
+    def test_a_pinch_anywhere_else_does_not_close_it(self):
+        v, closed = self.opened()
+        v.handle(v.area().center(), "tap")
+        v.handle(v.area().center(), "tap")                 # twice makes no difference: it is not a double pinch
+        v.handle(v.area().center(), "scroll", 80)
+        self.assertTrue(v.isVisible())
+        self.assertEqual(closed, [])
+        self.assertEqual(v._scroll, 80)
+
+    def test_the_close_button_is_large_and_in_the_header(self):
+        v = self.viewer()
+        r = v.close_rect()
+        self.assertGreaterEqual(r.width(), 360)
+        self.assertGreaterEqual(r.height(), 96)
+        self.assertLessEqual(r.bottom(), v.HEADER_H)       # inside the header, so it never scrolls under the page
+        self.assertGreaterEqual(r.top(), 0)
+        self.assertEqual(r.right() + v.MARGIN + 1, v.width())
+
+    def test_the_close_button_is_red_and_lighter_under_the_hand(self):
+        v, _ = self.opened()
+
+        def colour():
+            c = v.grab().toImage().pixelColor(v.close_rect().left() + 12, v.close_rect().center().y())
+            return c.red(), c.green(), c.blue()
+
+        self.assertEqual(colour(), (0xdc, 0x26, 0x26))
+        v.handle(v.close_rect().center(), "move")          # the hand arrives over it
+        self.assertEqual(colour(), (0xff, 0x4d, 0x4d))
+
+    def test_there_is_no_double_pinch_prompt(self):
+        v, _ = self.opened()
+        self.assertFalse(hasattr(v, 'waiting_for_second_pinch'))
+
+    def test_the_scroll_hint_and_the_button_do_not_overlap(self):
+        v = self.viewer()
+        for width in (1024, 1280, 1920):
+            v.resize(width, 800)
+            hint = QRect(v.MARGIN, 84, width // 2, 34)
+            self.assertFalse(hint.intersects(v.close_rect()), width)
+
     # -- fetching --
     def test_a_newer_pdf_is_saved(self):
         pdf = make_pdf(os.path.join(self.dir, 'src.pdf'))

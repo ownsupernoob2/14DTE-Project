@@ -1600,22 +1600,26 @@ class SmartMirrorPro(QMainWindow):
             f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
 
     def _position_sign_out(self):
-        """Sign out bottom-left, under the notices; EXAM TIMETABLE bottom-right: out of the way, easy to reach."""
+        """Sign out bottom-left, under the notices (signed-in students only); EXAM TIMETABLE
+        bottom-right for anyone at the mirror, guests too: out of the way, easy to reach."""
         if not hasattr(self, 'sign_out_btn'):
             return
-        if self._last_state == 'user' and not self._transitioning:
+        if self._last_state in ('user', 'guest') and not self._transitioning:
             if self.exam_viewer.isVisible():
                 self.exam_viewer.setGeometry(0, 0, self.width(), self.height())   # the window may have changed size
                 self.sign_out_btn.hide()
                 return
-            self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
-            self.sign_out_btn.show()
-            self.sign_out_btn.raise_()
-            if not self.exam_viewer.isVisible():
-                self.exam_pdf_btn.move(self.width() - self.exam_pdf_btn.width() - 24,
-                                       self.height() - self.exam_pdf_btn.height() - 28)
-                self.exam_pdf_btn.show()
-                self.exam_pdf_btn.raise_()
+            if self._last_state == 'user':
+                self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
+                self.sign_out_btn.show()
+                self.sign_out_btn.raise_()
+            else:
+                self.sign_out_btn.hide()           # a guest has nothing to sign out of
+                self._set_sign_out_hover(False)
+            self.exam_pdf_btn.move(self.width() - self.exam_pdf_btn.width() - 24,
+                                   self.height() - self.exam_pdf_btn.height() - 28)
+            self.exam_pdf_btn.show()
+            self.exam_pdf_btn.raise_()
         else:
             self.sign_out_btn.hide()
             self._set_sign_out_hover(False)
@@ -4109,6 +4113,7 @@ class SmartMirrorPro(QMainWindow):
             return
         user_id = self.current_user_id
         print(f"[SESSION] {user_id} signed out ({reason}).", flush=True)
+        self.exam_viewer.hide()            # their exam timetable closes with them (a guest may be standing there next)
         self.message_veil.flash("SUCCESSFULLY LOGGED OUT")
         self._signed_out_user = user_id
         self._signed_out_face_gone = 0.0

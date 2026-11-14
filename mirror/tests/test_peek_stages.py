@@ -786,11 +786,15 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         m._handle_gesture(dict(gesture(event='scroll', delta=300, x=0.5, y=0.5), event_id=24))
         m._handle_gesture(dict(gesture(event='tap', x=0.5, y=0.5), event_id=25))
         self.assertTrue(v.isVisible())                              # a tap on the page does nothing
+        m._handle_gesture(dict(gesture(event='tap', x=0.5, y=0.5), event_id=26))
+        self.assertTrue(v.isVisible())                              # nor do two: there is no double pinch
 
         close = v.close_rect().center()
         at = dict(x=close.x() / m.width(), y=close.y() / m.height(), region='left')
+        m._handle_gesture(gesture(**at))
+        self.assertTrue(v._close_hover)                             # the red button lights up under the hand
         m._last_rx_tap_time = 0.0
-        m._handle_gesture(dict(gesture(event='tap', **at), event_id=26))
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=27))
         self.assertFalse(v.isVisible())
         self.assertTrue(m.sign_out_btn.isVisible())                 # the buttons come back
         self.assertTrue(m.exam_pdf_btn.isVisible())
@@ -802,12 +806,35 @@ class TestGuestTutorialAndSignOut(unittest.TestCase):
         self.assertTrue(m.exam_viewer.isVisible())
         m.sign_out(reason="button")
         settle(m)
-        self.assertFalse(m.exam_viewer.isVisible())
-        self.assertFalse(m.exam_pdf_btn.isVisible())
+        self.assertFalse(m.exam_viewer.isVisible())                 # it closes with the student
+        self.assertFalse(m.sign_out_btn.isVisible())
+        # whoever is left standing there is a guest, who can open it for themselves
+        self.assertEqual(m.exam_pdf_btn.isVisible(), m._last_state == 'guest')
 
-    def test_no_exam_timetable_button_for_a_guest(self):
+    def test_a_guest_can_open_the_exam_timetable_too(self):
         m = self.mirror
+        m._transitioning = False
         m._last_state = 'guest'
+        m._position_sign_out()
+        self.assertTrue(m.exam_pdf_btn.isVisible())
+        self.assertFalse(m.sign_out_btn.isVisible())                # nothing to sign out of
+        c = m.exam_pdf_btn.geometry().center()
+        at = dict(x=c.x() / m.width(), y=c.y() / m.height(), region='left')
+        m._handle_gesture(gesture(**at))
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=61))
+        v = m.exam_viewer
+        self.assertTrue(v.isVisible())
+        close = v.close_rect().center()
+        at = dict(x=close.x() / m.width(), y=close.y() / m.height(), region='left')
+        m._last_rx_tap_time = 0.0
+        m._handle_gesture(dict(gesture(event='tap', **at), event_id=62))
+        self.assertFalse(v.isVisible())
+        self.assertTrue(m.exam_pdf_btn.isVisible())
+
+    def test_no_exam_timetable_button_when_nobody_is_there(self):
+        m = self.mirror
+        m._last_state = 'idle'
         m._position_sign_out()
         self.assertFalse(m.exam_pdf_btn.isVisible())
 

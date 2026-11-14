@@ -35,9 +35,9 @@ class ExamPdfViewer(QWidget):
     REFRESH_MS = 6 * 3600 * 1000
     PAGE_GAP = 20
 
-    HEADER_H = 110
+    HEADER_H = 130
     MARGIN = 36
-    CLOSE_W, CLOSE_H = 280, 76
+    CLOSE_W, CLOSE_H = 400, 104          # big and red: it has to be seen (and hit) from a metre away
 
     def __init__(self, parent=None, image_path=IMAGE_PATH, api_url=None, cache_path=None):
         super().__init__(parent)
@@ -193,17 +193,17 @@ class ExamPdfViewer(QWidget):
         # header, drawn over the page so it never scrolls under
         p.fillRect(0, 0, self.width(), top, QColor(0, 0, 0))
         p.fillRect(0, top - 2, self.width(), 2, QColor(30, 41, 59))
-        self._text(p, "EXAM TIMETABLE", QRect(self.MARGIN, 0, self.width() // 2, top), 40, QFont.Weight.Black, '#ffffff',
+        self._text(p, "EXAM TIMETABLE", QRect(self.MARGIN, 12, self.width() // 2, 70), 40, QFont.Weight.Black, '#ffffff',
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, spacing=4)
-        self._text(p, "pinch and drag to scroll", QRect(self.MARGIN + 520, 0, 420, top), 20, QFont.Weight.DemiBold,
+        self._text(p, "pinch and drag to scroll", QRect(self.MARGIN, 84, self.width() // 2, 34), 20, QFont.Weight.DemiBold,
                    '#94a3b8', Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         r = self.close_rect()
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor('#ffffff') if self._close_hover else QColor('#1e293b'))
-        p.drawRoundedRect(QRectF(r), 38, 38)
-        self._text(p, "CLOSE  ✕", r, 28, QFont.Weight.Black, '#000000' if self._close_hover else '#e2e8f0',
-                   Qt.AlignmentFlag.AlignCenter, spacing=3)
+        p.setBrush(QColor('#ff4d4d') if self._close_hover else QColor('#dc2626'))   # a lighter red under the hand
+        p.drawRoundedRect(QRectF(r), 20, 20)
+        self._text(p, "CLOSE  ✕", r, 44, QFont.Weight.Black, '#ffffff',
+                   Qt.AlignmentFlag.AlignCenter, spacing=4)
 
         # how far down you are
         if self.scroll_max() > 0:
