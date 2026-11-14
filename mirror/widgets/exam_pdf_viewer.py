@@ -9,13 +9,11 @@ timetable that ships with the mirror.
 
 It is drawn as wide as the screen allows so the small print is readable from a
 metre away, which makes it taller than the screen: a pinch-and-drag scrolls it,
-the same as every other list on the mirror. Two quick pinches close it (a button
-was too easy to miss from a distance), and the header says so in white.
+the same as every other list on the mirror.
 """
 import os
 import tempfile
 import threading
-import time
 
 import requests
 from PyQt6.QtCore import Qt, QRect, QRectF, QSize, QTimer, pyqtSignal
@@ -37,9 +35,9 @@ class ExamPdfViewer(QWidget):
     REFRESH_MS = 6 * 3600 * 1000
     PAGE_GAP = 20
 
-    HEADER_H = 110
+    HEADER_H = 130
     MARGIN = 36
-    DOUBLE_PINCH_SEC = 1.2                # two taps this close together close it
+    CLOSE_W, CLOSE_H = 400, 104          # big and red: it has to be seen (and hit) from a metre away
 
     def __init__(self, parent=None, image_path=IMAGE_PATH, api_url=None, cache_path=None):
         super().__init__(parent)
@@ -57,10 +55,15 @@ class ExamPdfViewer(QWidget):
         self._scaled = None
         self._scaled_w = 0
         self._scroll = 0.0
-        self._first_pinch = None          # when the first of two pinches landed
+        self._close_hover = False
         self.hide()
 
     # ── geometry ──
+    def close_rect(self):
+        """The CLOSE button, in this widget's coordinates."""
+        return QRect(self.width() - self.MARGIN - self.CLOSE_W, (self.HEADER_H - self.CLOSE_H) // 2,
+                     self.CLOSE_W, self.CLOSE_H)
+
     def area(self):
         return QRect(0, self.HEADER_H, self.width(), max(1, self.height() - self.HEADER_H))
 
@@ -142,7 +145,7 @@ class ExamPdfViewer(QWidget):
     def open(self):
         self.refresh()                     # next time it opens it will be the newest
         self._scroll = 0.0
-        self._first_pinch = None
+        self._close_hover = False
         self.show()
         self.raise_()
         self.update()
@@ -151,29 +154,24 @@ class ExamPdfViewer(QWidget):
         self.hide()
         self.closed.emit()
 
-    # ── input: from the hand (where it is, the gesture event, its scroll delta) ──
-    def waiting_for_second_pinch(self):
-        return (self._first_pinch is not None
-                and time.monotonic() - self._first_pinch <= self.DOUBLE_PINCH_SEC)
-
+    # ── input: from the hand (a point in this widget, the gesture event, its scroll delta) ──
     def handle(self, point, event, delta=0):
-        if event == "tap":
-            if self.waiting_for_second_pinch():
-                self.close_viewer()
-                return
-            self._first_pinch = time.monotonic()
-            self.update()                  # the header asks for the second pinch...
-            QTimer.singleShot(int(self.DOUBLE_PINCH_SEC * 1000) + 50, self.update)   # ...until the time is up
+        hover = self.close_rect().adjusted(-24, -24, 24, 24).contains(point)
+        if hover != self._close_hover:
+            self._close_hover = hover
+            self.update()
+        if event == "tap" and hover:
+            self.close_viewer()
         elif event in ("scroll", "fling") and delta:
-            self._first_pinch = None       # a drag between two pinches makes them two separate taps
             self.scroll_by(delta)
 
     # ── input: a mouse, for testing at a desk ──
     def wheelEvent(self, e):
         self.scroll_by(-e.angleDelta().y())
 
-    def mouseDoubleClickEvent(self, e):
-        self.close_viewer()
+    def mousePressEvent(self, e):
+        if self.close_rect().contains(e.position().toPoint()):
+            self.close_viewer()
 
     # ── drawing ──
     def paintEvent(self, event):
@@ -195,16 +193,17 @@ class ExamPdfViewer(QWidget):
         # header, drawn over the page so it never scrolls under
         p.fillRect(0, 0, self.width(), top, QColor(0, 0, 0))
         p.fillRect(0, top - 2, self.width(), 2, QColor(30, 41, 59))
-        self._text(p, "EXAM TIMETABLE", QRect(self.MARGIN, 0, self.width() // 2, top), 40, QFont.Weight.Black, '#ffffff',
+        self._text(p, "EXAM TIMETABLE", QRect(self.MARGIN, 12, self.width() // 2, 70), 40, QFont.Weight.Black, '#ffffff',
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, spacing=4)
-        # how to leave (big and white: a button was too easy to miss), and how to scroll
-        right = QRect(self.width() // 2, 0, self.width() // 2 - self.MARGIN, top)
-        self._text(p, "PINCH AGAIN TO EXIT" if self.waiting_for_second_pinch() else "DOUBLE PINCH TO EXIT",
-                   QRect(right.x(), 14, right.width(), 48), 30, QFont.Weight.Black, '#ffffff',
-                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, spacing=3)
-        self._text(p, "pinch and drag to scroll", QRect(right.x(), 62, right.width(), 34), 20, QFont.Weight.DemiBold,
-                   '#94a3b8', Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._text(p, "pinch and drag to scroll", QRect(self.MARGIN, 84, self.width() // 2, 34), 20, QFont.Weight.DemiBold,
+                   '#94a3b8', Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        r = self.close_rect()
         p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor('#ff4d4d') if self._close_hover else QColor('#dc2626'))   # a lighter red under the hand
+        p.drawRoundedRect(QRectF(r), 20, 20)
+        self._text(p, "CLOSE  ✕", r, 44, QFont.Weight.Black, '#ffffff',
+                   Qt.AlignmentFlag.AlignCenter, spacing=4)
 
         # how far down you are
         if self.scroll_max() > 0:

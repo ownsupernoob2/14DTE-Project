@@ -99,7 +99,7 @@ class ViewerTests(unittest.TestCase):
         v._on_refreshed()
         self.assertGreater(v._page().height(), before + 1000)
 
-    # -- leaving: two quick pinches --
+    # -- leaving: a big red CLOSE button --
     def opened(self):
         v = self.viewer()
         closed = []
@@ -107,79 +107,51 @@ class ViewerTests(unittest.TestCase):
         v.open()
         return v, closed
 
-    def test_two_quick_pinches_close_it(self):
+    def test_a_pinch_on_the_close_button_closes_it(self):
         v, closed = self.opened()
-        v.handle(None, "tap")
-        self.assertTrue(v.isVisible())
-        self.assertTrue(v.waiting_for_second_pinch())
-        v.handle(None, "tap")
+        v.handle(v.close_rect().center(), "tap")
         self.assertFalse(v.isVisible())
         self.assertEqual(closed, [1])
 
-    def test_one_pinch_alone_does_not_close_it_and_the_wait_runs_out(self):
+    def test_a_pinch_anywhere_else_does_not_close_it(self):
         v, closed = self.opened()
-        now = [100.0]
-        real = epv.time.monotonic
-        epv.time.monotonic = lambda: now[0]
-        self.addCleanup(setattr, epv.time, 'monotonic', real)
-        v.handle(None, "tap")
-        now[0] += v.DOUBLE_PINCH_SEC + 0.1
-        self.assertFalse(v.waiting_for_second_pinch())
-        v.handle(None, "tap")                          # too late to count as the second: it is a new first
+        v.handle(v.area().center(), "tap")
+        v.handle(v.area().center(), "tap")                 # twice makes no difference: it is not a double pinch
+        v.handle(v.area().center(), "scroll", 80)
         self.assertTrue(v.isVisible())
         self.assertEqual(closed, [])
-        now[0] += 0.4
-        v.handle(None, "tap")
-        self.assertFalse(v.isVisible())
-
-    def test_a_scroll_between_two_pinches_makes_them_two_separate_pinches(self):
-        v, closed = self.opened()
-        v.handle(None, "tap")
-        v.handle(None, "scroll", 80)
-        self.assertFalse(v.waiting_for_second_pinch())
-        v.handle(None, "tap")
-        self.assertTrue(v.isVisible())
         self.assertEqual(v._scroll, 80)
 
-    def test_opening_it_again_starts_from_no_pinches(self):
-        v, closed = self.opened()
-        v.handle(None, "tap")
-        v.close_viewer()
-        v.open()
-        self.assertFalse(v.waiting_for_second_pinch())
+    def test_the_close_button_is_large_and_in_the_header(self):
+        v = self.viewer()
+        r = v.close_rect()
+        self.assertGreaterEqual(r.width(), 360)
+        self.assertGreaterEqual(r.height(), 96)
+        self.assertLessEqual(r.bottom(), v.HEADER_H)       # inside the header, so it never scrolls under the page
+        self.assertGreaterEqual(r.top(), 0)
+        self.assertEqual(r.right() + v.MARGIN + 1, v.width())
 
-    def test_there_is_no_close_button_any_more(self):
-        self.assertFalse(hasattr(epv.ExamPdfViewer, 'close_rect'))
-
-    def test_the_header_says_how_to_leave_in_white(self):
+    def test_the_close_button_is_red_and_lighter_under_the_hand(self):
         v, _ = self.opened()
-        v.resize(1280, 800)
 
-        def white_in_right_header():
-            img = v.grab().toImage()
-            count = 0
-            for y in range(0, v.HEADER_H - 40):
-                for x in range(640, 1280 - v.MARGIN):
-                    c = img.pixelColor(x, y)
-                    if c.red() == c.green() == c.blue() == 255:
-                        count += 1
-            return count
+        def colour():
+            c = v.grab().toImage().pixelColor(v.close_rect().left() + 12, v.close_rect().center().y())
+            return c.red(), c.green(), c.blue()
 
-        self.assertGreater(white_in_right_header(), 200)       # the instruction is there, in white
-        # and no slate-blue button (the old CLOSE one) is drawn in the header
-        img = v.grab().toImage()
-        slate = sum(1 for y in range(0, v.HEADER_H - 6) for x in range(640, 1280 - v.MARGIN)
-                    if (lambda c: (c.red(), c.green(), c.blue()) == (30, 41, 59))(img.pixelColor(x, y)))
-        self.assertEqual(slate, 0)
+        self.assertEqual(colour(), (0xdc, 0x26, 0x26))
+        v.handle(v.close_rect().center(), "move")          # the hand arrives over it
+        self.assertEqual(colour(), (0xff, 0x4d, 0x4d))
 
-    def test_a_double_click_closes_it_at_a_desk(self):
-        from PyQt6.QtCore import Qt, QPointF, QEvent
-        from PyQt6.QtGui import QMouseEvent
-        v, closed = self.opened()
-        e = QMouseEvent(QEvent.Type.MouseButtonDblClick, QPointF(300, 300), QPointF(300, 300),
-                        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-        v.mouseDoubleClickEvent(e)
-        self.assertFalse(v.isVisible())
+    def test_there_is_no_double_pinch_prompt(self):
+        v, _ = self.opened()
+        self.assertFalse(hasattr(v, 'waiting_for_second_pinch'))
+
+    def test_the_scroll_hint_and_the_button_do_not_overlap(self):
+        v = self.viewer()
+        for width in (1024, 1280, 1920):
+            v.resize(width, 800)
+            hint = QRect(v.MARGIN, 84, width // 2, 34)
+            self.assertFalse(hint.intersects(v.close_rect()), width)
 
     # -- fetching --
     def test_a_newer_pdf_is_saved(self):
