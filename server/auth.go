@@ -27,7 +27,7 @@ import (
 )
 
 // ContactEmail is who students are told to write to about their data.
-const ContactEmail = "minali39@kingshigh.school.nz"
+const ContactEmail = "marmina.offical@gmail.com"
 
 // DefaultAdminEmails is used when ADMIN_EMAILS is not set in .env.
 const DefaultAdminEmails = "marminamina3@gmail.com"
