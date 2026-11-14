@@ -1544,7 +1544,7 @@ class SmartMirrorPro(QMainWindow):
         self._exam_pdf_hover = None
         self._set_exam_pdf_hover(False)
         self.exam_viewer = ExamPdfViewer(self.central_widget, api_url=API_URL)
-        self.exam_viewer.closed.connect(self._position_sign_out)
+        self.exam_viewer.closed.connect(self._on_exam_viewer_closed)
 
         # Variant B proactive dwell hint pill in header
         self.dwell_hint_pill = QLabel("Hold hand in top-right for Timetable", self.central_widget)
@@ -1600,22 +1600,26 @@ class SmartMirrorPro(QMainWindow):
             f"letter-spacing: 3px; color: {fg}; background: {bg}; border: none; border-radius: 8px;")
 
     def _position_sign_out(self):
-        """Sign out bottom-left, under the notices; EXAM TIMETABLE bottom-right: out of the way, easy to reach."""
+        """Sign out bottom-left, under the notices (signed-in students only); EXAM TIMETABLE
+        bottom-right for anyone at the mirror, guests too: out of the way, easy to reach."""
         if not hasattr(self, 'sign_out_btn'):
             return
-        if self._last_state == 'user' and not self._transitioning:
+        if self._last_state in ('user', 'guest') and not self._transitioning:
             if self.exam_viewer.isVisible():
                 self.exam_viewer.setGeometry(0, 0, self.width(), self.height())   # the window may have changed size
                 self.sign_out_btn.hide()
                 return
-            self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
-            self.sign_out_btn.show()
-            self.sign_out_btn.raise_()
-            if not self.exam_viewer.isVisible():
-                self.exam_pdf_btn.move(self.width() - self.exam_pdf_btn.width() - 24,
-                                       self.height() - self.exam_pdf_btn.height() - 28)
-                self.exam_pdf_btn.show()
-                self.exam_pdf_btn.raise_()
+            if self._last_state == 'user':
+                self.sign_out_btn.move(24, self.height() - self.sign_out_btn.height() - 28)
+                self.sign_out_btn.show()
+                self.sign_out_btn.raise_()
+            else:
+                self.sign_out_btn.hide()           # a guest has nothing to sign out of
+                self._set_sign_out_hover(False)
+            self.exam_pdf_btn.move(self.width() - self.exam_pdf_btn.width() - 24,
+                                   self.height() - self.exam_pdf_btn.height() - 28)
+            self.exam_pdf_btn.show()
+            self.exam_pdf_btn.raise_()
         else:
             self.sign_out_btn.hide()
             self._set_sign_out_hover(False)
@@ -1623,6 +1627,11 @@ class SmartMirrorPro(QMainWindow):
             self._set_exam_pdf_hover(False)
             if self.exam_viewer.isVisible():
                 self.exam_viewer.hide()          # whoever was reading it has gone
+
+    def _on_exam_viewer_closed(self):
+        # The pinch that closed it may repeat for a moment: don't let that repeat press what's underneath.
+        self._last_rx_tap_time = time.time()
+        self._position_sign_out()
 
     def _open_exam_pdf(self):
         self._last_activity_time = time.time()
@@ -1637,15 +1646,10 @@ class SmartMirrorPro(QMainWindow):
             return QRect()
         return self.exam_pdf_btn.geometry().adjusted(-24, -24, 24, 24)
 
-    def _exam_viewer_close_rect(self):
-        if not self.exam_viewer.isVisible():
-            return QRect()
-        return self.exam_viewer.close_rect().translated(self.exam_viewer.pos()).adjusted(-24, -24, 24, 24)
-
     def _magnet_targets(self):
         """Window rects of what the hand can press right now."""
         targets = [self._skip_rect(), self._sign_out_rect(), self._timetable_button_rect(),
-                   self._timetable_view_rect(), self._exam_pdf_rect(), self._exam_viewer_close_rect()]
+                   self._timetable_view_rect(), self._exam_pdf_rect()]
         pp = self.practice_panel
         if self._demo_overlay_active() and self._practice_state == 'active' and pp.step == 0:
             c = pp.mapTo(self.central_widget, pp.dot_center().toPoint())
@@ -3279,8 +3283,10 @@ class SmartMirrorPro(QMainWindow):
         # Receiver-side tap gate: the gesture engine has a 0.35s cooldown but
         # multiple UDP packets with event="tap" can still arrive in the same
         # Qt event-loop tick.  Drop any tap within 700ms of the last accepted
-        # one to prevent open-close-open flicker on Kings Week cards.
-        if event == "tap":
+        # one to prevent open-close-open flicker on Kings Week cards. (Not while the
+        # exam timetable is open: closing it takes two quick pinches, which this
+        # would swallow, so it tells repeats from real pinches by event id instead.)
+        if event == "tap" and not self.exam_viewer.isVisible():
             _now = time.time()
             if _now - getattr(self, '_last_rx_tap_time', 0.0) < 0.70:
                 event = None   # suppress -- treat as a no-op hover packet
@@ -3342,10 +3348,16 @@ class SmartMirrorPro(QMainWindow):
                     self.demo_movie.set_paused(True)
             return
 
-        # The exam timetable open: it takes the hand (scroll it, or pinch CLOSE).
+        # The exam timetable open: it takes the hand (pinch and drag to scroll it, pinch twice to close).
         if self.exam_viewer.isVisible():
             if present:
                 self._last_activity_time = time.time()
+                if event == "tap":
+                    # The engine repeats a tap (same id) for ~100 ms; two real pinches have different ids.
+                    if data.get("event_id", 0) == getattr(self, '_last_exam_tap_id', None):
+                        event = None
+                    else:
+                        self._last_exam_tap_id = data.get("event_id", 0)
                 self.exam_viewer.handle(QPoint(int(data.get("hand_x", 0.0) * self.width()),
                                                int(data.get("hand_y", 0.0) * self.height())) - self.exam_viewer.pos(),
                                         event, delta)
@@ -3355,6 +3367,7 @@ class SmartMirrorPro(QMainWindow):
             self._set_exam_pdf_hover(on_exam_pdf)
         if on_exam_pdf:
             if event == "tap":
+                self._last_exam_tap_id = data.get("event_id", 0)   # the opening pinch isn't the first of the two that close it
                 self._open_exam_pdf()
             return
 
@@ -4109,6 +4122,7 @@ class SmartMirrorPro(QMainWindow):
             return
         user_id = self.current_user_id
         print(f"[SESSION] {user_id} signed out ({reason}).", flush=True)
+        self.exam_viewer.hide()            # their exam timetable closes with them (a guest may be standing there next)
         self.message_veil.flash("SUCCESSFULLY LOGGED OUT")
         self._signed_out_user = user_id
         self._signed_out_face_gone = 0.0
